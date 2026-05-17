@@ -43,26 +43,21 @@ export class TeamProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     const items: vscode.TreeItem[] = [];
     const ghd = member.github_data;
 
+    // Assigned issues are a count-only summary — the actual issue list lives
+    // in the Backlog view; duplicating it per-member here is noise. Mirrors
+    // the "Last 7d:" stat row (single informational row, no command).
     if (ghd.assignedIssues?.length) {
-      items.push(...ghd.assignedIssues.map((i: any) => {
-        const ti = new vscode.TreeItem(`Assigned: #${i.number} ${i.title}`);
-        ti.iconPath = new vscode.ThemeIcon('issues');
-        if (i.url) {
-          ti.command = { command: 'vscode.open', title: 'Open Issue on GitHub', arguments: [vscode.Uri.parse(i.url)] };
-        }
-        return ti;
-      }));
+      const ti = new vscode.TreeItem(`Assigned: ${ghd.assignedIssues.length}`);
+      ti.iconPath = new vscode.ThemeIcon('issues');
+      items.push(ti);
     }
 
+    // Open PRs: count-only summary — the PR list lives in the Pull Requests
+    // view. Mirrors the "Assigned:" / "Last 7d:" stat rows.
     if (ghd.openPRs?.length) {
-      items.push(...ghd.openPRs.map((p: any) => {
-        const ti = new vscode.TreeItem(`Open PR: #${p.number} ${p.title}`);
-        ti.iconPath = new vscode.ThemeIcon('git-pull-request');
-        if (p.url) {
-          ti.command = { command: 'vscode.open', title: 'Open Pull Request on GitHub', arguments: [vscode.Uri.parse(p.url)] };
-        }
-        return ti;
-      }));
+      const ti = new vscode.TreeItem(`Open PRs: ${ghd.openPRs.length}`);
+      ti.iconPath = new vscode.ThemeIcon('git-pull-request');
+      items.push(ti);
     }
 
     const merged = ghd.recentActivity?.mergedPRs?.length ?? 0;
