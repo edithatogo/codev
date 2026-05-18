@@ -1,7 +1,7 @@
 id: '755'
 title: multi-architect-support-per-ar
 protocol: spir
-phase: implement
+phase: review
 plan_phases:
   - id: phase_1
     title: Storage and Tower data-model relaxation
@@ -11,8 +11,8 @@ plan_phases:
     status: complete
   - id: phase_3
     title: Affinity-aware routing
-    status: in_progress
-current_plan_phase: phase_3
+    status: complete
+current_plan_phase: null
 gates:
   spec-approval:
     status: approved
@@ -27,7 +27,7 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history:
   - iteration: 1
     plan_phase: phase_1
@@ -78,4 +78,4 @@ history:
         file: >-
           /Users/mwk/Development/cluesmith/codev/.builders/spir-755/codev/projects/755-multi-architect-support-per-ar/755-phase_3-iter1-claude.txt
 started_at: '2026-05-17T20:51:15.851Z'
-updated_at: '2026-05-18T06:41:33.492Z'
+updated_at: '2026-05-18T06:41:35.258Z'
