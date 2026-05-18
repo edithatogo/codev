@@ -103,8 +103,12 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
+	// OverviewCache is created before TerminalManager so it can be injected —
+	// TerminalManager uses it for friendly builder tab titles (`Codev: #<id> <title>`).
+	const overviewCache = new OverviewCache(connectionManager);
+
 	// Terminal Manager
-	terminalManager = new TerminalManager(connectionManager, outputChannel, context.extensionUri);
+	terminalManager = new TerminalManager(connectionManager, outputChannel, context.extensionUri, overviewCache);
 	context.subscriptions.push({ dispose: () => terminalManager?.dispose() });
 
 	// Update status bar with builder/gate counts
@@ -174,8 +178,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 	};
 
-	// Sidebar TreeViews
-	const overviewCache = new OverviewCache(connectionManager);
+	// Sidebar TreeViews (overviewCache created above, before TerminalManager)
 	context.subscriptions.push({ dispose: () => overviewCache.dispose() });
 	overviewCache.onDidChange(() => {
 		updateStatusBarCounts();

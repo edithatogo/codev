@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { CodevPseudoterminal } from './terminal-adapter.js';
 import type { ConnectionManager } from './connection-manager.js';
+import type { OverviewCache } from './views/overview-data.js';
 import { encodeWorkspacePath } from '@cluesmith/codev-core/workspace';
 import { resolveAgentName } from '@cluesmith/codev-core/agent-names';
 import type { TerminalType } from '@cluesmith/codev-core/tower-client';
@@ -26,14 +27,17 @@ export class TerminalManager {
   private readonly _onDidChangeDevTerminals = new vscode.EventEmitter<void>();
   /** Fires whenever the set of open dev terminals changes (start/stop/swap/cleanup). */
   readonly onDidChangeDevTerminals = this._onDidChangeDevTerminals.event;
+  private readonly overviewCache: OverviewCache;
 
   constructor(
     connectionManager: ConnectionManager,
     outputChannel: vscode.OutputChannel,
     extensionUri: vscode.Uri,
+    overviewCache: OverviewCache,
   ) {
     this.connectionManager = connectionManager;
     this.outputChannel = outputChannel;
+    this.overviewCache = overviewCache;
     // Theme-aware icon pair. The single-Uri form rendered as solid black on
     // dark themes (VSCode doesn't resolve currentColor on terminal-tab icons).
     // codev-light.svg has dark fill (visible on light themes), codev-dark.svg
@@ -42,6 +46,46 @@ export class TerminalManager {
       light: vscode.Uri.joinPath(extensionUri, 'icons', 'codev-light.svg'),
       dark: vscode.Uri.joinPath(extensionUri, 'icons', 'codev-dark.svg'),
     };
+  }
+
+  /**
+   * Friendly builder tab title — mirrors the sidebar's `#<issueId> <issueTitle>`,
+   * prefixed `Codev: `. Falls back to `fallback` (the canonical
+   * `Codev: <agent-name>`) whenever overview data, a builder match, or an
+   * issue number is unavailable, so the title is never broken or empty.
+   *
+   * Display-only: terminal identity, cleanup, and click-to-focus all key off
+   * the `builder-<id>` map key and Terminal object — never the tab title — so
+   * changing this string has no functional side effects.
+   */
+  private friendlyBuilderLabel(builderId: string, fallback: string): string {
+    const data = this.overviewCache.getData();
+    if (!data?.builders?.length) { return fallback; }
+    // Open paths pass the canonical roleId (`builder-<protocol>-<id>`), but
+    // OverviewCache builders carry the short id the sidebar uses. resolveAgentName
+    // matches a *short* target against canonical candidates, so feed it the
+    // trailing id token, not the full roleId (otherwise it never matches and
+    // every builder falls back to the agent name).
+    const shortId = builderId.split('-').pop() ?? builderId;
+    const { builder } = resolveAgentName(shortId, data.builders);
+    // Mirror the sidebar exactly: `#${issueId ?? id} ${issueTitle ?? ''}`.
+    const num = builder?.issueId ?? builder?.id;
+    if (num === undefined || num === null || num === '') { return fallback; }
+    // Bound the tab name: `#<id>` stays whole (short, identifying), but the
+    // issue title is capped — VSCode's default `tabSizing: 'fit'` does not
+    // ellipsize a lone wide tab, so an unbounded title spans the whole group.
+    const MAX_TITLE = 25;
+    const raw = (builder?.issueTitle ?? '').trim();
+    let title = raw;
+    if (raw.length > MAX_TITLE) {
+      const slice = raw.slice(0, MAX_TITLE);
+      const lastSpace = slice.lastIndexOf(' ');
+      // Cut at the last whole word; fall back to a hard cut when the first
+      // word alone already exceeds the cap (no usable space boundary).
+      const cut = lastSpace > 0 ? slice.slice(0, lastSpace) : slice.slice(0, MAX_TITLE - 1);
+      title = `${cut.trimEnd()}…`;
+    }
+    return `Codev: #${num}${title ? ` ${title}` : ''}`;
   }
 
   /**
@@ -81,7 +125,7 @@ export class TerminalManager {
       existing.terminal.dispose();
       this.terminals.delete(key);
     }
-    await this.openTerminal(terminalId, 'builder', label, key, focus);
+    await this.openTerminal(terminalId, 'builder', this.friendlyBuilderLabel(builderId, label), key, focus);
   }
 
   /**
