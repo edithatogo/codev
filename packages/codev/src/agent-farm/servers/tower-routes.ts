@@ -54,6 +54,7 @@ import {
   launchInstance,
   killTerminalWithShellper,
   stopInstance,
+  addArchitect,
 } from './tower-instances.js';
 import { OverviewCache } from './overview.js';
 import { computeAnalytics } from './analytics.js';
@@ -218,6 +219,12 @@ export async function handleRequest(
       return await handleWorkspaceAction(req, res, ctx, workspaceApiMatch);
     }
 
+    // Workspace API: /api/workspaces/:encodedPath/architects (Spec 755 — multi-architect)
+    const architectsMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/architects$/);
+    if (architectsMatch) {
+      return await handleAddArchitect(req, res, architectsMatch);
+    }
+
     // Terminal-specific routes: /api/terminals/:id/* (Spec 0090 Phase 2)
     const terminalRouteMatch = url.pathname.match(/^\/api\/terminals\/([^/]+)(\/.*)?$/);
     if (terminalRouteMatch) {
@@ -276,6 +283,59 @@ async function handleListWorkspaces(res: http.ServerResponse): Promise<void> {
   }));
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ workspaces }));
+}
+
+/**
+ * POST /api/workspaces/:encodedPath/architects (Spec 755)
+ * Body: { name?: string }
+ * Adds a named architect terminal to an active workspace.
+ * Returns 200 { success: true, name, terminalId } on success,
+ * 400 / 404 with { success: false, error } otherwise.
+ */
+async function handleAddArchitect(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  match: RegExpMatchArray,
+): Promise<void> {
+  if (req.method !== 'POST') {
+    res.writeHead(405, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Method not allowed' }));
+    return;
+  }
+
+  const [, encodedPath] = match;
+  let workspacePath: string;
+  try {
+    workspacePath = decodeWorkspacePath(encodedPath);
+    if (!workspacePath || (!workspacePath.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(workspacePath))) {
+      throw new Error('Invalid path');
+    }
+    workspacePath = normalizeWorkspacePath(workspacePath);
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Invalid workspace path encoding' }));
+    return;
+  }
+
+  let body: { name?: string };
+  try {
+    body = (await parseJsonBody(req)) as { name?: string };
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+    return;
+  }
+
+  const result = await addArchitect(workspacePath, body.name);
+  if (result.success) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, name: result.name, terminalId: result.terminalId }));
+  } else {
+    // Distinguish "workspace not active" (404) from validation errors (400).
+    const status = result.error?.includes('not running') ? 404 : 400;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: result.error }));
+  }
 }
 
 async function handleWorkspaceAction(
@@ -850,8 +910,10 @@ async function handleSend(
   const noEnter = options.noEnter === true;
   const interrupt = options.interrupt === true;
 
-  // Resolve the target address to a terminal ID
-  const result = resolveTarget(to, workspace);
+  // Resolve the target address to a terminal ID.
+  // Spec 755: pass `from` so architect resolution is sender-affinity-aware
+  // when the sender is a builder. Non-builder senders see unchanged behavior.
+  const result = resolveTarget(to, workspace, from);
 
   if (isResolveError(result)) {
     const statusCode = result.code === 'AMBIGUOUS' ? 409
@@ -1407,15 +1469,19 @@ async function handleWorkspaceState(
     teamEnabled: await hasTeam(path.join(workspacePath, 'codev', 'team')),
   };
 
-  // Add architect if exists
-  if (entry.architect) {
-    const session = manager.getSession(entry.architect);
+  // Add architect if exists.
+  // Spec 755: /api/state preserves the scalar `state.architect` shape.
+  // Prefer 'main', else first registered architect by name.
+  const architectTerminalId =
+    entry.architects.get('main') ?? entry.architects.values().next().value;
+  if (architectTerminalId) {
+    const session = manager.getSession(architectTerminalId);
     if (session) {
       state.architect = {
         port: 0,
         pid: session.pid || 0,
-        terminalId: entry.architect,
-        persistent: isSessionPersistent(entry.architect, session),
+        terminalId: architectTerminalId,
+        persistent: isSessionPersistent(architectTerminalId, session),
       };
     }
   }
@@ -1850,9 +1916,14 @@ async function handleWorkspaceTabDelete(
       entry.builders.delete(tabId);
     }
   } else if (tabId === 'architect') {
-    terminalId = entry.architect;
-    if (terminalId) {
-      entry.architect = undefined;
+    // Spec 755: tabId 'architect' targets the architect surfaced by /api/state
+    // — prefer 'main', else the first registered.
+    const name = entry.architects.has('main')
+      ? 'main'
+      : entry.architects.keys().next().value;
+    if (name) {
+      terminalId = entry.architects.get(name);
+      entry.architects.delete(name);
     }
   }
 
@@ -1878,9 +1949,10 @@ async function handleWorkspaceStopAll(
   const entry = getWorkspaceTerminalsEntry(workspacePath);
   const manager = getTerminalManager();
 
-  // Kill all terminals (disable shellper auto-restart if applicable)
-  if (entry.architect) {
-    await killTerminalWithShellper(manager, entry.architect);
+  // Kill all terminals (disable shellper auto-restart if applicable).
+  // Spec 755: iterate all named architects, not just the singleton.
+  for (const terminalId of entry.architects.values()) {
+    await killTerminalWithShellper(manager, terminalId);
   }
   for (const terminalId of entry.shells.values()) {
     await killTerminalWithShellper(manager, terminalId);

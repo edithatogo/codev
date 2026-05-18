@@ -22,6 +22,19 @@ import { logger, fatal } from '../utils/logger.js';
 import { run } from '../utils/shell.js';
 import { hasUncommittedTrackedChanges } from '../utils/git.js';
 import { upsertBuilder } from '../state.js';
+import { DEFAULT_ARCHITECT_NAME } from '../utils/architect-name.js';
+
+/**
+ * Spec 755: the spawning architect's name comes from the env var that Tower
+ * injects into every architect terminal it starts (`CODEV_ARCHITECT_NAME`).
+ * Falls back to 'main' when `afx spawn` runs outside any architect terminal —
+ * the legacy single-architect case stays correct.
+ *
+ * Read once at module load. `afx spawn` is one-shot per CLI invocation, and
+ * the env var doesn't change mid-run.
+ */
+const SPAWNING_ARCHITECT_NAME =
+  (process.env.CODEV_ARCHITECT_NAME && process.env.CODEV_ARCHITECT_NAME.trim()) || DEFAULT_ARCHITECT_NAME;
 import { loadRolePrompt } from '../utils/roles.js';
 import { buildAgentName, stripLeadingZeros } from '../utils/agent-names.js';
 import { fetchIssue as fetchIssueNonFatal } from '../../lib/github.js';
@@ -440,6 +453,7 @@ async function spawnSpec(options: SpawnOptions, config: Config): Promise<void> {
   upsertBuilder({
     id: builderId, name: specName, status: 'implementing', phase: 'init',
     worktree: worktreePath, branch: branchName, type: 'spec', issueNumber, terminalId,
+    spawnedByArchitect: SPAWNING_ARCHITECT_NAME,
   });
 
   logSpawnSuccess(`Builder ${builderId}`, terminalId, mode);
@@ -514,6 +528,7 @@ async function spawnTask(options: SpawnOptions, config: Config): Promise<void> {
     name: `Task: ${taskText.substring(0, 30)}${taskText.length > 30 ? '...' : ''}`,
     status: 'implementing', phase: 'init',
     worktree: worktreePath, branch: branchName, type: 'task', taskText, terminalId,
+    spawnedByArchitect: SPAWNING_ARCHITECT_NAME,
   });
 
   logSpawnSuccess(`Builder ${builderId}`, terminalId);
@@ -571,6 +586,7 @@ async function spawnProtocol(options: SpawnOptions, config: Config): Promise<voi
     id: builderId, name: `Protocol: ${protocolName}`,
     status: 'implementing', phase: 'init',
     worktree: worktreePath, branch: branchName, type: 'protocol', protocolName, terminalId,
+    spawnedByArchitect: SPAWNING_ARCHITECT_NAME,
   });
 
   logSpawnSuccess(`Builder ${builderId}`, terminalId);
@@ -595,6 +611,7 @@ async function spawnShell(options: SpawnOptions, config: Config): Promise<void> 
     id: shellId, name: 'Shell session',
     status: 'implementing', phase: 'interactive',
     worktree: '', branch: '', type: 'shell', terminalId,
+    spawnedByArchitect: SPAWNING_ARCHITECT_NAME,
   });
 
   logSpawnSuccess(`Shell ${shellId}`, terminalId);
@@ -645,6 +662,7 @@ async function spawnWorktree(options: SpawnOptions, config: Config): Promise<voi
     status: 'implementing', phase: 'interactive',
     worktree: worktreePath, branch: branchName, type: 'worktree',
     terminalId: worktreeTerminalId,
+    spawnedByArchitect: SPAWNING_ARCHITECT_NAME,
   });
 
   logSpawnSuccess(`Worktree ${builderId}`, worktreeTerminalId);
@@ -785,6 +803,7 @@ async function spawnBugfix(options: SpawnOptions, config: Config): Promise<void>
     name: `Bugfix #${issueNumber}: ${issue.title.substring(0, 40)}${issue.title.length > 40 ? '...' : ''}`,
     status: 'implementing', phase: 'init',
     worktree: worktreePath, branch: branchName, type: 'bugfix', issueNumber, terminalId,
+    spawnedByArchitect: SPAWNING_ARCHITECT_NAME,
   });
 
   logSpawnSuccess(`Bugfix builder for issue #${issueNumber}`, terminalId, mode);
