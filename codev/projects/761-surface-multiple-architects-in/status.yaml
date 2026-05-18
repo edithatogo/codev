@@ -24,7 +24,7 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: false
+build_complete: true
 history:
   - iteration: 1
     plan_phase: phase_1
@@ -43,4 +43,4 @@ history:
         file: >-
           /Users/mwk/Development/cluesmith/codev/.builders/spir-761/codev/projects/761-surface-multiple-architects-in/761-phase_1-iter1-claude.txt
 started_at: '2026-05-18T20:34:36.514Z'
-updated_at: '2026-05-18T21:19:31.116Z'
+updated_at: '2026-05-18T21:31:29.242Z'
