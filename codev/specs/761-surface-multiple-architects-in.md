@@ -1,4 +1,4 @@
-# Specification: Surface Multiple Architects in Tower Dashboard, VSCode Extension, and `afx status`
+# Specification: Surface Multiple Architects in Tower Dashboard (3.0.6 hotfix)
 
 ## Metadata
 - **ID**: 761-surface-multiple-architects-in
@@ -7,6 +7,23 @@
 - **Protocol**: SPIR
 - **GitHub Issue**: #761
 - **Predecessor**: spec/PR #755 / #757
+- **Target release**: 3.0.6 (hotfix on top of Ionic 3.0.5)
+
+## Architect Slicing Decision (2026-05-18)
+
+**This spec's v1 ships dashboard tabs only.** The architect directed (2026-05-18T20:48Z) that the minimum shippable slice for 3.0.6 is the single browser-side change that unblocks the external customer: rendering one tab per architect in the Tower dashboard so the sibling-architect terminal is **clickable from a browser**.
+
+**Concretely, v1 (this PR) ships**:
+1. `/api/state` exposes the full architects collection (with names) alongside the preserved scalar pointer.
+2. The dashboard renders one tab per architect when N > 1; single-architect workspaces look identical to today.
+
+**v1 explicitly defers** (each spun out as its own follow-up issue after this merges):
+- **VS Code extension Workspace sidebar** (lists all architects in the tree view).
+- **`afx status` formatter** (architect names header + `--architect <name>` builder filter).
+
+**Why slice this way**: shipping 3.0.5 with the routing primitive but no browser-side surface was a customer-impact mistake (the sibling architect is registered, addressable by routing, but invisible to the human). The browser tab is the single change that turns "routing works in theory" into "feature is usable end-to-end" — every other surface (VSCode, CLI) is a quality-of-life improvement on top of an already-usable feature. The customer is blocked specifically on the browser flow. Velocity through 3.0.6 matters more than completeness across all surfaces in one PR.
+
+The rest of this spec is written to v1 scope. Sections that previously described VSCode and `afx status` work are now marked "deferred" and retained briefly as forward references; full re-specification will happen in the follow-up issues at the time those slices are pulled in.
 
 ## Problem Statement
 
@@ -55,33 +72,42 @@ A sibling-architect workspace is visible and operable from every standard Codev 
 
 ## Scope
 
-### In scope (v1)
+### In scope (v1 — 3.0.6 hotfix)
 
-1. **`/api/state` exposes the full architects collection.** Add `architects: Array<{ name, terminalId, port, pid, persistent }>` (or an equivalent keyed object — plan-phase decision) to the `DashboardState` response. The scalar `state.architect` field is preserved as a backward-compat convenience pointer to `main` (or first registered), with the same shape it has today. The plan phase audits consumers and decides whether to deprecate it; the spec only requires that *both* shapes are valid at the response level for one release cycle so the dashboard and VS Code extension can migrate independently.
+Two coupled changes; both required for v1 to be useful end-to-end:
+
+1. **`/api/state` exposes the full architects collection.** Add `architects: Array<{ name, terminalId, port, pid, persistent }>` to the `DashboardState` response. The scalar `state.architect` field is preserved unchanged as a backward-compat convenience pointer to `main` (or first registered) so VSCode extension users on older builds continue to work. Both fields are returned simultaneously in v1; deprecation of the scalar is a follow-up decision tracked outside this spec.
+
+   **Implementation notes the plan must address** (called out by Gemini's spec review):
+   - The response shape is defined in **two places** that must stay in sync: the shared interface `DashboardState` in `packages/types/src/api.ts:51-60` AND the inline type literal in `tower-routes.ts:1452-1461` inside `handleWorkspaceState`. The plan must update both, or refactor to import from `@cluesmith/codev-types`.
+   - v1 does **not** add `spawnedByArchitect` to the builders returned by `/api/state`. That field is only needed by the deferred `afx status --architect <name>` filter; surfacing it requires expanding the in-memory `WorkspaceTerminals.builders` cache (currently `Map<string, string>` = builderId → terminalId) to carry architect-name metadata, or doing per-builder `state.db` lookups in the API handler. Both are reasonable but neither is needed for v1. The follow-up issue that picks up `afx status` decides this.
 
 2. **Dashboard renders one tab per architect when N > 1.**
-   - **Tab label** = architect name (`main`, `architect-2`, or whatever custom name was supplied).
-   - **Tab body** = that architect's terminal, rendered the same way the single architect terminal is rendered today (xterm WebSocket, `persistent` flag respected).
-   - **Active-tab persistence per workspace**: the active architect is remembered in `localStorage` keyed by workspace path, so a page refresh returns the user to the same architect they were viewing. The persistence key is plan-phase-defined.
-   - **Layout placement**: on desktop, the architect terminals live in the left pane of the existing SplitPane. When N = 1 the pane contains a single bare terminal (no tab strip — current visual exactly). When N > 1 the pane gains a small tab strip *inside the pane* listing the N architects; the body shows the active architect's terminal. On mobile, architect tabs appear in the main TabBar like builder/shell tabs do today; with N > 1 there are N architect-typed entries.
-   - **Deep linking**: `?tab=architect` continues to select the first architect tab (backward compat). `?tab=architect:<name>` selects the named architect tab. The colon separator follows the existing pattern; the plan phase confirms or proposes an alternative.
-   - **Single-architect appearance unchanged**: when N = 1, no architect tab strip is rendered in the left pane; the visual is byte-identical to today's single-architect dashboard.
+   - **Tab label** = architect name (`main`, `architect-2`, or whatever custom name was supplied via `afx workspace add-architect --name <name>`).
+   - **Tab body** = that architect's terminal, rendered the same way the single architect terminal is rendered today (xterm WebSocket, `persistent` flag respected, `activatedTerminals` lazy-mount pattern preserved).
+   - **Active-tab persistence per workspace**: the active architect's name is remembered in `localStorage` keyed by workspace path, so a page refresh returns the user to the architect they were viewing. The persistence key is plan-phase-defined (collision audit required).
+   - **Layout placement on desktop**: the architect terminals live in the left pane of the existing SplitPane. When N = 1 the pane contains a single bare terminal (no tab strip — current visual exactly). When N > 1 the pane gains a small tab strip *inside the pane* listing the N architects; the body shows the active architect's terminal. The SplitPane and its collapse-pane behaviour are unchanged.
+   - **Layout placement on mobile**: architect tabs appear in the main TabBar like builder/shell tabs do today; with N > 1 there are N architect-typed entries. With N = 1, the single architect tab renders identically to today.
+   - **Deep linking**: `?tab=architect` continues to select the first architect tab (the existing `useTabs.ts` match-by-type at line 87 naturally falls back to the first `type: 'architect'` tab — Gemini confirmed this requires no new logic). `?tab=architect:<name>` selects the named architect tab; unknown name falls back to the default.
+   - **WebSocket lifecycle when switching architect tabs** (called out by Claude's spec review): the existing `activatedTerminals` Set in `App.tsx:39` already implements lazy mount + keep-alive — terminals are mounted on first visit and stay mounted (hidden via CSS `display: none`) thereafter. The plan extends this to architect tabs: each architect terminal is mounted on first visit; all N WebSocket connections stay alive across tab switches. This matches existing builder/shell terminal behaviour and avoids reconnect-flicker. Acceptable resource cost for realistic N ≤ 5.
+   - **Single-architect appearance unchanged**: when N = 1, no architect tab strip is rendered in the left pane; the visual is structurally identical (DOM-snapshot identical) to today's single-architect dashboard. "Structurally identical" rather than "byte-identical" is the precise requirement (Claude flagged that literal byte equality is awkward to assert in React rendering).
 
-3. **VS Code extension Workspace sidebar lists all architects.** Replace the single `TreeItem('Open Architect')` with one row per registered architect. Each row's label is the architect's name (`main`, `architect-2`, …); each row's command opens that architect's terminal in a VS Code tab named `Codev: <name> (architect)`. When N = 1 the sidebar shows exactly one row labelled `main` — visually almost identical to today's "Open Architect" (the label change from `Open Architect` to `main` is the only delta, and is necessary so users learn the name they will use for routing). Plan phase decides whether to add `(architect)` suffix on the row label for clarity, or rely on the section header / icon.
+3. **Backward compatibility**:
+   - Single-architect workspaces see **no behavior change** in either of the two in-scope surfaces (dashboard layout, `/api/state` consumers).
+   - The scalar `state.architect` field on `/api/state` is preserved.
+   - The `?tab=architect` deep-link path continues to land on a valid architect tab.
 
-4. **`afx status` shows architect names.** Add a header line (or section) listing registered architects by name alongside builders. Example shape (final formatting is plan-phase):
-   ```
-   Architects: main, sibling
-   ```
-   When Tower is running, this is read from `/api/state` via the new `architects` collection. When Tower is not running, it is read from `state.db`'s `architect` table (which already stores `id TEXT` = name).
+### Deferred to follow-up issues (NOT in v1)
 
-5. **`afx status --architect <name>` filters builders.** Adds a `--architect <name>` flag on `afx status`. When set, the builders list is filtered to those whose `spawned_by_architect = <name>`. Unknown name fails with a clear error listing the registered architects. Flag name confirmed in plan phase (the issue text proposes `--architect`; `--owned-by` is a plausible alternative — plan phase to pick one and document the rationale).
+These were originally in the issue body's "Required" list and the spec's earlier scope. The architect's 2026-05-18 directive moved them to follow-up issues to keep 3.0.6 small and fast:
 
-6. **Backward compatibility**:
-   - Single-architect workspaces see **no behavior change** in any of the four surfaces (dashboard layout, VSCode sidebar, `afx status` output, `/api/state` consumers).
-   - The scalar `state.architect` field on `/api/state` is preserved for at least this release cycle so VSCode extension users who have not yet updated continue to work.
-   - The `?tab=architect` deep-link path continues to land on a valid architect tab (the first one, or `main`).
-   - Existing `afx status` output for solo-architect workspaces is byte-stable except for one new line: the `Architects: main` header. (If this line is judged visually disruptive for solo users in plan-phase consultation, the plan may opt to omit it when N = 1; the spec requires only that names are *available* in the output, not that they always appear as a header.)
+- **VS Code extension Workspace sidebar listing all architects.** Replaces single `TreeItem('Open Architect')` with one row per architect. Each row opens its terminal in a VS Code tab `Codev: <name> (architect)`. **Follow-up issue must address the `terminalManager.openArchitect` map-key collision Gemini flagged** (`terminals.get('architect')` is keyed by literal `'architect'` today; multi-architect requires `architect-${name}` keying or it will re-focus the first tab silently). The follow-up issue also must make `WorkspaceProvider.getChildren()` async and fetch `client.getWorkspaceState()`, since today's TreeProvider returns static items only. Tracked separately.
+
+- **`afx status` architect-names header.** Add a header line listing registered architects by name. Source-of-truth audit required at follow-up: the spec's earlier draft had a contradiction between `getWorkspaceStatus()` (returns `InstanceStatus` — no architect names) and `getWorkspaceState()` (returns `DashboardState` — has names). The follow-up issue standardises on `getWorkspaceState()`. Tracked separately.
+
+- **`afx status --architect <name>` builder filter.** Filters the builders list to those with `spawned_by_architect = <name>`. Requires either (a) expanding `WorkspaceTerminals.builders` to carry architect-name metadata, (b) on-the-fly `state.db` query in the `/api/state` handler, or (c) reading `state.db` directly from the CLI. Decision is part of the follow-up issue.
+
+These follow-ups are tightly coupled to v1's `/api/state` change (they consume the new `architects` collection), but they do not block 3.0.6 from shipping.
 
 ### Out of scope (deferred follow-ups)
 
@@ -95,12 +121,15 @@ These remain as separate follow-up issues and would not be unblocked by 761.
 
 ### Explicitly NOT in scope
 
-- **No routing logic touched.** The affinity-routing primitive (builder → spawning architect) is already in place from PR #757. This spec only changes the user-facing surface.
-- **No new architect-identity model.** Names are the identity, exactly as established in spec #755. No new fields on `ArchitectState`, `Builder`, or related types beyond what's needed to surface existing names.
-- **No new architect-creation CLI.** `afx workspace add-architect --name <name>` from #755 stays as the way to create additional architects. 761 does not add a creation surface inside the dashboard or VS Code.
-- **No multi-architect-aware send.** `afx send architect` continues to use the builder's recorded `spawnedByArchitect` for routing. The dashboard / VS Code do not gain a "send to architect by name" UI.
+- **No routing logic touched.** The affinity-routing primitive (builder → spawning architect) is already in place from PR #757. This spec only changes the dashboard surface.
+- **No new architect-identity model.** Names are the identity, exactly as established in spec #755. The only new field on existing types is `name: string` on `ArchitectState` (already implicitly there since the in-memory `WorkspaceTerminals.architects` map is keyed by name).
+- **No new architect-creation CLI.** `afx workspace add-architect --name <name>` from #755 stays as the way to create additional architects. 761 does not add a creation surface inside the dashboard.
+- **No multi-architect-aware send.** `afx send architect` continues to use the builder's recorded `spawnedByArchitect` for routing. The dashboard does not gain a "send to architect by name" UI.
 - **No name-rename UI.** Architect names are set at registration and immutable for v1. Renaming is left for a future spec if demand arises.
-- **No removal of the scalar `state.architect` field on `/api/state`.** The spec keeps it as a backward-compat pointer; a follow-up spec may deprecate and remove it once all consumers (including external clients) have migrated.
+- **No removal of the scalar `state.architect` field on `/api/state`.** The spec keeps it as a backward-compat pointer; a follow-up spec may deprecate and remove it once all consumers have migrated.
+- **No `spawnedByArchitect` on `/api/state` builders.** Deferred to the `afx status` follow-up that actually needs it.
+- **No VS Code extension changes in this PR.** Deferred — see "Deferred to follow-up issues" above.
+- **No `afx status` changes in this PR.** Deferred — see "Deferred to follow-up issues" above.
 
 ## Stakeholders
 
@@ -111,30 +140,29 @@ These remain as separate follow-up issues and would not be unblocked by 761.
 
 ## Success Criteria
 
-- [ ] In a workspace with two architects (`main` + `sibling`), the Tower dashboard shows two architect tabs labelled `main` and `sibling`. Clicking each opens its terminal.
-- [ ] Active architect tab is persisted per workspace in `localStorage`; page refresh restores the previously-selected architect.
-- [ ] In the same workspace, the VS Code extension Workspace sidebar shows two rows, one per architect; clicking each opens that architect's terminal as a VS Code tab named `Codev: <name> (architect)`.
-- [ ] `afx status` in the multi-architect workspace shows both architect names (header line or equivalent).
-- [ ] `afx status --architect main` filters the builders list to only builders whose `spawned_by_architect = 'main'`. `afx status --architect sibling` filters to sibling's builders. `afx status --architect nonexistent` exits with non-zero status and prints an error listing the registered architects.
-- [ ] `/api/state` response includes an `architects` array (or keyed object) listing every registered architect with name, terminalId, port, pid, persistent. The scalar `state.architect` field continues to be returned and points to `main` (or first registered).
-- [ ] A single-architect workspace (only `main`) shows **byte-identical** dashboard layout, VSCode sidebar rendering, and `afx status` output to the pre-#761 baseline — modulo the one new `Architects: main` line in `afx status`, which the plan phase may suppress for N = 1 if that's preferred (the spec only requires that name-discovery is *possible*, not that it is always displayed when N = 1).
-- [ ] Deep link `?tab=architect` continues to land on a valid architect tab (defined as `main` if present, else first registered). Deep link `?tab=architect:<name>` lands on the named architect's tab; unknown name falls back to the default.
-- [ ] All existing tests pass; new tests cover the routing matrix:
-  - Dashboard: tab-strip presence for N>1, absence for N=1, active-tab persistence across reload, deep-link `?tab=architect` and `?tab=architect:<name>`.
-  - VSCode extension: tree-view rendering for N=1 and N=2; click-to-open command invokes the correct terminal ID.
-  - `afx status`: header presence for N>1, `--architect <name>` filter behaviour, unknown-name error text.
-  - `/api/state`: `architects` collection contents, scalar `architect` preserved, both shapes consistent with the in-memory `WorkspaceTerminals.architects` map.
+- [ ] `/api/state` response includes an `architects` array listing every registered architect with `{ name, terminalId, port, pid, persistent }`. The scalar `state.architect` field continues to be returned and points to `main` (or first registered).
+- [ ] The shared `DashboardState` interface in `packages/types/src/api.ts` and the inline type literal in `tower-routes.ts:handleWorkspaceState` are updated together; a unit or type-check test asserts they stay in sync (e.g. by importing the shared type into the handler, or by an automated assertion).
+- [ ] In a workspace with two architects (`main` + `sibling`), the Tower dashboard left pane (desktop) or main TabBar (mobile) shows a small architect tab strip with two entries labelled `main` and `sibling`. Clicking each switches the terminal body. Both terminals' WebSockets stay alive across tab switches (no reconnect-flicker).
+- [ ] Active architect tab name is persisted per workspace in `localStorage`; page refresh restores the previously-selected architect. Last-write-wins across multiple browser tabs is acceptable and documented.
+- [ ] A single-architect workspace (only `main`) shows a DOM-snapshot-identical dashboard layout to the pre-#761 baseline. No architect tab strip, no extra DOM nodes.
+- [ ] Deep link `?tab=architect` continues to land on a valid architect tab (the first one returned by `state.architects`, which equals `main` if present). Deep link `?tab=architect:<name>` lands on the named architect's tab; unknown name falls back to the default with no error toast.
+- [ ] All existing tests pass; new tests cover:
+  - **`/api/state`**: `architects` collection contents match the in-memory `entry.architects` map (single and multi-architect cases); scalar `architect` is preserved and points to `main` or first.
+  - **Type sync**: `tower-routes.ts` inline response type cannot drift from `DashboardState`. Either enforced by importing or by an explicit assertion test.
+  - **Dashboard tabs**: tab-strip presence for N>1, absence for N=1, active-tab `localStorage` persistence across reload, deep-link routing including `?tab=architect:<name>` and fallback for unknown name.
+  - **Persistent terminal mount**: switching between architect tabs does not unmount existing terminals (extend the existing `activatedTerminals` test patterns).
+- [ ] Single-architect users (the dominant population) see no visible difference in either the dashboard or in `/api/state` consumers that ignore unknown fields.
 
 ## Constraints
 
 ### Technical constraints
 
-- **No routing logic change.** Only `/api/state`, the dashboard React layer, the VS Code extension tree view, the `afx status` command, and possibly `getTerminalsForWorkspace`'s terminal-emission may be touched. Spec #755's three security rules and the `from`-aware `resolveTarget` path are not in scope and not modified.
-- **Backward-compatible `/api/state` shape.** Adding `architects` is fine; removing or renaming `architect` is not. External consumers (the VSCode extension on user machines that haven't updated, possibly cron jobs) may depend on the scalar shape and must continue to work.
-- **No new SQLite migrations.** All data needed is already persisted by spec #755's v13 migration (`architect.id` = name, `builders.spawned_by_architect` = name). The spec calls out no schema change.
+- **No routing logic change.** Only `/api/state`, the dashboard React layer, and possibly `getTerminalsForWorkspace`'s terminal-emission may be touched in v1. Spec #755's three security rules and the `from`-aware `resolveTarget` path are not in scope and not modified.
+- **Backward-compatible `/api/state` shape.** Adding `architects` is fine; removing or renaming `architect` is not. External consumers (the unupgraded VSCode extension is the most-cited example) may depend on the scalar shape and must continue to work.
+- **Two type definitions must stay in sync.** The `DashboardState` interface lives in `packages/types/src/api.ts`. An inline duplicate of the response shape lives in `tower-routes.ts:handleWorkspaceState`. v1 must update both, or refactor to remove the duplication. The plan picks the approach; the spec requires that drift is structurally prevented (compile-time import, or asserted test).
+- **No new SQLite migrations.** All data needed is already persisted by spec #755's v13 migration (`architect.id` = name). No schema change in v1.
 - **Dashboard layout stability.** The current SplitPane (architect left, work/builders right) is load-bearing for muscle memory. Multi-architect rendering must not move the architect terminals out of the left pane on desktop, must not lose the `?tab=` deep-link path, and must not break the existing `--no-architect` empty-state ("No architect terminal").
-- **VS Code extension TreeView**: must remain in the existing Workspace section of the sidebar. The plan phase may decide whether architects render as flat siblings of "Open Web Interface" (simplest) or as children of a parent "Architects" group node (cleaner when N > 2).
-- **`afx status` output formatting**: must remain readable on a standard terminal width (80 cols). Architect names follow the `[a-z][a-z0-9-]*` charset from #755 (max 64 chars), so a header line is feasible without wrapping in realistic cases.
+- **Persistent WebSocket model preserved.** The existing `activatedTerminals` lazy-mount + keep-alive pattern in `App.tsx` (Bugfix #205) must be extended to architect tabs, not replaced. Tab switching must not trigger Terminal unmount/remount.
 - **Tab-strip empty state**: when an architect terminal is registered but its PTY session has died (`session.status !== 'running'`), the tab strip should still show the architect (greyed out / with a status indicator) — or alternatively omit it. Plan-phase decision; the spec only requires that the surface does not crash on a dead architect.
 
 ### Business constraints
@@ -171,17 +199,16 @@ Each layer can be implemented and reviewed in its own commit; the plan phase wil
 
 ### Important (affects design)
 
-- [ ] **Should the scalar `state.architect` field be deprecated in 761 or in a follow-up?** The plan phase audits external consumers (VSCode extension on older versions, any cron / scripted consumer) and recommends. The spec assumes "keep it, deprecate later."
-- [ ] **Tab strip placement when N > 1 on desktop.** Inside the left pane is the cleaner option (the architect terminals stay in their pane). Plan-phase decision on whether the strip is *above* the terminal (like the right-pane TabBar) or *below* / inside a header bar of the left pane. The spec only requires that the strip exists and persists active selection.
+- [ ] **Tab strip placement on desktop.** Inside the left pane is the cleaner option (architect terminals stay in their pane). Plan-phase to decide whether the strip is *above* the terminal (small horizontal tab row, like the right-pane TabBar) or rendered as a left-vertical strip / dropdown header. The spec only requires that the strip exists, persists active selection, and respects the existing pane-collapse behaviour.
 - [ ] **Tab-strip behaviour for dead architect terminals** (PTY session ended but registration still in `entry.architects`). Plan-phase to decide: omit, grey-out with a status indicator, or show with a click-to-restart affordance.
-- [ ] **Flag name for `afx status` builder filter.** `--architect <name>` (issue's example) or `--owned-by <name>` or `--spawned-by <name>`. Plan-phase to pick one and document the rationale.
-- [ ] **VS Code sidebar grouping.** Flat list (N rows of architects mixed with "Open Web Interface") or nested under a parent "Architects" group node when N > 2. Plan-phase to decide; either preserves the N=1 visual.
-- [ ] **`afx status` header line when N = 1.** Show `Architects: main` always (one extra line vs today) or suppress when N = 1 (byte-stable output for solo users). Plan-phase to pick one; the spec requires only that the names are *available* somehow when N > 1.
+- [ ] **Deep-link separator.** `?tab=architect:<name>` is the spec's preferred shape. Plan-phase confirms or proposes a colon-free alternative (e.g. `?architect=<name>` as a separate param) if the colon parsing conflicts with existing URL handling.
+- [ ] **`localStorage` key naming.** Plan-phase audits existing dashboard `localStorage` keys (none assumed at spec time) and picks a non-colliding namespace.
 
 ### Nice-to-know (optimization)
 
-- [ ] **Active-tab persistence key collisions.** If a user opens the same workspace in two browser tabs simultaneously, both write to the same `localStorage` key. Plan-phase to confirm this is acceptable (last-write-wins) or pick a different store.
-- [ ] **Should the tab body show the architect's spawn time / uptime?** Adjacent to the deferred "richer architect status surface" follow-up. Out of scope for v1.
+- [ ] **Active-tab persistence key collisions across browser tabs.** If a user opens the same workspace in two browser tabs simultaneously, both write to the same `localStorage` key. Spec assumes this is acceptable (last-write-wins).
+- [ ] **`/api/state` polling vs SSE for newly-added architects.** If a second architect is added via `afx workspace add-architect` while the dashboard is already loaded, how does it appear? Claude flagged this in spec review. Today's dashboard polls `/api/state` (existing `useBuilderStatus` hook); the new architect appears on the next poll, and `useTabs` already auto-switches to genuinely-new tabs (`useTabs.ts:114-119`) — so the new architect would auto-select. The plan must verify this works for architect tabs (the existing skip condition is `tab.type !== 'architect'`, which would suppress auto-switch — see `useTabs.ts:115`). Resolve: invert that skip for architect tabs added post-load (treat them like builders), or leave them at user-explicit selection. Plan-phase decision.
+- [ ] **Should the tab body show the architect's spawn time / uptime?** Adjacent to a deferred "richer architect status surface" follow-up. Out of scope.
 
 ## Performance Requirements
 
@@ -200,21 +227,21 @@ Each layer can be implemented and reviewed in its own commit; the plan phase wil
 
 ### Functional
 
-1. **Single-architect baseline (regression).** One architect named `main`. Dashboard renders no tab strip in the left pane; VS Code sidebar shows one row (label TBD by plan); `afx status` shows the architect name in some form (header line or single-arch path). `/api/state` returns scalar `architect: { ..., name: 'main' }` AND `architects: [{ name: 'main', ... }]`. The dashboard layout is byte-identical to the pre-761 visual.
-2. **Two architects, dashboard tabs.** Workspace with `main` + `sibling`. Dashboard left pane shows a tab strip with two entries labelled `main` and `sibling`. Clicking each switches the terminal body. Selection persists across page reload (`localStorage`). Deep link `?tab=architect:sibling` opens sibling. Deep link `?tab=architect` opens main (backward compat).
-3. **Two architects, VS Code sidebar.** Same workspace. Sidebar shows two rows, labelled `main` and `sibling`. Clicking each opens a VS Code terminal tab named `Codev: main (architect)` / `Codev: sibling (architect)`.
-4. **Two architects, `afx status`.** Same workspace. Output includes both architect names. `afx status --architect main` lists only main's builders. `afx status --architect sibling` lists only sibling's builders. `afx status --architect ghost` exits non-zero with the documented error text.
-5. **Three architects.** Same shape as scenario 2/3/4 but with `main`, `architect-2`, `architect-3`. Tab strip / sidebar rows / status header all show three entries.
-6. **Dead architect terminal.** Architect `sibling` is registered (still in `entry.architects`) but its PTY has exited (`session.status !== 'running'`). Dashboard does not crash; the tab is either omitted or visibly indicates dead state (plan-phase decision); `afx status` lists the name still. (Behaviour pinned in the plan, not this spec.)
-7. **Active-tab persistence across browser tabs.** User opens the workspace in two browser tabs, selects different architects in each, then refreshes one. The refreshed tab restores the architect that was last selected in *that* localStorage state (last-write-wins). Documented as acceptable.
-8. **Deep link with unknown name.** `?tab=architect:ghost` falls back to the default architect (`main` or first). No crash, no error toast. Tested in unit test.
-9. **`/api/state` shape.** Response includes both `architect` (scalar, == main or first) and `architects` (array, all registered). Both are consistent with the in-memory `WorkspaceTerminals.architects` map. Tested.
+1. **Single-architect baseline (regression).** Workspace has one architect (`main`). `/api/state` returns scalar `architect: { ..., terminalId, ... }` AND `architects: [{ name: 'main', terminalId, ... }]`. Dashboard renders no tab strip in the left pane; the architect terminal fills the pane as today. DOM-snapshot identical to pre-761 baseline.
+2. **Two architects, dashboard tabs.** Workspace with `main` + `sibling`. `/api/state` returns `architects: [main, sibling]`. Dashboard left pane shows a tab strip with two entries labelled `main` and `sibling`. Clicking each switches the visible terminal body without unmounting either. Both WebSockets remain alive after switching. Selection persists across page reload via `localStorage`. Deep link `?tab=architect:sibling` opens sibling. Deep link `?tab=architect` opens main (backward compat).
+3. **Three architects.** Workspace with `main`, `architect-2`, `architect-3`. Tab strip shows three entries. Each click works; `localStorage` round-trip works for each.
+4. **Newly-added architect, dashboard already loaded.** User has the dashboard open. Architect adds a second architect via `afx workspace add-architect --name sibling`. On next `/api/state` poll, a `sibling` tab appears in the strip. Auto-switch behaviour matches plan-phase decision (the existing `useTabs.ts:114-119` auto-switch logic with architects either re-enabled or kept suppressed).
+5. **Dead architect terminal.** Architect `sibling` is registered (still in `entry.architects`) but its PTY has exited. Dashboard does not crash; tab is either omitted or visibly indicates dead state (plan-phase pinned).
+6. **Active-tab persistence across browser tabs (concurrent).** User opens the workspace in two browser tabs, selects different architects in each, refreshes one. The refreshed tab restores the architect that was last selected in *that* localStorage state (last-write-wins). Documented as acceptable.
+7. **Deep link with unknown name.** `?tab=architect:ghost` falls back to the default architect tab. No crash, no error toast.
+8. **`/api/state` collection vs scalar consistency.** Response includes both `architect` (scalar, == `main` or first) and `architects` (array, all registered). For all valid `entry.architects` states, the two views are consistent.
+9. **Type-sync guard.** A unit / type-check test (or compile-time import) ensures `DashboardState` in `packages/types/src/api.ts` and the inline type in `tower-routes.ts:handleWorkspaceState` cannot drift.
 
 ### Non-functional
 
-1. **Payload latency parity.** `/api/state` response size in a single-architect workspace is within a few bytes of today's response. No measurable client-side parse-time impact.
-2. **Render flicker.** Switching architect tabs in the dashboard does not trigger a Terminal unmount/remount (terminals are persistent per the existing `activatedTerminals` mechanism in `App.tsx`). Verified via existing terminal-persistence test patterns.
-3. **No `afx status` regression for solo users.** With N = 1 the command's output is either byte-stable with today's, or differs only by the agreed-upon one-line `Architects: main` header (plan-phase decision).
+1. **Payload latency parity.** `/api/state` response size in a single-architect workspace is within a small constant overhead of today's response (one extra `architects` array with one entry). No measurable client-side parse-time impact.
+2. **Render flicker.** Switching architect tabs in the dashboard does not trigger a Terminal unmount/remount. Verified via existing terminal-persistence test patterns (Bugfix #205 / Bugfix #524 test families).
+3. **No regression for solo users.** With N = 1, dashboard DOM is structurally identical to pre-761; `/api/state` is shape-stable (scalar `architect` field unchanged).
 
 ## Dependencies
 
@@ -229,17 +256,18 @@ Each layer can be implemented and reviewed in its own commit; the plan phase wil
 - `codev/plans/755-multi-architect-support-per-ar.md`
 - `codev/reviews/755-multi-architect-support-per-ar.md`
 
-**Surface call sites to touch**:
-- `packages/codev/src/agent-farm/servers/tower-routes.ts:1443-1537` — `handleWorkspaceState` / `/api/state` handler.
-- `packages/codev/src/agent-farm/servers/tower-terminals.ts:722-946` — `getTerminalsForWorkspace`; emits `TerminalEntry` for the architect surface.
-- `packages/codev/src/agent-farm/servers/tower-instances.ts:200-208` — `getInstances()`; scalar `architectUrl`.
-- `packages/codev/src/agent-farm/servers/tower-types.ts:71-79` — `InstanceStatus.architectUrl` (decide: extend to collection, or leave scalar as a backward-compat pointer).
-- `packages/types/src/api.ts:11-16,51-60` — `ArchitectState` and `DashboardState` interfaces; add `architects` collection field, gain `name` on `ArchitectState`.
+**Surface call sites for v1 (in scope)**:
+- `packages/codev/src/agent-farm/servers/tower-routes.ts:1443-1537` — `handleWorkspaceState` / `/api/state` handler. **Note dual type definition** (inline literal at 1452-1461).
+- `packages/codev/src/agent-farm/servers/tower-terminals.ts:722-946` — `getTerminalsForWorkspace`; emits `TerminalEntry` for the architect surface (currently collapses to one entry; plan to emit one per architect — or keep one entry and have the dashboard read the new collection separately, decision is plan-phase).
+- `packages/types/src/api.ts:11-16,51-60` — `ArchitectState` (gains `name: string`) and `DashboardState` (gains `architects: ArchitectState[]`).
 - `packages/dashboard/src/hooks/useTabs.ts:17-99` — tab construction and deep-link handling.
-- `packages/dashboard/src/components/App.tsx:113-149,184-238,256` — left-pane SplitPane content, right-pane TabBar filter.
-- `packages/vscode/src/views/workspace.ts:23-51` — sidebar TreeView.
-- `packages/vscode/src/extension.ts:140-157` — `codev.openArchitectTerminal` command implementation.
-- `packages/codev/src/agent-farm/commands/status.ts:44-92` — status formatter (both Tower-running and Tower-not-running paths).
+- `packages/dashboard/src/components/App.tsx:39,76-87,113-149,184-238,256` — `activatedTerminals` state, left-pane SplitPane content, right-pane TabBar filter.
+
+**Call sites NOT touched in v1 (deferred)**:
+- `packages/vscode/src/views/workspace.ts:23-51` — sidebar TreeView. Deferred follow-up.
+- `packages/vscode/src/extension.ts:140-157` — `codev.openArchitectTerminal` command. Deferred follow-up. **Map-key collision in `terminalManager.openArchitect` flagged by Gemini must be addressed at that time.**
+- `packages/codev/src/agent-farm/commands/status.ts:44-92` — status formatter. Deferred follow-up.
+- `packages/codev/src/agent-farm/servers/tower-instances.ts:200-208` — `getInstances()` / scalar `architectUrl`. Stays scalar for v1 (matches `state.architect` scalar preservation).
 
 **Identity model and data persistence (already in place; reference, not modified)**:
 - `packages/codev/src/agent-farm/types.ts:7-19` — `Builder.spawnedByArchitect`.
@@ -249,20 +277,59 @@ Each layer can be implemented and reviewed in its own commit; the plan phase wil
 
 | Risk | Probability | Impact | Mitigation |
 |------|-------------|--------|------------|
-| Single-architect users see a visual regression (extra tab strip, extra header line) | Medium | Medium | Hard constraint that N=1 renders byte-identically to today, validated by snapshot / DOM-presence tests on dashboard and explicit byte-stability assertion on `afx status` output (or explicit acceptance of the one-line header as a documented diff). |
-| Adding `architects` to `/api/state` breaks an external consumer that asserts on the response shape | Low | Medium | Scalar `state.architect` is preserved unchanged; new field is additive. Consumers that ignore unknown fields (the JSON convention) are unaffected. |
+| Single-architect users see a visual regression (extra tab strip, extra DOM nodes) | Medium | Medium | Hard constraint that N=1 renders DOM-snapshot-identical to today, validated by snapshot / DOM-presence tests on dashboard. |
+| Adding `architects` to `/api/state` breaks an external consumer that asserts on the response shape | Low | Medium | Scalar `state.architect` is preserved unchanged; new field is additive. JSON consumers that ignore unknown fields are unaffected. |
 | Dashboard tab strip introduces a layout bug when the user collapses the left pane (`collapsedPane === 'left'`) | Medium | Medium | The tab strip lives inside the left pane and follows the pane's visibility. Existing collapse-pane tests cover the layout; new tests verify tab-strip behaviour under collapse. |
-| Active-tab persistence collides with an existing `localStorage` key | Low | Low | Plan-phase audits existing `localStorage` keys (dashboard already uses some) and picks a non-colliding namespace; documented in the plan. |
-| VS Code extension's older versions deployed on user machines still expect the scalar field | Medium | Medium | Scalar is preserved (Scope item 1). Extension users will see the new sidebar rows only after updating to the new extension build; the old extension renders only the scalar as today and continues to work. |
-| `afx status --architect <name>` name parsing ambiguity (e.g., name with a hyphen looking like a flag) | Low | Low | Names follow `[a-z][a-z0-9-]*` per #755; argument parser passes the value after `--architect` literally. Test covers `architect-2`, `architect-3`. |
-| Plan phase under-scopes the `getTerminalsForWorkspace` change and the architects collection diverges from `InstanceStatus.terminals` | Medium | Medium | Plan must enumerate the change to terminal-entry emission explicitly. Test asserts the two collections agree for a given workspace state. |
+| Active-tab `localStorage` key collides with an existing key | Low | Low | Plan-phase audits existing `localStorage` keys and picks a non-colliding namespace. |
+| `DashboardState` and the inline `tower-routes.ts` type literal drift apart in a follow-up PR | Medium | Medium | Plan-phase enforces drift-prevention (import the shared type at compile time, or add an assertion test). Tracked as a Success Criterion. |
+| Existing `useTabs.ts` `tab.type !== 'architect'` auto-switch skip (line 115) suppresses the new architect tab from auto-focus when added post-load | Medium | Low | Plan-phase explicit decision: invert for architect tabs added post-load, or keep behaviour and require the user to click. Documented as an Open Question. |
+| Persistent WebSocket count grows with N | Low | Low | At realistic N (≤ 5), N WebSockets is comparable to the builder-count load already present today. No optimisation needed. |
+| Codex unavailable for this consultation round | Medium | Low | Two reviews (Gemini + Claude) cover the same checks. Architect decides whether to require codex re-review before approval. |
 
 ## Expert Consultation
 
 **Date**: 2026-05-18
-**Models Consulted**: TBD (pending consultation step)
+**Models Consulted**: Gemini 3 Pro, Claude Opus 4.7. **Codex unavailable** in this worktree environment due to a missing vendored binary (`@openai+codex@0.101.0-darwin-arm64/.../codex` directory empty in pnpm node_modules); two retries both failed with `ENOENT`. Builder unable to `pnpm rebuild` in this environment (permission denial). Architect to decide whether to require codex re-review before approval or accept gemini + claude.
 
-This section will be populated after the spec-phase 3-way consultation (Gemini, Codex, Claude). Convergent and model-specific findings will be addressed in the next iteration of this spec.
+### Verdicts (iteration 1)
+
+| Model | Verdict | Confidence |
+|-------|---------|------------|
+| Gemini | REQUEST_CHANGES | HIGH |
+| Claude | APPROVE | HIGH |
+| Codex | (unavailable) | — |
+
+### Convergent findings (addressed in this iteration)
+
+1. **Inline-type drift in `tower-routes.ts:handleWorkspaceState`.** Both Gemini and Claude noted that the API handler defines its response shape inline (`tower-routes.ts:1452-1461`) rather than importing `DashboardState`. Adding `architects` requires updating both. **Fix**: Constraints section now requires that drift is structurally prevented (compile-time import OR asserted test). Success Criteria adds an explicit type-sync test. References call this out at the file/line level.
+
+### Gemini-specific findings (REQUEST_CHANGES verdict — addressed by re-slicing)
+
+Gemini raised three CRITICAL issues. Two of them (`afx status` data-source contradiction and `terminalManager.openArchitect` map-key collision) only affect the deferred VSCode and `afx status` slices, which the architect's 2026-05-18 directive moved out of v1. The third (missing `spawnedByArchitect` on `/api/state` builders) is similarly only required by the deferred `afx status --architect` filter — v1 does not surface this field at all.
+
+**Fix**: the spec's scope is now sliced per the architect directive. Each of Gemini's three concerns is captured in the "Deferred to follow-up issues" section as a known-must-address item for the corresponding follow-up. None of them are v1 blockers.
+
+Gemini also flagged a non-critical issue:
+- **`workspace.ts` TreeProvider must be async** to fetch state. — Captured under the deferred VSCode follow-up.
+- **`?tab=architect` natural fallback in `useTabs.ts:87`.** — Gemini confirmed this works without extra logic since the existing match-by-type will pick the first architect tab. Noted in Scope item 2 (deep linking).
+
+### Claude-specific findings (APPROVE verdict — addressed)
+
+1. **WebSocket lifecycle across architect tabs.** Spec did not explicitly state whether all N architect WebSockets stay alive or only the visible one. **Fix**: Scope item 2 now explicitly extends the existing `activatedTerminals` lazy-mount + keep-alive pattern to architect tabs. All N WebSockets stay alive across tab switches. Acceptable resource cost at realistic N ≤ 5.
+
+2. **Inline-type drift.** Covered above as convergent.
+
+3. **"Byte-identical" too literal for React.** **Fix**: Success Criteria and Constraints now say "DOM-snapshot identical" instead of "byte-identical."
+
+4. **Architect registered while dashboard is open.** **Fix**: added to Open Questions (nice-to-know) with a specific resolution-needed item — `useTabs.ts:114-119` skip condition currently suppresses architect-tab auto-switch; the plan must decide whether to invert this for post-load-added architects.
+
+5. **`Open Architect` → `main` label change in VS Code (N=1 regression).** **Fix**: VS Code scope is deferred. The follow-up issue inherits this question.
+
+### Persisted consultation outputs
+
+- `codev/projects/761-surface-multiple-architects-in/761-spec-iter1-gemini.md`
+- `codev/projects/761-surface-multiple-architects-in/761-spec-iter1-claude.md`
+- (codex output absent — see note above)
 
 ## Approval
 
@@ -272,8 +339,12 @@ This section will be populated after the spec-phase 3-way consultation (Gemini, 
 
 ## Notes
 
-The architect's framing in issue #761 is unusually clear: the routing primitive is shipped, the four user-facing surfaces (`/api/state`, dashboard, VSCode, `afx status`) are explicitly named with required behaviour, and out-of-scope items are explicitly listed. This spec mostly translates that framing into testable acceptance criteria and pins the surface-area decisions (tab strip placement, deep-link extension, persistence key, `--architect` flag) for plan-phase resolution.
+The architect's 2026-05-18 directive **explicitly sliced v1 to dashboard-tabs-only for the 3.0.6 hotfix**, deferring VS Code Workspace view and `afx status` to follow-ups. The customer is blocked specifically on the browser flow — every hour of process between now and 3.0.6 is a customer waiting on a feature paid-for-in-3.0.5-but-unusable. Velocity matters more than completeness across all surfaces in one PR.
+
+This is exactly the kind of "ship-the-primitive-without-the-UI" failure that the user's recent feedback called out: spec #755 shipped a primitive without an end-to-end usable surface, so the customer got "routing works in theory" but couldn't drive it from a browser. 761 v1 closes that gap with the smallest possible surface change.
 
 Two design choices deserve explicit attention at plan time:
-1. **Whether the dashboard's left-pane architect-tab-strip is inside the pane or above it.** Both are coherent; preference is plan-phase.
-2. **Whether to deprecate the scalar `state.architect` field now or defer.** The spec defaults to "defer" to keep blast radius small.
+1. **Tab strip placement.** Inside the left pane is the cleaner option. Plan-phase to decide horizontal-above vs. left-vertical vs. dropdown-header.
+2. **Auto-switch behaviour for post-load-added architects.** Whether to invert the existing `useTabs.ts` skip condition for architect tabs added while the dashboard is open.
+
+A consultation gap (codex unavailable in this worktree environment due to a missing vendored binary) is documented in the Expert Consultation section. Architect to decide acceptability.
