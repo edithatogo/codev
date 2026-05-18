@@ -43,25 +43,24 @@ export class TeamProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     const items: vscode.TreeItem[] = [];
     const ghd = member.github_data;
 
-    // Assigned issues are a count-only summary — the actual issue list lives
-    // in the Backlog view; duplicating it per-member here is noise. Mirrors
-    // the "Last 7d:" stat row (single informational row, no command).
-    if (ghd.assignedIssues?.length) {
-      const ti = new vscode.TreeItem(`Assigned: ${ghd.assignedIssues.length}`);
+    // Count-only summaries — the issue/PR lists live in the Backlog / Pull
+    // Requests views. Use the *Count fields (true totals via GitHub
+    // search.issueCount); the node arrays are capped at 20 so `.length`
+    // would silently max out.
+    if ((ghd.assignedIssuesCount ?? 0) > 0) {
+      const ti = new vscode.TreeItem(`Assigned: ${ghd.assignedIssuesCount}`);
       ti.iconPath = new vscode.ThemeIcon('issues');
       items.push(ti);
     }
 
-    // Open PRs: count-only summary — the PR list lives in the Pull Requests
-    // view. Mirrors the "Assigned:" / "Last 7d:" stat rows.
-    if (ghd.openPRs?.length) {
-      const ti = new vscode.TreeItem(`Open PRs: ${ghd.openPRs.length}`);
+    if ((ghd.openPRsCount ?? 0) > 0) {
+      const ti = new vscode.TreeItem(`Open PRs: ${ghd.openPRsCount}`);
       ti.iconPath = new vscode.ThemeIcon('git-pull-request');
       items.push(ti);
     }
 
-    const merged = ghd.recentActivity?.mergedPRs?.length ?? 0;
-    const closed = ghd.recentActivity?.closedIssues?.length ?? 0;
+    const merged = ghd.recentActivity?.mergedPRsCount ?? 0;
+    const closed = ghd.recentActivity?.closedIssuesCount ?? 0;
     if (merged || closed) {
       const ti = new vscode.TreeItem(`Last 7d: ${merged} merged, ${closed} closed`);
       ti.iconPath = new vscode.ThemeIcon('graph');

@@ -178,11 +178,18 @@ export interface ReviewBlockingEntry {
 }
 
 export interface TeamMemberGitHubData {
+  // node arrays are capped at GitHub search `first` (20) and feed lists /
+  // review-blocking; the *Count fields are the true totals (search.issueCount)
+  // and must be used for any "N assigned / N open" display.
   assignedIssues: { number: number; title: string; url: string }[];
+  assignedIssuesCount: number;
   openPRs: { number: number; title: string; url: string }[];
+  openPRsCount: number;
   recentActivity: {
     mergedPRs: { number: number; title: string; url: string; mergedAt: string }[];
+    mergedPRsCount: number;
     closedIssues: { number: number; title: string; url: string; closedAt: string }[];
+    closedIssuesCount: number;
   };
   reviewBlocking: ReviewBlockingEntry[];
 }
