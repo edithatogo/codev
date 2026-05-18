@@ -64,15 +64,21 @@ All criteria below come from `codev/specs/755-multi-architect-support-per-ar.md`
 
 #### Deliverables
 
-- [ ] `ArchitectState` (types.ts) gains a `name: string` field.
-- [ ] `Builder` (types.ts) gains `spawnedByArchitect?: string` (optional for backward-compat with old rows).
-- [ ] `WorkspaceTerminals` (tower-types.ts) changes `architect?: string` to `architects: Map<string, string>` (name → terminalId).
-- [ ] Local `state.db` migration: drop `CHECK (id = 1)` on `architect` table; change `id` to `TEXT PRIMARY KEY`; rekey the existing row's `id` to `'main'`. Add `name` column equivalent if the column doesn't already exist (the `id` field doubles as the name; final shape is plan-phase decision but spec is clear there is no separate ID).
-- [ ] Local `state.db`: add `spawned_by_architect TEXT` column on the `builders` table (nullable).
-- [ ] Global `terminal_sessions` backfill: for rows where `type = 'architect' AND role_id IS NULL`, set `role_id = 'main'`. Idempotent.
-- [ ] `loadState` / `setArchitect` / `upsertBuilder` updated to round-trip the new fields.
-- [ ] Every Tower call site listed in the spec's References (~12 sites across `tower-instances.ts`, `tower-routes.ts`, `tower-terminals.ts`, `tower-tunnel.ts`, `commands/stop.ts`, `commands/status.ts`, `db/migrate.ts`) updated to iterate over the collection. The activation guard at `tower-instances.ts:354` is relaxed (multi-architect creation is now permitted; default name `main` is supplied for now).
-- [ ] `/api/state` response shape preserved: continues to return `state.architect` as a scalar, populated from the `main` entry (or first, if `main` absent). Dashboard and VSCode extension untouched.
+- [ ] `ArchitectState` (`types.ts:37-41`) gains a `name: string` field.
+- [ ] `Builder` (`types.ts:7-19`) gains `spawnedByArchitect?: string` (optional for backward-compat with old rows).
+- [ ] `WorkspaceTerminals` (`tower-types.ts:33-39`) changes `architect?: string` to `architects: Map<string, string>` (name → terminalId).
+- [ ] `InstanceStatus.architectUrl` (`tower-types.ts:69`) scalar URL is preserved with a `main`-first shim — same v1 strategy as `/api/state`. The collection lives only inside Tower; the response collapses to `main`'s URL (or first registered) on the way out. Surfacing all architect URLs is deferred to issue #2.
+- [ ] Local `state.db` migration (`v5` in `db/index.ts`): use the project's existing forward-only `_migrations` recipe (see `v3` for the precedent). Recreate the `architect` table via `CREATE TABLE architect_v2` → `INSERT SELECT 'main', ...` → `DROP architect` → `RENAME architect_v2 TO architect`. Preserve **every column default** from the current schema, especially `started_at TEXT NOT NULL DEFAULT (datetime('now'))` — Gemini's review caught that this was missing in the original plan pseudo-SQL. The new shape is `id TEXT PRIMARY KEY` storing the architect name.
+- [ ] Local `state.db`: add `spawned_by_architect TEXT` column on the `builders` table via a separate `ALTER TABLE builders ADD COLUMN spawned_by_architect TEXT` migration step in `v5` (nullable).
+- [ ] Global `~/.agent-farm/global.db` `terminal_sessions` backfill: `UPDATE terminal_sessions SET role_id = 'main' WHERE type = 'architect' AND role_id IS NULL`. Idempotent. Lives in the `v5` migration block alongside the schema work.
+- [ ] **`state.ts` rewrites — call them out explicitly** (Claude's review flagged this was hidden in "round-trip the new fields"):
+  - `state.ts:27` — `SELECT * FROM architect WHERE id = 1` becomes `SELECT * FROM architect WHERE id = 'main'` for `loadState()`. The `DashboardState.architect` scalar shape is preserved (v1 contract); `loadState` returns `main`'s row (or null).
+  - `state.ts:54` — `setArchitect(architect)` deletes/upserts `id = 1`. It becomes the **`main`-only setter** — `WHERE id = 'main'` — preserving the existing single-architect call sites unchanged. A new `setArchitectByName(name, state)` is added for the multi-architect path Tower uses internally. Phase 2's CLI calls the new function; existing callers (`workspace start`, `stop`) keep calling `setArchitect()`.
+  - `state.ts:275` — `DELETE FROM architect` (the bulk-clear path used by `clearState`) stays as-is — it's already correct for a multi-row table.
+  - `state.ts:289` — the duplicate `SELECT * FROM architect WHERE id = 1` (another singleton hit) becomes `WHERE id = 'main'` with the same shim semantics as `loadState`.
+- [ ] **`db/migrate.ts:40` rewrite** (Claude's review caught this was missing from the original files-touched list): the JSON-to-SQLite migration helper currently inserts `VALUES (1, @pid, @port, @cmd, @startedAt)` for the architect row. Change to `VALUES ('main', ...)`. This is the legacy path used during the JSON → SQLite migration; with the schema change above, it must insert the right primary-key value.
+- [ ] Every Tower call site listed in the spec's References updated to iterate over the collection. The activation guard at `tower-instances.ts:354` is relaxed (multi-architect creation is now permitted; default name `main` is supplied for now). **The reconnect/rehydration path at `tower-terminals.ts:642` is updated alongside the create-time paths** — Codex's review flagged that if reconnect logic still assumes singleton, an architect terminal that crashes and is restored will be miscategorized.
+- [ ] `/api/state` response shape preserved: continues to return `state.architect` as a scalar, populated from the `main` entry (or first, if `main` absent). Structurally identical to today's response (key shape and types unchanged). Dashboard and VSCode extension untouched.
 - [ ] `resolveAgentInWorkspace` (`tower-messages.ts:191-200`) updated to look up the architect by name from the collection. With only one architect (`main`) registered after Phase 1, behavior is unchanged from today.
 - [ ] CI guardrail test: a grep-based unit test that fails if `entry.architect` (singular accessor) appears in any source file outside the documented allowed shim sites. Stops future contributors from re-introducing the singleton.
 - [ ] Migration tests (one for the local schema change, one for the global `terminal_sessions` backfill).
@@ -88,12 +94,12 @@ CREATE TABLE IF NOT EXISTS architect (
   pid INTEGER NOT NULL,
   port INTEGER NOT NULL,
   cmd TEXT NOT NULL,
-  started_at TEXT NOT NULL,
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
   terminal_id TEXT
 );
 ```
 
-SQLite cannot drop a CHECK constraint in place, so the migration follows the standard `CREATE TABLE new`, `INSERT SELECT`, `DROP TABLE old`, `ALTER TABLE new RENAME TO old` recipe. The new schema:
+SQLite cannot drop a CHECK constraint in place, so the migration follows the standard `CREATE TABLE new`, `INSERT SELECT`, `DROP TABLE old`, `ALTER TABLE new RENAME TO old` recipe — the same pattern already used by migrations `v3` and `v4` in `db/index.ts`. The new schema **must preserve every column default**, including `DEFAULT (datetime('now'))` on `started_at`:
 
 ```sql
 CREATE TABLE architect_v2 (
@@ -101,7 +107,7 @@ CREATE TABLE architect_v2 (
   pid INTEGER NOT NULL,
   port INTEGER NOT NULL,
   cmd TEXT NOT NULL,
-  started_at TEXT NOT NULL,
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
   terminal_id TEXT
 );
 INSERT INTO architect_v2 (id, pid, port, cmd, started_at, terminal_id)
@@ -110,7 +116,7 @@ DROP TABLE architect;
 ALTER TABLE architect_v2 RENAME TO architect;
 ```
 
-The migration goes in `db/migrate.ts` keyed by a new version number; the `_migrations` table records it.
+The migration is registered as `v5` in `db/index.ts`, using the existing `_migrations`-versioned forward-only pattern. There is no rollback SQL — the project's existing migration framework is forward-only, and this plan follows that convention. Recovery is by reverting the PR (which restores the prior code); a workspace that already migrated would need its `state.db` restored from the user's prior backup (or accept that the row's `id` is now `'main'` instead of `1`). This is the same recovery story the project already accepts for `v3` and `v4`.
 
 **SQLite migration (`builders` table).** Add `spawned_by_architect TEXT` as a nullable column:
 
@@ -183,13 +189,19 @@ This shim is intentional and documented in the spec (item 7).
 
 #### Rollback Strategy
 
-The migration's reverse SQL (rebuild the singleton table, copy the `'main'` row back to `id = 1`, drop the `spawned_by_architect` column) is committed alongside the forward migration as a `_migrations` rollback. If Phase 1 ships and a bug is found, revert the PR and re-run the workspace; the rollback SQL restores the prior schema.
+Codev's migration framework is forward-only: `_migrations` records applied versions, but there is no reverse-SQL machinery (verified against the existing `v3` and `v4` migrations in `db/index.ts`, which use the same `CREATE/INSERT/DROP/RENAME` pattern without reverse SQL). The recovery path is:
+
+1. **In-PR rollback (before merge):** revert the commit, drop the new `_migrations` row manually if needed for testing.
+2. **Post-merge rollback:** revert the code-level changes. Workspaces that already ran the `v5` migration would have their `architect.id` rekeyed from `1` to `'main'`; subsequent code (the reverted version) would still find the row via its old query (`WHERE id = 1` would fail to find `'main'`). For affected users, the recovery is to either re-apply this feature's code or recreate the `state.db` (the architect terminal will be re-registered on next workspace start).
+
+This follows the project's existing convention. The risk is bounded: `state.db` is per-workspace, recreatable, and contains no irrecoverable user data.
 
 #### Risks
 
 - **Risk**: A test or external consumer reads `entry.architect` (singular) directly and silently breaks. → **Mitigation**: TS compile error from the type change (renaming the field forces every call site to update); CI guardrail catches new occurrences.
-- **Risk**: The migration loses the existing architect row in workspaces with a long history. → **Mitigation**: Migration test covers the pre-state explicitly; the rebuild table SQL preserves all columns; an integration test boots Tower against a migrated DB and verifies the architect is still there.
+- **Risk**: The migration loses the existing architect row in workspaces with a long history. → **Mitigation**: Migration test covers the pre-state explicitly; the rebuild table SQL preserves all columns including defaults; an integration test boots Tower against a migrated DB and verifies the architect is still there.
 - **Risk**: The global `terminal_sessions` backfill races with an active Tower writing new rows. → **Mitigation**: The backfill runs as part of Tower startup before serving connections; documented in the migrate code.
+- **Risk** (Codex review): The architect-name flow updates create-time paths in `tower-instances.ts` but misses the reconnect/rehydration path at `tower-terminals.ts:642`. An architect terminal that crashes and is restored would lose its name binding and route to the wrong place silently. → **Mitigation**: explicit deliverable above (rehydration path included); test scenario in Phase 3 (architect reconnect) catches a regression here.
 
 ---
 
@@ -199,30 +211,37 @@ The migration's reverse SQL (rebuild the singleton table, copy the `'main'` row 
 
 #### Objectives
 
-- Give the user a way to start a second named architect terminal.
+- Give the user a way to start a second named, **Tower-registered** architect terminal in an active workspace.
 - Make the spawning architect's name observable to `afx spawn` via the architect terminal's environment.
 - Record `spawnedByArchitect` on every new builder row.
-- **Still no routing change.** Sends to `architect` continue to land on the singleton (now `main`); this phase only changes *which name* gets attached to each builder.
+- **Still no routing change.** Sends to `architect` continue to land on `main` (or first registered); this phase only changes *which name* gets attached to each builder.
+
+#### The existing `afx architect` command — IMPORTANT
+
+Both Codex's and Claude's reviews caught that `packages/codev/src/agent-farm/commands/architect.ts` **already exists** and does something the original plan ignored. The existing command:
+
+- Runs a local Claude session in **the current shell** (`stdio: 'inherit'`), not as a Tower-managed PTY.
+- Explicitly documented as "**No Tower dependency**" — works in any directory, even outside a workspace.
+- Used today by humans who want to drop into an architect session from a plain terminal.
+
+This command **stays as-is in Phase 2.** The spec's example `afx architect --name <name>` is the architect's preferred *user-facing surface*, but the existing command's no-Tower contract is load-bearing for current users. The new functionality cannot be a flag on a command that explicitly disclaims Tower involvement.
+
+**The Phase 2 commitment:** introduce a separate Tower-aware subcommand path for registering a named architect terminal. Working name: **`afx workspace add-architect [--name <name>]`** — keeps architect-management under the `workspace` noun (which already owns `start`/`stop`/`rename`). If review pushes back on this shape at PR time, the implementation is a thin CLI handler that delegates to a Tower client method, so renaming is a small refactor. The architect can also adopt their preferred shape (`afx architect --name`) at PR time by repurposing `commands/architect.ts` into a dual-mode command — that's a small, contained change vs. the current plan path.
 
 #### Deliverables
 
-- [ ] New CLI subcommand for starting an additional named architect. The spec's example was `afx architect --name <name>`; the implementation should match unless a better shape emerges in 3-way review. The first architect (started by `afx workspace start`) gets `main` by default; a second instance without `--name` gets the next-available `architect-<N>` (smallest unused integer ≥ 2).
-- [ ] Name validation: `[a-z][a-z0-9-]*`, max 64 chars. Re-using a registered name in the same workspace is rejected with a clear error.
-- [ ] Tower injects an env var (proposed: `CODEV_ARCHITECT_NAME`) into the architect terminal's shell at start time. Final variable name is plan-phase but committed by the time this phase begins implementation.
-- [ ] `afx spawn` reads `CODEV_ARCHITECT_NAME` and passes it to `upsertBuilder` as `spawnedByArchitect`. Defaults to `main` when the env var is absent (running outside any architect terminal).
-- [ ] `afx status` continues to show a flat builder list with no filtering; the `spawnedByArchitect` column is **not** added in v1 (per spec — that's issue #2). The plan resists scope creep here.
-- [ ] Unit tests for: name validation, auto-numbering, env var detection, default fallback.
+- [ ] New subcommand wired into `afx` CLI: **`afx workspace add-architect [--name <name>]`**. Registers a new architect terminal with Tower in the active workspace. Without `--name`, Tower auto-assigns the next available `architect-<N>` (smallest unused integer ≥ 2). With `--name`, validates and uses the supplied name.
+- [ ] Existing `afx architect` (local-Claude, non-Tower) command is **unchanged**.
+- [ ] Tower client method (`packages/core/src/tower-client.ts`) for the new Tower API.
+- [ ] Tower HTTP route handler in `tower-routes.ts` that calls into `tower-instances.ts` (which already creates architect terminals; the new path just supplies a name + writes the `architect` SQLite row keyed by name).
+- [ ] Name validation: `[a-z][a-z0-9-]*`, max 64 chars. The literal string `main` is also valid (no special-casing). Re-using a registered name in the same workspace is rejected with a clear error.
+- [ ] Tower injects an env var (`CODEV_ARCHITECT_NAME=<name>`) into the architect terminal's shell at PTY-start time. The default name `main` is injected for the first architect (the one started by `afx workspace start`); auto-numbered or explicit names are injected for subsequent architects. The variable name is documented in `codev/resources/commands/agent-farm.md`.
+- [ ] `afx spawn` reads the env var to obtain the spawning architect's name and persists it on the new builder row.
+- [ ] `afx status` continues to show a flat builder list with no filtering; the `spawnedByArchitect` column is **not** added in v1 (per spec — that's issue #2). Plan resists scope creep here.
+- [ ] Unit tests for: name validation, auto-numbering algorithm, name-collision rejection, env-var detection (set/unset/empty), default-fallback to `main`.
+- [ ] Integration test referencing the existing `packages/codev/src/agent-farm/__tests__/af-architect.test.ts` patterns (Claude's review pointed at this file as the right precedent).
 
 #### Implementation Details
-
-**Architect-start CLI shape.** Plan-phase decision after 3-way review. Strong candidates:
-
-1. `afx architect --name <name>` — new noun subcommand, future-proof for `afx architect list`, `afx architect kill <name>`.
-2. `afx workspace add-architect --name <name>` — keeps architect under the existing `workspace` namespace.
-
-The spec's example was option 1; the plan adopts it unless review surfaces a strong reason to switch. Either way, the underlying mechanism is the same: a request to Tower to create a new architect terminal with a supplied name (or to auto-assign one).
-
-**Env var contract.** Tower already injects environment variables into the terminals it spawns (the harness mechanism is documented in `agent-farm/types.ts:166-173` for harness providers). Phase 2 adds `CODEV_ARCHITECT_NAME=<name>` to every architect terminal's environment. The variable is documented in the README's "agent-farm environment" section.
 
 **Spawn-time detection.** `commands/spawn.ts:439` calls `upsertBuilder`. The diff:
 
@@ -231,19 +250,26 @@ const spawnedByArchitect = process.env.CODEV_ARCHITECT_NAME ?? 'main';
 upsertBuilder({ ..., spawnedByArchitect });
 ```
 
-Two lines, plus a small helper if we want consistent handling across other state-writing paths (`afx resume`, `afx restart` if relevant — plan to confirm).
+Two lines. The default-to-`main` keeps `afx spawn` from the workspace root (outside any architect terminal) working unchanged. SQLite is synchronous and atomic, so two `afx spawn` calls run from two different architect terminals at the same instant cannot interleave their `upsertBuilder` writes — addressed in the Risks subsection below.
 
-**Auto-numbering.** The "smallest unused integer ≥ 2" rule is implemented as a query on Tower's in-memory architect collection at architect-create time. The plan phase pins the tiebreak: starting `architect-2`, killing it, starting another with no name → the new one is `architect-2` again, because the collection is empty of `architect-2` at the time of the second start. This matches the spec's "smallest-unused-integer" semantics.
+**Auto-numbering.** "Smallest unused integer ≥ 2" — implemented as a single pass over Tower's in-memory `entry.architects` keys. Tiebreak: starting `architect-2`, killing it, starting another with no name → the new one is `architect-2` again (the collection no longer contains it). This matches the spec's smallest-unused-integer semantics. Unit-tested explicitly.
+
+**Env var injection.** Tower already injects environment variables into architect terminals via the harness mechanism (`agent-farm/types.ts:159-173`). Phase 2 adds `CODEV_ARCHITECT_NAME=<name>` to every architect terminal's environment at PTY creation. The variable is reserved under the `CODEV_*` prefix.
+
+**Why not extend `commands/architect.ts`?** Because the existing command's contract is "no Tower dependency." Adding a `--name` flag that requires Tower would break that contract for users who run `afx architect` in directories that aren't Codev workspaces. The clean separation — local-mode in `commands/architect.ts`, Tower-mode in `commands/workspace.ts` (or a new file) — preserves both use cases without introducing flag-conditional behavior.
 
 **Files touched**:
-- `packages/codev/src/agent-farm/cli.ts` (new subcommand registration)
-- `packages/codev/src/agent-farm/commands/architect.ts` (new file — the subcommand handler)
-- `packages/codev/src/agent-farm/commands/spawn.ts` (read env var + pass to `upsertBuilder`)
-- `packages/codev/src/agent-farm/state.ts` (`upsertBuilder` signature includes `spawnedByArchitect`)
-- `packages/codev/src/agent-farm/servers/tower-instances.ts` (architect-create now accepts a `name` param + auto-assigns)
-- `packages/codev/src/agent-farm/servers/tower-routes.ts` (new HTTP route for the architect-create API)
+- `packages/codev/src/agent-farm/cli.ts` (subcommand registration for `add-architect`)
+- `packages/codev/src/agent-farm/commands/workspace.ts` (extended with the `add-architect` handler; if a single command file proves unwieldy, factor into `commands/workspace-add-architect.ts`)
+- `packages/codev/src/agent-farm/commands/spawn.ts:439` (read `CODEV_ARCHITECT_NAME`, pass to `upsertBuilder`)
+- `packages/codev/src/agent-farm/state.ts` (`upsertBuilder` signature includes `spawnedByArchitect`; ensure the SQL `INSERT` covers the new column)
+- `packages/codev/src/agent-farm/servers/tower-instances.ts` (architect-create accepts a `name` param + auto-assigns when omitted; PTY env injection includes `CODEV_ARCHITECT_NAME`)
+- `packages/codev/src/agent-farm/servers/tower-routes.ts` (HTTP route for the architect-create API)
 - `packages/core/src/tower-client.ts` (client method for the new route)
 - Tests for each.
+
+**Files explicitly NOT touched**:
+- `packages/codev/src/agent-farm/commands/architect.ts` — kept as-is to preserve the no-Tower contract.
 
 #### Acceptance Criteria
 
@@ -276,8 +302,10 @@ Revert the new CLI subcommand and the env-var injection in Tower. The `spawned_b
 #### Risks
 
 - **Risk**: The env-var injection conflicts with user-supplied env vars in their shell config. → **Mitigation**: `CODEV_*` prefix is reserved per existing convention; documented as Codev-controlled.
-- **Risk**: CLI shape decision (option 1 vs. 2) gets pushed back during PR review. → **Mitigation**: Spec gave a clear example; if the architect surface wants something different at PR time, it's a small refactor of the subcommand file.
+- **Risk** (Codex + Claude review): the existing `afx architect` command's no-Tower contract conflicts with the multi-architect feature. → **Mitigation**: Phase 2 introduces a separate Tower-aware subcommand (`afx workspace add-architect`) rather than extending the existing command. Documented explicitly above.
+- **Risk**: PR-time pushback on the `afx workspace add-architect` shape (e.g., architect wants `afx architect --name <name>` after all). → **Mitigation**: the implementation is a thin handler delegating to a Tower client method; renaming or aliasing the command is a small contained change. The architect's spec example is followed in spirit (a way to start a named architect) even if the exact verb differs.
 - **Risk**: Auto-numbering algorithm has subtle off-by-one. → **Mitigation**: Unit test with explicit cases (empty workspace, `main` only, `main + architect-2`, `main + architect-3` with `architect-2` missing).
+- **Risk** (Claude review): two `afx spawn` commands run simultaneously from different architect terminals could race in `upsertBuilder`. → **Mitigation**: `state.db` writes go through `better-sqlite3` which is synchronous and atomic at the statement level; each `INSERT` completes before the next can begin. Test scenario: spawn two builders concurrently from two architects; assert both rows have the correct `spawned_by_architect` after the dust settles.
 
 ---
 
@@ -294,8 +322,7 @@ Revert the new CLI subcommand and the env-var injection in Tower. The `spawned_b
 
 #### Deliverables
 
-- [ ] `from` (sender identity) plumbed from `handleSend()` into the resolution layer.
-- [ ] `resolveTarget`'s signature (or a new sibling resolver) accepts the sender so the builder-context lookup can happen.
+- [ ] `from` (sender identity) plumbed from `handleSend()` into the resolution layer. **Resolver-signature decision** (Codex's review asked for this commitment): widen `resolveTarget` itself to `(target, fallbackWorkspace?, sender?)` rather than introducing a separate `/api/send`-only wrapper. Rationale: `resolveTarget` is the single entry point for address resolution; pulling sender-awareness into a parallel wrapper would fork the resolution code path and force every future caller to choose between two functions. The `sender` parameter is **optional with a clear default branch** — cron and other non-builder callers pass nothing, behavior is unchanged for them.
 - [ ] `resolveAgentInWorkspace` (or its successor) implements:
   1. **Sender is a builder, target is `architect`** → look up sender's `spawnedByArchitect` in `state.db`; if the named architect is registered in `entry.architects`, route there. Otherwise apply architect-gone fallback (route to `main` if present; else error with the spec's architect-gone message).
   2. **Sender is not a builder, target is `architect`** → route to `main` if present; else route to the first registered architect.
@@ -303,7 +330,7 @@ Revert the new CLI subcommand and the env-var injection in Tower. The `spawned_b
   4. **Legacy builder (no `spawnedByArchitect` row)** → route to `main` if present; else error with the spec's legacy-builder message.
 - [ ] Error messages match the spec verbatim (asserted by test).
 - [ ] `tower-cron.ts` and any other non-builder architect-target sender continues to resolve to `main` (no behavior change for cron).
-- [ ] Builder-context detection at the resolver layer — distinguishing builder-from from architect-from. The detection rule is "if `from` matches a registered builder ID in this workspace's `entry.builders` Map, treat as builder-context." Plan-phase to pin the exact predicate.
+- [ ] Builder-context detection at the resolver layer — distinguishing builder-from from architect-from. **Detection rule** (Gemini's review caught a better predicate): query `state.db` for `SELECT spawned_by_architect FROM builders WHERE id = ?` using the `from` value; if a row exists, the sender is a builder context. **Do not** use `entry.builders.has(from)` — that's live-terminal state, which is empty for completed builders whose terminal sessions have ended but whose `state.db` rows still exist (e.g., a human operator running `afx send architect` from inside a finished builder's worktree).
 - [ ] Architect-reconnect handling: when an architect terminal dies and is recreated with the same name (new `terminalId`), routing seamlessly picks up the new `terminalId` from `entry.architects.get(name)`. No builder-side change.
 - [ ] Full routing-matrix tests (spec test scenarios 1–13, minus the broadcast scenarios which were dropped from v1).
 - [ ] All security tests assert error texts verbatim.
@@ -331,11 +358,21 @@ function resolveAgentInWorkspace(agent, workspacePath, sender) {
   const entry = allWorkspaces.get(workspacePath);
   // ...
   if (agent === 'architect' || agent === 'arch') {
-    // Singular 'architect' — sender-affinity-aware.
-    if (sender && isBuilderInWorkspace(sender, entry)) {
-      const spawnedByArchitect = lookupBuilderSpawningArchitect(sender);
-      if (!spawnedByArchitect) {
-        // Legacy builder (no spawnedByArchitect row).
+    // FAST PATH (Gemini's review optimization): single-architect workspace.
+    // Identical behavior to legacy + all fallback rules end up at 'main' anyway,
+    // so we can skip the SQLite read entirely. Guarantees zero latency
+    // regression on the single-architect path.
+    if (entry.architects.size === 1 && entry.architects.has('main')) {
+      return { terminalId: entry.architects.get('main')!, ... };
+    }
+
+    // Multi-architect or non-default-name workspace — full resolution.
+    const spawnedByArchitect = sender ? lookupBuilderSpawningArchitect(sender) : null;
+    const isBuilderContext = sender && spawnedByArchitect !== undefined;
+
+    if (isBuilderContext) {
+      if (spawnedByArchitect === null) {
+        // Legacy builder: row exists but spawned_by_architect is null.
         const main = entry.architects.get('main');
         if (main) return { terminalId: main, ... };
         return errorLegacyBuilder(sender, [...entry.architects.keys()]);
@@ -347,6 +384,7 @@ function resolveAgentInWorkspace(agent, workspacePath, sender) {
       if (main) return { terminalId: main, ... };
       return errorArchitectGone(sender, spawnedByArchitect, [...entry.architects.keys()]);
     }
+
     // Non-builder sender or no sender — singleton-style resolution.
     const main = entry.architects.get('main');
     if (main) return { terminalId: main, ... };
@@ -354,13 +392,13 @@ function resolveAgentInWorkspace(agent, workspacePath, sender) {
     if (first) return { terminalId: first, ... };
     return errorNoArchitect(workspacePath);
   }
-  // ...
+
   // 'architect:<name>' addressing — builder sender must match the name.
   if (agent.startsWith('architect:')) {
     const requestedName = agent.slice('architect:'.length);
-    if (sender && isBuilderInWorkspace(sender, entry)) {
+    if (sender) {
       const spawnedByArchitect = lookupBuilderSpawningArchitect(sender);
-      if (spawnedByArchitect !== requestedName) {
+      if (spawnedByArchitect !== undefined && spawnedByArchitect !== requestedName) {
         return errorAddressSpoofing(sender);
       }
     }
@@ -372,9 +410,16 @@ function resolveAgentInWorkspace(agent, workspacePath, sender) {
 }
 ```
 
-The exact API decomposition (one resolver vs. multiple sibling resolvers, where `lookupBuilderSpawningArchitect` lives, how to import `state.db` into the resolver layer without creating a cycle) is plan-phase work that should be confirmed in the 3-way review.
+Where `lookupBuilderSpawningArchitect(builderId)` returns:
+- `string` — the recorded `spawned_by_architect` (builder context with explicit name).
+- `null` — a row exists for that builder ID but `spawned_by_architect` is NULL (legacy row).
+- `undefined` — no row exists for that ID (not a builder).
 
-**Builder-context detection.** `isBuilderInWorkspace(sender, entry)` checks whether `sender` is a key in `entry.builders`. This is unambiguous: builder IDs and architect names follow disjoint patterns (builders use `<protocol>-<issue>` like `spir-755`, architects use `main` or `architect-<N>` or user-supplied names). The plan should still confirm there's no collision via test cases.
+This three-valued return cleanly distinguishes "legacy builder" from "non-builder sender."
+
+**Cycle avoidance** (Gemini's pointer): the resolver lives in the Tower side and can read `state.db` directly via `new Database(path.join(workspacePath, '.agent-farm', 'state.db'), { readonly: true })` — the same pattern `servers/overview.ts` already uses. This avoids an import cycle between `tower-messages.ts` and the higher-level `state.ts` module that owns `loadState`/`upsertBuilder`. The read-only handle is opened on demand per call (cheap), or cached on the workspace entry (faster) — Phase 3 implementation picks one based on the latency benchmark.
+
+**Address-spoofing detection nuance.** The pseudocode above rejects `architect:<other-name>` only when the sender is a builder *with a known `spawned_by_architect`*. A non-builder sender (cron, workspace-root manual send) can target any specific architect by name — there's no spoofing concept for non-builders, since their identity isn't the basis for routing.
 
 **Files touched**:
 - `packages/codev/src/agent-farm/servers/tower-messages.ts` (resolver core)
@@ -507,7 +552,46 @@ This feature is internal to local workspaces; no production metrics or alerting 
 
 ## Expert Review
 
-To be added after 3-way consultation (Gemini, Codex, Claude) per SPIR protocol.
+### Iteration 1 — 2026-05-17
+
+| Reviewer | Verdict | Confidence |
+|----------|---------|------------|
+| Codex    | REQUEST_CHANGES | HIGH |
+| Claude   | COMMENT | HIGH |
+| Gemini   | COMMENT (no key issues) | HIGH |
+
+**Convergent findings — addressed in this iteration:**
+
+1. **`commands/architect.ts` already exists.** Codex and Claude independently caught that the plan's "new file" claim was wrong. **Fix**: Phase 2 now keeps `afx architect` unchanged (it's the local non-Tower command) and introduces `afx workspace add-architect [--name <name>]` as the new Tower-aware path. A dedicated subsection explains the distinction and why a flag-conditional dual-mode command was rejected.
+2. **`state.ts` hardcoded `WHERE id = 1` SQL paths.** Both Codex and Claude flagged that "round-trip the new fields" was hand-wavy. **Fix**: Phase 1 deliverables now explicitly enumerate the four `state.ts` lines that need rewriting (`:27`, `:54`, `:275`, `:289`), with the chosen semantics for each (e.g., `loadState` becomes a `main`-only shim; a separate `setArchitectByName` adds the multi path).
+3. **Rollback strategy didn't match the actual migration framework.** Codex caught that `db/migrate.ts` is a one-way JSON→SQLite helper and `_migrations` is forward-only with no reverse SQL. **Fix**: Phase 1 Rollback Strategy rewritten to match the project's actual convention (forward-only; recovery is "revert the PR + accept the rekeyed row" or restore from prior `state.db` backup). The plan now references `v3` and `v4` migrations as the precedent pattern.
+
+**Codex-only findings — addressed:**
+
+- **Phase 3 resolver-signature commitment.** The plan now commits explicitly to widening `resolveTarget(target, fallbackWorkspace?, sender?)` rather than introducing a parallel `/api/send`-only wrapper. Rationale captured in the deliverable.
+- **Reconnect/rehydration risk at `tower-terminals.ts:642`.** Added to Phase 1 deliverables and risks: the architect-name flow must traverse reconnect paths, not just create-time paths.
+
+**Claude-only findings — addressed:**
+
+- **`migrate.ts:40` hardcodes `VALUES (1, ...)`.** Added to Phase 1 deliverables — the JSON→SQLite migration helper inserts `'main'` instead of `1`.
+- **`InstanceStatus.architectUrl` scalar at `tower-types.ts:69`.** Added to Phase 1 deliverables — same `main`-first shim as `/api/state`. Surfacing all architect URLs is deferred to issue #2.
+- **`annotations.parent_id` for architect-parented annotations** (Claude flagged this as a known gap). **Status**: explicitly noted as out of scope for v1 (no annotation behavior changes); when issue #2 lands, a follow-up amendment can populate `parent_id` with the architect's name for architect-owned annotations. No changes to the `annotations` table in this work.
+- **"byte-identical" → "structurally identical"** on `/api/state` shape comparison. Adjusted.
+- **Reference `af-architect.test.ts`** as the precedent for Phase 2's test patterns. Added to deliverables.
+- **Concurrent `afx spawn` race** in `upsertBuilder`. Added to Phase 2 risks with the `better-sqlite3` atomicity mitigation.
+
+**Gemini-only findings — addressed:**
+
+- **`DEFAULT (datetime('now'))` on `started_at`** was missing from the original migration pseudo-SQL. Restored.
+- **Latency fast-path** for single-architect workspaces (`size === 1 && has('main')`) — added to Phase 3 resolver pseudocode. Bypasses the SQLite read entirely for solo-architect users, guaranteeing latency parity.
+- **Builder-context detection via `state.db` row presence**, not `entry.builders.has(sender)`. Phase 3 deliverable rewritten with the better predicate.
+- **Cycle avoidance via `new Database(...path..., { readonly: true })`** — adopted, per the `servers/overview.ts` precedent. Documented in Phase 3's Implementation Details.
+
+### Persisted consultation outputs
+
+- `codev/projects/755-multi-architect-support-per-ar/755-plan-iter1-codex.txt`
+- `codev/projects/755-multi-architect-support-per-ar/755-plan-iter1-claude.txt`
+- `codev/projects/755-multi-architect-support-per-ar/755-plan-iter1-gemini.txt`
 
 ## Approval
 
@@ -520,6 +604,7 @@ To be added after 3-way consultation (Gemini, Codex, Claude) per SPIR protocol.
 | Date | Change | Reason |
 |------|--------|--------|
 | 2026-05-17 | Initial plan draft | Spec approved; planning phase began. |
+| 2026-05-17 | Iter-1 consultation feedback incorporated | Codex REQUEST_CHANGES + Claude/Gemini COMMENT; all key issues addressed (see Expert Review section). |
 
 ## Notes
 
