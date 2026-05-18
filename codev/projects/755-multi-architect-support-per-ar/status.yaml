@@ -1,9 +1,18 @@
 id: '755'
 title: multi-architect-support-per-ar
 protocol: spir
-phase: plan
-plan_phases: []
-current_plan_phase: null
+phase: implement
+plan_phases:
+  - id: phase_1
+    title: Storage and Tower data-model relaxation
+    status: in_progress
+  - id: phase_2
+    title: Naming CLI and spawn-time identity capture
+    status: pending
+  - id: phase_3
+    title: Affinity-aware routing
+    status: pending
+current_plan_phase: phase_1
 gates:
   spec-approval:
     status: approved
@@ -18,7 +27,7 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history: []
 started_at: '2026-05-17T20:51:15.851Z'
-updated_at: '2026-05-18T05:22:46.669Z'
+updated_at: '2026-05-18T05:23:00.382Z'
