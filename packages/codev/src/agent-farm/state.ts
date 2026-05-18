@@ -5,6 +5,9 @@
  * All operations are synchronous and atomic.
  */
 
+import path from 'node:path';
+import { existsSync } from 'node:fs';
+import Database from 'better-sqlite3';
 import type { DashboardState, ArchitectState, Builder, UtilTerminal, Annotation } from './types.js';
 import { getDb, closeDb } from './db/index.js';
 import type { DbArchitect, DbBuilder, DbUtil, DbAnnotation } from './db/types.js';
@@ -366,8 +369,33 @@ export function getArchitectByName(name: string): ArchitectState | null {
  *
  * This three-valued return cleanly distinguishes "legacy builder" from
  * "non-builder sender." Used by the Phase 3 affinity-aware resolver.
+ *
+ * When `workspacePath` is supplied, opens a per-workspace readonly handle
+ * directly — the right thing for Tower, which serves multiple workspaces
+ * and cannot rely on the singleton `getDb()` (which is tied to the process's
+ * startup CWD). When omitted, falls back to the singleton — convenient for
+ * CLI callers that already ran inside one workspace. Mirrors the pattern in
+ * `servers/overview.ts`.
  */
-export function lookupBuilderSpawningArchitect(builderId: string): string | null | undefined {
+export function lookupBuilderSpawningArchitect(
+  builderId: string,
+  workspacePath?: string,
+): string | null | undefined {
+  if (workspacePath) {
+    const dbPath = path.join(workspacePath, '.agent-farm', 'state.db');
+    if (!existsSync(dbPath)) return undefined;
+    const wsDb = new Database(dbPath, { readonly: true });
+    try {
+      const row = wsDb
+        .prepare('SELECT spawned_by_architect FROM builders WHERE id = ?')
+        .get(builderId) as { spawned_by_architect: string | null } | undefined;
+      if (!row) return undefined;
+      return row.spawned_by_architect;
+    } finally {
+      wsDb.close();
+    }
+  }
+
   const db = getDb();
   const row = db.prepare('SELECT spawned_by_architect FROM builders WHERE id = ?').get(builderId) as
     | { spawned_by_architect: string | null }

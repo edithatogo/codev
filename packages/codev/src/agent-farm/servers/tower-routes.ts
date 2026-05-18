@@ -910,8 +910,10 @@ async function handleSend(
   const noEnter = options.noEnter === true;
   const interrupt = options.interrupt === true;
 
-  // Resolve the target address to a terminal ID
-  const result = resolveTarget(to, workspace);
+  // Resolve the target address to a terminal ID.
+  // Spec 755: pass `from` so architect resolution is sender-affinity-aware
+  // when the sender is a builder. Non-builder senders see unchanged behavior.
+  const result = resolveTarget(to, workspace, from);
 
   if (isResolveError(result)) {
     const statusCode = result.code === 'AMBIGUOUS' ? 409
