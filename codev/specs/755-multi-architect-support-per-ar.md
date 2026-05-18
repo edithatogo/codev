@@ -19,9 +19,9 @@ Today, the architect side of Codev is a **singleton per workspace**, enforced in
 - `afx send architect "..."` resolves to that single terminal (`packages/codev/src/agent-farm/servers/tower-messages.ts:191-200`).
 - Tower's activation flow actively *prevents* a second architect terminal (`packages/codev/src/agent-farm/servers/tower-instances.ts:354` — `if (!entry.architect) { ... }`).
 
-When a builder runs `afx send architect "PR ready"`, the message lands in this shared destination. If two human architects are using the workspace at once, **both** see the message and have to manually look up "is this MY builder?" by checking thread-state files, memory, or guessing. This is error-prone under cognitive load and is currently being worked around with informal `codev/<thread>-thread.md` files.
+When a builder runs `afx send architect "PR ready"`, the message lands at the **one architect terminal** that Tower allows — the "main" architect, which was started first. A sibling architect agent running in the same workspace is not a Tower-registered architect terminal at all, so it never receives the message directly. The human running both architects has to manually decide "does this belong to my sibling?" and copy-paste the message over. This is error-prone under cognitive load and is currently being worked around with informal `codev/<thread>-thread.md` files.
 
-This spec scopes a v1 fix focused on the single load-bearing pain point: **routing a builder's `afx send architect` message back to the specific architect that spawned that builder**.
+This spec scopes a v1 fix focused on the single load-bearing pain point: **routing a builder's `afx send architect` message to the specific architect that spawned that builder**. To make routing addressable, every architect terminal needs a name. The first architect started in a workspace is named `main` by default; subsequent architects are auto-numbered `architect-2`, `architect-3`, etc. unless the user specifies a name explicitly (e.g., via `afx architect --name <name>`). `main` is just the default name of the first architect — there is no "first-class main" concept beyond defaults.
 
 ## Current State
 
@@ -90,6 +90,7 @@ There is **no fan-in stage** that could distinguish multiple architects, because
 - Per-thread markdown files at `codev/<thread-name>-thread.md` with active builder rosters, PR lists, pending decisions, and pickup checklists.
 - Cross-architect coordination conventions enforced by discipline ("this thread does NOT approve sibling-thread's gates").
 - Mental triage on every `architect` ping ("is this mine?").
+- **Manual copy-paste** of builder messages from the main architect's terminal into the sibling architect's terminal — every single ping that conceptually belongs to the sibling has to be relayed by a human. This is the most visible day-to-day cost of the singleton design.
 
 These conventions work but are brittle and require discipline that doesn't scale.
 
@@ -100,30 +101,34 @@ A builder that was spawned by architect **A** should, when running `afx send arc
 Concretely:
 
 - A workspace can host **multiple architect terminals** simultaneously.
-- Each architect terminal has a stable **architect identity** (an `architectId` string).
-- Every builder spawned during architect A's session records `spawnedByArchitectId: A` in its persisted state.
-- `afx send architect "..."` from within a builder worktree resolves the destination using the builder's recorded `spawnedByArchitectId` — message goes to architect A's terminal, not to any sibling.
-- An explicit broadcast address (e.g., `architects` or `architect:all`) is available for the rare case where a builder genuinely needs to fan out to every architect.
-- Existing single-architect workspaces continue to work with **zero behavior change** — the new identity scheme has a backward-compatible default so unflagged spawns route the same way they always have.
+- Each architect terminal has a **name** — a stable identifying string. The name is the architect's identity; there is no separate internal "architectId" field. (Earlier drafts of this spec used `architectId` as a distinct identifier; the architect clarified that the human-readable name *is* the identifier. The spec uses `name` throughout from this point forward.)
+- The first architect started in a workspace defaults to the name `main`. Subsequent architects auto-number to `architect-2`, `architect-3`, etc. Either can be overridden with an explicit flag (e.g., `afx architect --name <name>`).
+- Every builder spawned during architect A's session records `spawnedByArchitect: A` (the spawning architect's name) in its persisted state.
+- `afx send architect "..."` from within a builder worktree resolves the destination using the builder's recorded `spawnedByArchitect` — message goes to that architect's terminal, not to any sibling.
+- Existing single-architect workspaces continue to work with **zero behavior change** — the singleton's name defaults to `main`, and builders persisted before this feature route to `main`.
 
 ## Scope
 
 ### In scope (v1)
 
-1. **Architect identity** — a stable `architectId` string per architect terminal, defaulting to `"main"` so the singleton case keeps working. Identity is set when the architect terminal is registered with Tower. `architectId` is stable across architect terminal reconnects (shellper restart); only the `terminalId` may change. Routing keys on `architectId`, not `terminalId`.
-2. **Multiple architect terminals per workspace** — relax the in-memory and on-disk singletons to allow N architect terminals indexed by `architectId`. This touches **all of the following call sites** (the plan phase will enumerate any further occurrences):
-   - `WorkspaceTerminals.architect` (`tower-types.ts:35`) — change from `string | undefined` to a collection keyed by `architectId`.
-   - The local `architect` table in `state.db` (`db/schema.ts:18`) — drop `CHECK (id = 1)`; the new primary key is the `architectId` string (`id TEXT PRIMARY KEY`). **No** `workspace_path` column is added — `state.db` is already per-workspace. (Previous draft of this spec was wrong on this point.)
-   - The `terminal_sessions` table in `global.db` (`db/schema.ts:94-112`) — for rows where `type = 'architect'`, write the `architectId` into the existing `role_id` column. (Schema unchanged; the comment / contract change is "role_id is no longer null for architect rows".)
+1. **Architect name** — a stable string per architect terminal. The first architect started in a workspace defaults to `main`; subsequent architects auto-number (`architect-2`, `architect-3`, …) unless the user supplies an explicit name (e.g., `afx architect --name <name>`). The name is the architect's identity — no separate internal ID. The name is stable across reconnects (shellper restart); only the `terminalId` may change. Routing keys on the name, not the `terminalId`. Allowed character set: `[a-z][a-z0-9-]*`, max length 64.
+2. **CLI surface for naming** — v1 introduces enough CLI to start a second (or N-th) named architect terminal in a workspace, and to make the first architect's default name (`main`) auditable. The exact subcommand shape is a plan-phase decision; the architect's example was `afx architect --name <name>`. v1 does **not** add `--architect` filtering to `afx status` or any other UX polish from issue #2.
+3. **Multiple architect terminals per workspace** — relax the in-memory and on-disk singletons to allow N architect terminals indexed by name. This touches **all of the following call sites** (the plan phase will enumerate any further occurrences):
+   - `WorkspaceTerminals.architect` (`tower-types.ts:35`) — change from `string | undefined` to a collection keyed by architect name.
+   - The local `architect` table in `state.db` (`db/schema.ts:18`) — drop `CHECK (id = 1)`; the new primary key is the architect name (`id TEXT PRIMARY KEY`). **No** `workspace_path` column is added — `state.db` is already per-workspace. (Previous draft of this spec was wrong on this point.)
+   - The `terminal_sessions` table in `global.db` (`db/schema.ts:94-112`) — for rows where `type = 'architect'`, write the architect's name into the existing `role_id` column. (Schema unchanged; the contract change is "`role_id` is no longer null for architect rows".)
    - `resolveAgentInWorkspace` (`tower-messages.ts:177-200`) — generalize the architect match.
    - The activation guard in `tower-instances.ts:354` (`if (!entry.architect)`) and the architect-create paths at `:416`, `:452`.
    - Architect teardown/iteration sites: `tower-routes.ts:1411` (state response), `:1853-1855` (terminal kill), `:1882-1884` (workspace stop); `tower-instances.ts:529-532` (workspace stop); `tower-terminals.ts:289-290` (terminal cleanup), `:642` (terminal re-attach); `tower-tunnel.ts:74` (architect URL map); `commands/stop.ts:56-59` (CLI stop); `db/migrate.ts:38-46` (state migration); `commands/status.ts:86-89` (CLI status). The plan must visit each.
-3. **Spawn-time capture** — `afx spawn` records `spawnedByArchitectId` on the persisted `Builder` row. When `afx spawn` is run from inside a Tower-managed architect terminal, the architect's identity is detected automatically (e.g., from an env var Tower injects when starting the architect terminal); when run outside, it defaults to `"main"`.
-4. **Routed `architect` resolution from builders** — the `from` field already arrives at `handleSend()` but is dropped before `resolveTarget()`. v1 plumbs sender identity into the resolution layer (either by widening `resolveTarget`'s signature to accept a sender, or by adding a dedicated builder-context resolution path one layer up). When the sender is a builder, `'architect'` resolves to that builder's `spawnedByArchitectId`'s architect terminal. When the sender is not a builder (e.g., cron/task routing, manual `architect` sends from outside any builder worktree), `'architect'` resolves to the architect named `"main"` if present, falling back to the first registered architect if `"main"` is absent.
-5. **Broadcast address** — `architects` (plural, no colon). Decided in this spec, not deferred to plan: the existing parser splits on `:`, so any `architect:all` syntax collides with the `[project:]agent` grammar. `architects` avoids that collision. It is a builder-callable address (and architect-callable too — though architects rarely need it). It fans out to all registered architect terminals in the workspace.
-6. **Architect-gone semantics** — if a builder's `spawnedByArchitectId` points to an architect that is no longer registered (e.g., that architect terminal was killed), `afx send architect` falls back to the architect named `"main"` if present; if `"main"` is absent, the send fails with a clear error message naming the missing architect and listing the registered ones. This is distinct from "legacy builder with no `spawnedByArchitectId`," which has the same fallback rule but a different error message.
-7. **Dashboard / `/api/state` shape** — v1 deliberately keeps the existing `state.architect` scalar shape in the `/api/state` response, populated with the architect named `"main"` (or the first registered architect if `"main"` is absent). The dashboard and VSCode extension see a single architect tab, identical to today. Surfacing all architects in the UI is **out of scope** and will be picked up by issue #2 (per-architect identity in spawn + status). This is the explicit decision; the plan must not change it without an amendment to this spec.
-8. **Backward compatibility** — workspaces with one architect (no opt-in needed) behave identically to today. Builders persisted before this feature lands (no `spawnedByArchitectId` on the row) route to the default `"main"` architect.
+4. **Spawn-time capture** — `afx spawn` records `spawnedByArchitect` (the spawning architect's name) on the persisted `Builder` row. When `afx spawn` is run from inside a Tower-managed architect terminal, the spawning architect's name is detected automatically (e.g., from an env var Tower injects when starting the architect terminal); when run outside any architect terminal, it defaults to `main`.
+5. **Routed `architect` resolution from builders** — the `from` field already arrives at `handleSend()` but is dropped before `resolveTarget()`. v1 plumbs sender identity into the resolution layer (either by widening `resolveTarget`'s signature to accept a sender, or by adding a dedicated builder-context resolution path one layer up). When the sender is a builder, `'architect'` resolves to the builder's recorded `spawnedByArchitect`. When the sender is not a builder (e.g., cron/task routing, manual `architect` sends from outside any builder worktree), `'architect'` resolves to the architect named `main` if present, falling back to the first registered architect if `main` is absent.
+6. **Architect-gone semantics** — if a builder's `spawnedByArchitect` points to an architect that is no longer registered (e.g., that architect terminal was killed), `afx send architect` falls back to the architect named `main` if present; if `main` is absent, the send fails with a clear error message naming the missing architect and listing the registered ones. This is distinct from "legacy builder with no `spawnedByArchitect`," which has the same fallback rule but a different error message.
+7. **Dashboard / `/api/state` shape** — v1 deliberately keeps the existing `state.architect` scalar shape in the `/api/state` response, populated with the architect named `main` (or the first registered architect if `main` is absent). The dashboard and VSCode extension see a single architect tab, identical to today. Surfacing all architects in the UI is **out of scope** and will be picked up by issue #2 (per-architect identity in spawn + status). This is the explicit decision; the plan must not change it without an amendment to this spec.
+8. **Backward compatibility** — workspaces with one architect (no opt-in needed) behave identically to today. Builders persisted before this feature lands (no `spawnedByArchitect` on the row) route to the default `main` architect.
+
+### Explicitly NOT in scope
+
+- **Broadcast / fan-out address.** Earlier drafts of this spec proposed a plural `architects` broadcast address. The architect rejected this as not required for the production workflow that motivated this feature. v1 ships **only** point-to-point routing from a builder to its spawning architect. If a future need for broadcast emerges, it can be added cleanly on top of the named-architect resolution (e.g., a follow-up issue introduces `architects` as a fan-out target).
 
 ### Out of scope (deferred to follow-up issues)
 
@@ -145,19 +150,19 @@ These five items compose cleanly once #1 lands. Each will be filed as its own fo
 
 ## Success Criteria
 
-- [ ] Two architect terminals can run simultaneously in one workspace (Tower accepts multiple architect registrations with distinct `architectId` values).
-- [ ] A builder spawned from architect A's terminal records `spawnedByArchitectId: "A"` (or the equivalent default `"main"` when run from the workspace root with one architect).
+- [ ] Two architect terminals can run simultaneously in one workspace (Tower accepts multiple architect registrations with distinct names).
+- [ ] The first architect started in a workspace gets the name `main` by default. A second architect started without an explicit name gets `architect-2`; a third gets `architect-3`; and so on. An explicit name supplied via the CLI overrides the default.
+- [ ] A builder spawned from architect A's terminal records `spawnedByArchitect: "A"` on its persisted row (or the default `main` when `afx spawn` runs outside any architect terminal).
 - [ ] `afx send architect "..."` from inside a builder's worktree routes to **only** the architect that spawned that builder; sibling architects do not receive the message.
-- [ ] The explicit broadcast address `architects` (plural, no colon) fans the message out to all architects in the workspace.
 - [ ] Existing single-architect workspaces show **no behavior change**: `afx send architect` routes to the lone architect just as it does today, and the `/api/state` response shape is unchanged (scalar `architect`).
-- [ ] Builders persisted **before** this feature (no `spawnedByArchitectId` field) route to the architect named `"main"` if present; otherwise fail with a clear error listing the registered architects. The error message is asserted by test.
-- [ ] Builders whose `spawnedByArchitectId` points to an architect that is no longer registered fall back to `"main"` if present; otherwise fail with a distinct clear error. Error message is asserted by test.
-- [ ] An architect terminal that reconnects after a crash (new `terminalId`, same `architectId`) continues to receive its builders' messages without any builder-side change.
-- [ ] Non-builder `architect`-targeted sends (e.g., `afx cron`-originated messages, `afx send architect` from the workspace root) continue to route to `"main"` (or the first registered architect if `"main"` is absent) — they are **not** affinity-aware.
-- [ ] A builder address-spoofing attempt (sending to `architect:<other-architect-id>` where `<other-architect-id>` is not the builder's own `spawnedByArchitectId`) is rejected with a clear error. Asserted by test.
-- [ ] All existing tests pass; new tests cover the routing matrix (single, multi-with-match, multi-broadcast, legacy-builder-fallback, architect-gone, architect-reconnect, address-spoofing-rejection).
+- [ ] Builders persisted **before** this feature (no `spawnedByArchitect` field) route to the architect named `main` if present; otherwise fail with a clear error listing the registered architects. The error message is asserted by test.
+- [ ] Builders whose `spawnedByArchitect` points to an architect that is no longer registered fall back to `main` if present; otherwise fail with a distinct clear error. Error message is asserted by test.
+- [ ] An architect terminal that reconnects after a crash (new `terminalId`, same name) continues to receive its builders' messages without any builder-side change.
+- [ ] Non-builder `architect`-targeted sends (e.g., `afx cron`-originated messages, `afx send architect` from the workspace root) continue to route to `main` (or the first registered architect if `main` is absent) — they are **not** affinity-aware.
+- [ ] A builder address-spoofing attempt (a builder writing `architect:<some-other-name>` where that name is not its own `spawnedByArchitect`) is rejected with a clear error. Asserted by test.
+- [ ] All existing tests pass; new tests cover the routing matrix (single, multi-with-match, legacy-builder-fallback, architect-gone, architect-reconnect, address-spoofing-rejection, auto-numbering of default names).
 - [ ] No performance regression in message delivery (single-architect workspaces should see identical latency).
-- [ ] State-migration test: a `state.db` produced by the previous schema (singleton architect row, `id = 1`, `terminal_sessions.role_id = NULL` for the architect session) survives the schema upgrade. The architect row is preserved with its `terminal_id`, and the matching `terminal_sessions.role_id` is backfilled to `"main"`.
+- [ ] State-migration test: a `state.db` produced by the previous schema (singleton architect row, `id = 1`, `terminal_sessions.role_id = NULL` for the architect session) survives the schema upgrade. The architect row is preserved with its `terminal_id`, and the matching `terminal_sessions.role_id` is backfilled to `main`.
 
 ## Constraints
 
@@ -165,10 +170,10 @@ These five items compose cleanly once #1 lands. Each will be filed as its own fo
 
 - **Backward compatibility is non-negotiable.** Single-architect workspaces and pre-existing builder state rows must behave exactly as before. This is the single largest design constraint.
 - The architect singleton is enforced in **many places**, not just three. The Scope section enumerates them. They must be relaxed in lockstep — leaving any one of them stuck on the singleton assumption will produce subtle data-loss or routing bugs.
-- Tower's in-memory `WorkspaceTerminals` is the source of truth for live routing; the local `state.db` schema must be a faithful mirror for crash recovery, and the global `terminal_sessions` table must encode `architectId` in `role_id` so that crash recovery can restore the multi-architect topology.
-- The local `architect` table needs a schema migration: drop `CHECK (id = 1)` and change `id` to `TEXT PRIMARY KEY` storing the `architectId`. **No `workspace_path` column is added** — `state.db` is per-workspace already, so workspace scoping is implicit. (Prior consultation flagged that an earlier draft proposed a `workspace_path` column; that was incorrect against the actual schema.)
+- Tower's in-memory `WorkspaceTerminals` is the source of truth for live routing; the local `state.db` schema must be a faithful mirror for crash recovery, and the global `terminal_sessions` table must encode the architect's name in `role_id` so that crash recovery can restore the multi-architect topology.
+- The local `architect` table needs a schema migration: drop `CHECK (id = 1)` and change `id` to `TEXT PRIMARY KEY` storing the architect's name. **No `workspace_path` column is added** — `state.db` is per-workspace already, so workspace scoping is implicit. (Prior consultation flagged that an earlier draft proposed a `workspace_path` column; that was incorrect against the actual schema.)
 - The global `terminal_sessions` table does not need a schema change; the migration is a data-shape contract change. Existing rows with `type = 'architect'` and `role_id = NULL` must be backfilled to `role_id = 'main'` so that crash recovery routes legacy single-architect workspaces correctly.
-- The new `architectId` must be a stable string (suitable as a primary key and as an `afx send` address segment in the future). ASCII-safe, lowercase, dash-separated `[a-z][a-z0-9-]*` is the natural choice; max length 64 chars. Validation rules are pinned in the plan phase.
+- Architect names follow `[a-z][a-z0-9-]*`, max length 64 chars. The reserved default name is `main`. Auto-numbered defaults follow `architect-<N>` where `<N>` is the smallest integer ≥ 2 not currently in use in the workspace.
 - `resolveTarget`'s current signature is `(target, fallbackWorkspace?)` and has no sender parameter. v1 expands the resolution layer to accept the sender's identity. The choice between widening `resolveTarget` itself or adding a sibling builder-context resolver is a plan-phase decision; the spec only requires that sender identity reach the resolution code path.
 
 ### Business constraints
@@ -180,38 +185,45 @@ These five items compose cleanly once #1 lands. Each will be filed as its own fo
 
 - The reporter's workflow uses **two** architect terminals; the design must not collapse on N=2 but does not need to optimize for N=20.
 - Architects are launched as Tower terminals (via `afx workspace start` or equivalent); we are not adding a way to register a "remote" or "headless" architect.
-- The architect's `architectId` can be supplied by the Tower terminal-creation path (e.g., from a flag, config, or env var). The *mechanism* is a plan-phase decision — see Open Questions.
 - Builder-originated `afx send architect` is the affinity-aware path. Non-builder code paths that target `architect` (e.g., cron-originated messages routed in `tower-cron.ts`, or `afx send architect` invoked from outside any builder worktree) keep the existing "route to the singleton (now `main`)" semantics. Builders cannot be affinity-aware about non-builder senders, so this is the natural fallback.
+- The user is willing to add a CLI surface (the architect's example: `afx architect --name <name>`) to start additional named architects. The exact subcommand shape is a plan-phase decision.
 
 ## Solution Approach
 
 The mechanism splits naturally into three layers, mirroring how identity flows through the system:
 
-1. **Identity at registration.** Tower learns each architect terminal's `architectId` at registration time. The default is `"main"` so workspaces that never opt in see the same single-architect behavior. The same `architectId` survives reconnects — if the architect terminal crashes and shellper restarts it, the new `terminalId` is associated with the same `architectId`, and builders' messages keep routing correctly with no builder-side change.
-2. **Identity at spawn.** When `afx spawn` creates a builder, it detects the spawning architect's identity from execution context (e.g., environment variable injected by Tower into the architect terminal) and persists it on the builder row as `spawnedByArchitectId`. When run outside any architect terminal, the default `"main"` is used.
-3. **Identity at send.** The `from` field already arrives at `handleSend()` from the request body. v1 plumbs that `from` into the resolution layer so that when the sender is a builder and the target is `architect`, the resolver looks up the builder's `spawnedByArchitectId` and returns the matching architect terminal — not the generic first-architect. For non-builder senders, the resolver returns the architect named `"main"` (or the first registered if `"main"` is absent). The `architects` broadcast address fans out to all registered architect terminals; the plan picks whether fan-out happens at `resolveTarget` (return a list) or at `handleSend` (special-case the broadcast name) based on call-site count.
+1. **Naming at registration.** When an architect terminal is created, Tower assigns it a name: either the explicit name the user supplied (e.g., `afx architect --name <name>`) or the next available default (`main` for the first, `architect-<N>` for subsequent). The same name survives reconnects — if the architect terminal crashes and shellper restarts it, the new `terminalId` is associated with the same name, and builders' messages keep routing correctly with no builder-side change.
+2. **Identity at spawn.** When `afx spawn` creates a builder, it detects the spawning architect's name from execution context (an env var Tower injects when starting the architect terminal is the natural mechanism; plan-phase to confirm) and persists it on the builder row as `spawnedByArchitect`. When run outside any architect terminal, the default `main` is used.
+3. **Routing at send.** The `from` field already arrives at `handleSend()` from the request body. v1 plumbs that `from` into the resolution layer so that when the sender is a builder and the target is `architect`, the resolver looks up the builder's `spawnedByArchitect` and returns the matching architect terminal — not the generic first-architect. For non-builder senders, the resolver returns the architect named `main` (or the first registered if `main` is absent).
 
-The plan phase will pin down the exact mechanism for identity-at-registration (env var vs. config vs. API parameter), the exact signature change for the resolution layer, and the per-file edit list for the singleton-relaxation sweep.
+The plan phase will pin down: the exact CLI shape for naming additional architects (`afx architect --name <name>` is the architect's example, but plan-phase to confirm), the env-var contract that conveys the spawning architect's name into `afx spawn`, the signature change for the resolution layer, and the per-file edit list for the singleton-relaxation sweep.
 
 ## Open Questions
 
 ### Critical (blocks progress)
 
-- [ ] **How does an architect terminal declare its identity?** Three plausible answers: (a) a Tower API parameter when the architect terminal is created, (b) an env var read at terminal start, (c) a config-driven default with optional override. Plan phase will pick one — but the spec commits to *some* mechanism existing, with `"main"` as the default when none is provided.
+*None remaining.* All previously-critical questions resolved during architect review (see below).
 
 ### Important (affects design)
 
-- [ ] **Should `architectId` be visible in `afx status`?** Filtering is out of scope for v1, but operators will still want to see "which architect owns which builder." Decision: probably yes, as a non-filterable display column. Plan phase to confirm.
-- [ ] **Where in the Tower request flow is broadcast fan-out implemented?** Option A: at `resolveTarget` (return a list of terminal IDs and have `handleSend` iterate). Option B: at `handleSend` (special-case the `architects` name). Plan phase to decide based on call-site count and the impact on `ResolveResult`'s type.
+- [ ] **Should the architect's name be visible in `afx status`?** Filtering is out of scope for v1, but operators may still want to see "which architect owns which builder." Plan phase to decide whether to add a non-filterable display column now, or defer entirely to issue #2.
+- [ ] **Exact CLI shape for naming additional architects.** Architect's example was `afx architect --name <name>`. Plan phase to confirm: is `afx architect` a new noun subcommand (with future room for `afx architect list`, `afx architect kill`, etc.), or a flag on an existing command (e.g., `afx workspace add-architect --name <name>`)? The spec commits to the *capability*, not the surface.
+- [ ] **Mechanism for conveying the spawning architect's name into `afx spawn`.** The natural choice is an env var (e.g., `CODEV_ARCHITECT_NAME`) injected by Tower into the architect terminal's shell. Plan phase to confirm and pick the exact var name.
 
-### Resolved (during this consultation iteration)
+### Resolved (during architect review of iter-1)
 
-- ~~**What is the broadcast address syntax?**~~ Decided: `architects` (plural, no colon). `architect:all` was rejected because the existing parser splits on `:` (`project:agent` grammar) and would interpret `architect:all` as `project=architect, agent=all`.
+- ~~**Whether `architectId` is a separate field from the architect's display name.**~~ Decided: no — the name *is* the identity. Spec renamed `architectId` → architect name throughout.
+- ~~**Naming defaults for new architects.**~~ Decided: first = `main`; subsequent auto-numbered (`architect-2`, `architect-3`, …); explicit override via CLI flag.
+- ~~**Should v1 ship a broadcast address?**~~ Decided: no. The real workflow doesn't need it. Builders address `architect` (their own spawner) only. If a future need emerges, broadcast can be added cleanly on top of named-architect routing.
+- ~~**How does an architect terminal declare its identity?**~~ Decided: via the CLI surface that starts the architect terminal (architect's example: `afx architect --name <name>`). Plan phase fills in the exact subcommand shape.
+
+### Resolved (during consultation iteration 1)
+
 - ~~**Migration shape for the `architect` table.**~~ Decided: drop `CHECK (id = 1)`, change `id` to `TEXT PRIMARY KEY`. No `workspace_path` column; `state.db` is per-workspace.
-- ~~**Should the dashboard show all architects in v1?**~~ Decided: no. `/api/state` shape is unchanged; the dashboard sees the `"main"` architect (or first registered). Multi-architect UI is deferred to issue #2.
-- ~~**What happens to non-builder `architect` sends (cron, manual)?**~~ Decided: they route to `"main"` (or first registered if `"main"` is absent), unchanged from today's effective behavior.
-- ~~**What happens when a builder's spawning architect is gone?**~~ Decided: fall back to `"main"` if present; otherwise fail with a clear error listing registered architects.
-- ~~**What happens on architect reconnect (terminalId changes)?**~~ Decided: routing keys on `architectId`, not `terminalId`. Reconnect is transparent to builders.
+- ~~**Should the dashboard show all architects in v1?**~~ Decided: no. `/api/state` shape is unchanged; the dashboard sees the `main` architect (or first registered). Multi-architect UI deferred to issue #2.
+- ~~**What happens to non-builder `architect` sends (cron, manual)?**~~ Decided: they route to `main` (or first registered if `main` is absent), unchanged from today's effective behavior.
+- ~~**What happens when a builder's spawning architect is gone?**~~ Decided: fall back to `main` if present; otherwise fail with a clear error listing registered architects.
+- ~~**What happens on architect reconnect (terminalId changes)?**~~ Decided: routing keys on the architect's name, not on `terminalId`. Reconnect is transparent to builders.
 
 ### Nice-to-know (optimization)
 
@@ -220,16 +232,15 @@ The plan phase will pin down the exact mechanism for identity-at-registration (e
 ## Performance Requirements
 
 - **Routing overhead**: a single-architect `afx send architect` must add no measurable latency vs. today (single map lookup → single PTY write).
-- **Storage**: per-builder `spawnedByArchitectId` is a short string, persisted once at spawn. Negligible.
+- **Storage**: per-builder `spawnedByArchitect` is a short string, persisted once at spawn. Negligible.
 - **No new background processes, polling loops, or watchers.** All routing is on-demand at message-send time.
 
 ## Security Considerations
 
-- **Cross-architect leakage**: a misrouted message could expose builder activity to a sibling architect who shouldn't see it. Three fallback rules guarantee no leak across architects:
-  1. **Legacy builder (no `spawnedByArchitectId`)** → route to `"main"`; if `"main"` is absent, fail with error `"legacy builder <id> has no spawning-architect identity and no 'main' architect is registered (registered: <list>)"`. Asserted by test.
-  2. **Architect-gone (`spawnedByArchitectId` points to a no-longer-registered architect)** → route to `"main"`; if `"main"` is absent, fail with error `"builder <id> was spawned by architect <missing-id>, which is no longer registered, and no 'main' architect is registered (registered: <list>)"`. Asserted by test.
-  3. **Cross-architect addressing rejected**: a builder cannot bypass routing by writing `architect:<other-id>` as the target. The send rejects with `"builder <id> may only address its own spawning architect or the 'architects' broadcast"`. Asserted by test.
-- The broadcast address `architects` is **opt-in** — a misrouted send to `architect` (singular) never reaches a sibling architect.
+- **Cross-architect leakage**: a misrouted message could expose builder activity to a sibling architect who shouldn't see it. Three rules guarantee no leak across architects:
+  1. **Legacy builder (no `spawnedByArchitect`)** → route to `main`; if `main` is absent, fail with error `"legacy builder <id> has no spawning-architect identity and no 'main' architect is registered (registered: <list>)"`. Asserted by test.
+  2. **Architect-gone (`spawnedByArchitect` points to a no-longer-registered architect)** → route to `main`; if `main` is absent, fail with error `"builder <id> was spawned by architect <missing-name>, which is no longer registered, and no 'main' architect is registered (registered: <list>)"`. Asserted by test.
+  3. **Cross-architect addressing rejected**: a builder cannot bypass routing by writing `architect:<other-name>` as the target. The send rejects with `"builder <id> may only address its own spawning architect"`. Asserted by test.
 - No new auth surfaces, no new credentials, no new tokens.
 
 ## Test Scenarios
@@ -238,22 +249,23 @@ The plan phase will pin down the exact mechanism for identity-at-registration (e
 
 1. **Single-architect baseline (regression).** One architect (`main`) + one builder. `afx send architect "hi"` from builder reaches `main`. Identical to current behavior. `/api/state` response shape is unchanged.
 2. **Two architects, scoped routing.** Architects `main` and `sibling`. Builder spawned from `main`. `afx send architect "hi"` reaches only `main`'s terminal, never `sibling`'s.
-3. **Two architects, broadcast.** Builder uses `architects` (plural). Both architects receive the message.
-4. **Legacy builder fallback (`main` present).** Builder row in DB has no `spawnedByArchitectId`. `afx send architect` from that builder reaches `main`.
-5. **Legacy builder fallback (`main` absent).** Same row, but no architect named `main` is registered. Send fails with the legacy-builder error message; the error text is asserted verbatim.
-6. **Architect-gone (`main` present).** Builder has `spawnedByArchitectId: "sibling"` but `sibling` is no longer registered. `main` is registered. Send reaches `main`.
-7. **Architect-gone (`main` absent).** Same row, no `main` either. Send fails with the architect-gone error message; the error text is asserted verbatim, including the missing architect name and the list of registered architects.
-8. **Architect reconnect.** Architect `sibling` is killed and recreated (new `terminalId`, same `architectId`). The builder spawned from `sibling` sends `afx send architect`; the message reaches the new terminal without any builder-side change.
-9. **Spawning-architect detection.** `afx spawn` run from inside `main`'s architect terminal records `spawnedByArchitectId: "main"`. Run from `sibling`'s architect terminal records `spawnedByArchitectId: "sibling"`. Run outside any architect terminal defaults to `"main"`.
-10. **Address-spoofing rejection.** A builder spawned by `main` tries to address `architect:sibling`. Rejected; error text asserted verbatim.
-11. **Non-builder architect-target sends.** `afx send architect "hi"` invoked from the workspace root (not inside any builder worktree), in a multi-architect workspace, reaches `main`. Cron-originated architect messages route the same way.
-12. **Workspace stop with multiple architects.** Workspace stop tears down **all** registered architect terminals, not just the first.
+3. **Auto-numbered second architect.** Starting a second architect with no explicit name yields `architect-2`. Starting a third yields `architect-3`. Skipping `architect-2` (start, kill, restart) does not reuse the gap; `architect-3` is still next. (Plan phase decides whether to reuse gaps; spec only requires the smallest-unused-integer behavior described in Constraints.)
+4. **Explicit name override.** Starting an architect with an explicit name (e.g., `afx architect --name sibling`) yields the supplied name. Re-using an already-registered name in the same workspace is rejected with a clear error.
+5. **Legacy builder fallback (`main` present).** Builder row in DB has no `spawnedByArchitect`. `afx send architect` from that builder reaches `main`.
+6. **Legacy builder fallback (`main` absent).** Same row, but no architect named `main` is registered. Send fails with the legacy-builder error message; the error text is asserted verbatim.
+7. **Architect-gone (`main` present).** Builder has `spawnedByArchitect: "sibling"` but `sibling` is no longer registered. `main` is registered. Send reaches `main`.
+8. **Architect-gone (`main` absent).** Same row, no `main` either. Send fails with the architect-gone error message; the error text is asserted verbatim, including the missing architect name and the list of registered architects.
+9. **Architect reconnect.** Architect `sibling` is killed and recreated (new `terminalId`, same name). The builder spawned from `sibling` sends `afx send architect`; the message reaches the new terminal without any builder-side change.
+10. **Spawning-architect detection.** `afx spawn` run from inside `main`'s architect terminal records `spawnedByArchitect: "main"`. Run from `sibling`'s architect terminal records `spawnedByArchitect: "sibling"`. Run outside any architect terminal defaults to `"main"`.
+11. **Address-spoofing rejection.** A builder spawned by `main` tries to address `architect:sibling`. Rejected; error text asserted verbatim.
+12. **Non-builder architect-target sends.** `afx send architect "hi"` invoked from the workspace root (not inside any builder worktree), in a multi-architect workspace, reaches `main`. Cron-originated architect messages route the same way.
+13. **Workspace stop with multiple architects.** Workspace stop tears down **all** registered architect terminals, not just the first.
 
 ### Non-functional
 
 1. **Latency parity.** Microbenchmark `afx send architect` in a single-architect workspace before and after the change. No statistically significant difference.
-2. **Migration safety — local `state.db`.** Migration that drops `CHECK (id = 1)` and changes the `architect` table primary key to `TEXT` preserves the existing singleton row, rekeys its `id` to `"main"`, and preserves its `terminal_id` binding.
-3. **Migration safety — global `terminal_sessions`.** Backfill that populates `role_id = "main"` for existing rows where `type = 'architect' AND role_id IS NULL` runs idempotently and leaves non-architect rows untouched.
+2. **Migration safety — local `state.db`.** Migration that drops `CHECK (id = 1)` and changes the `architect` table primary key to `TEXT` preserves the existing singleton row, rekeys its `id` to `main`, and preserves its `terminal_id` binding.
+3. **Migration safety — global `terminal_sessions`.** Backfill that populates `role_id = 'main'` for existing rows where `type = 'architect' AND role_id IS NULL` runs idempotently and leaves non-architect rows untouched.
 
 ## Dependencies
 
@@ -279,10 +291,10 @@ The plan phase will pin down the exact mechanism for identity-at-registration (e
 - `packages/codev/src/agent-farm/db/migrate.ts:38-46` — state migration.
 
 **Data model touch points:**
-- `packages/codev/src/agent-farm/types.ts:7-19` — `Builder` interface (where `spawnedByArchitectId` will live).
-- `packages/codev/src/agent-farm/types.ts:37-41` — `ArchitectState` (needs `architectId`).
+- `packages/codev/src/agent-farm/types.ts:7-19` — `Builder` interface (where `spawnedByArchitect` will live).
+- `packages/codev/src/agent-farm/types.ts:37-41` — `ArchitectState` (needs `name`).
 - `packages/codev/src/agent-farm/types.ts:43-48` — `DashboardState.architect` (scalar shape preserved in v1).
-- `packages/codev/src/agent-farm/state.ts:75-111` — `upsertBuilder()` (records `spawnedByArchitectId`).
+- `packages/codev/src/agent-farm/state.ts:75-111` — `upsertBuilder()` (records `spawnedByArchitect`).
 
 **Message flow:**
 - `packages/codev/src/agent-farm/commands/send.ts:142-223` — afx send flow.
@@ -294,13 +306,13 @@ The plan phase will pin down the exact mechanism for identity-at-registration (e
 
 | Risk | Probability | Impact | Mitigation |
 |------|-------------|--------|------------|
-| Backward compat break for solo-architect users | Medium | High | Default `architectId` of `"main"`; legacy builder rows route to `main`; comprehensive regression test on the single-architect path. |
-| Migration drops the singleton row on schema upgrade | Low | High | Two migration tests (local `state.db` + global `terminal_sessions` backfill); both asserted to preserve `terminal_id` and rekey the row's `id`/`role_id` to `"main"`. |
-| Singleton-relaxation sweep misses a call site, leaking single-architect assumption | Medium | High | Enumerated list of known call sites in Scope item 2 + References. Plan phase must visit each. CI grep guardrail: a test that fails if `entry.architect` (singular accessor) appears outside the documented allowed sites. |
-| Dashboard / VSCode extension breaks due to `/api/state` shape change | Medium | High | v1 explicitly preserves the scalar shape of `state.architect` in `/api/state` (Scope item 7). The collection lives only inside Tower; the response is collapsed to `"main"` (or first) on the way out. |
+| Backward compat break for solo-architect users | Medium | High | Default architect name of `main`; legacy builder rows route to `main`; comprehensive regression test on the single-architect path. |
+| Migration drops the singleton row on schema upgrade | Low | High | Two migration tests (local `state.db` + global `terminal_sessions` backfill); both asserted to preserve `terminal_id` and rekey the row's `id`/`role_id` to `main`. |
+| Singleton-relaxation sweep misses a call site, leaking single-architect assumption | Medium | High | Enumerated list of known call sites in Scope item 3 + References. Plan phase must visit each. CI grep guardrail: a test that fails if `entry.architect` (singular accessor) appears outside the documented allowed sites. |
+| Dashboard / VSCode extension breaks due to `/api/state` shape change | Medium | High | v1 explicitly preserves the scalar shape of `state.architect` in `/api/state` (Scope item 7). The collection lives only inside Tower; the response is collapsed to `main` (or first) on the way out. |
 | Routing leaks across architects under race conditions (two architects spawning builders at the same instant) | Low | Medium | Spawn-time identity is captured synchronously from the spawning architect's environment, persisted to SQLite in the same transaction as `upsertBuilder()`. No race window. |
-| Plan phase discovers the architect-identity mechanism (Open Q #1) is much harder than expected | Medium | Medium | Plan phase can defer to a config-driven default-only approach if the Tower-injection path proves messy; v1 still ships routing correctness, just with a less ergonomic identity assignment. |
-| Scope creep — pressure to include thread.md (#3) or `--architect` CLI flags (#2) | High | Medium | Explicit Out of Scope section above; architect already gated this in the spawn instruction. Any pressure during PR review → defer to follow-up issue. |
+| CLI naming surface ends up needing to grow before v1 ships | Low | Medium | Architect committed in iter-2 review to a minimal CLI (the example given was `afx architect --name <name>`). Plan phase to confirm the exact shape; spec keeps the surface intentionally small. |
+| Scope creep — pressure to include thread.md (#3), `--architect` filter on `afx status` (#2), or broadcast | High | Medium | Explicit Out of Scope section above; architect explicitly rejected broadcast in iter-2 review. Any pressure during PR review → defer to follow-up issue. |
 
 ## Expert Consultation
 
@@ -343,6 +355,17 @@ The plan phase will pin down the exact mechanism for identity-at-registration (e
 - `codev/projects/755-multi-architect-support-per-ar/755-specify-iter1-codex.txt`
 - `codev/projects/755-multi-architect-support-per-ar/755-specify-iter1-gemini.txt`
 - `codev/projects/755-multi-architect-support-per-ar/755-specify-iter1-claude.txt`
+- `codev/projects/755-multi-architect-support-per-ar/755-specify-iter1-rebuttals.md`
+
+### Architect review (iteration 2) — 2026-05-18
+
+The architect (M Waleed Kadous) reviewed the spec and left five inline comments. All five were addressed in this iteration:
+
+1. **Problem statement accuracy.** Today, only the singleton architect terminal receives a builder's message — a sibling architect agent isn't a Tower-registered architect at all, so it doesn't get the message directly. The original draft incorrectly said "both" architects see it. **Fix**: Problem Statement rewritten to describe the singleton's actual behavior plus the human's manual copy-paste workaround.
+2. **Naming policy.** The architect specified concrete defaults: first architect = `main`; subsequent = auto-numbered (`architect-2`, `architect-3`, …); explicit override via a CLI flag (architect's example: `afx architect --name <name>`). **Fix**: pinned in Scope item 1, with character-set/length rules in Constraints, and test scenarios for auto-numbering + explicit name + collision rejection.
+3. **Workaround reality.** The architect literally copy-pastes messages from main's terminal to sibling's. **Fix**: added explicitly to "How users work around it today" as the most visible day-to-day cost.
+4. **`architectId` is the same as the name.** **Fix**: renamed throughout. Builder field is now `spawnedByArchitect` (the architect's name); there is no separate ID.
+5. **Broadcast is not required.** **Fix**: dropped the `architects` broadcast address from v1 scope entirely. Added explicit "NOT in scope" subsection. Removed associated tests, success criteria, and security carve-outs. Left a forward-looking note that broadcast can be added cleanly on top of named-architect routing if a future need emerges.
 
 ## Approval
 
