@@ -1,7 +1,7 @@
 id: '761'
 title: surface-multiple-architects-in
 protocol: spir
-phase: specify
+phase: plan
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -16,7 +16,7 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history: []
 started_at: '2026-05-18T20:34:36.514Z'
-updated_at: '2026-05-18T20:59:35.988Z'
+updated_at: '2026-05-18T20:59:50.870Z'
