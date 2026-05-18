@@ -11,6 +11,32 @@ import path from 'node:path';
 import type { WebSocket } from 'ws';
 import { parseAddress, stripLeadingZeros } from '../utils/agent-names.js';
 import { getWorkspaceTerminals } from './tower-terminals.js';
+import { lookupBuilderSpawningArchitect } from '../state.js';
+import { DEFAULT_ARCHITECT_NAME } from '../utils/architect-name.js';
+
+// ============================================================================
+// Spec 755 error messages — exported as constants so producer and asserter
+// share a single source of truth. Tests assert these texts verbatim; changing
+// the wording without updating both sides will break the build.
+// ============================================================================
+
+export function legacyBuilderErrorMessage(builderId: string, registered: string[]): string {
+  const names = registered.length ? registered.join(', ') : '<none>';
+  return `legacy builder ${builderId} has no spawning-architect identity and no 'main' architect is registered (registered: ${names})`;
+}
+
+export function architectGoneErrorMessage(
+  builderId: string,
+  missingArchitect: string,
+  registered: string[],
+): string {
+  const names = registered.length ? registered.join(', ') : '<none>';
+  return `builder ${builderId} was spawned by architect ${missingArchitect}, which is no longer registered, and no 'main' architect is registered (registered: ${names})`;
+}
+
+export function addressSpoofingErrorMessage(builderId: string): string {
+  return `builder ${builderId} may only address its own spawning architect`;
+}
 
 // ============================================================================
 // Message Frame
@@ -99,13 +125,20 @@ export interface ResolveError {
  *    - Exact match (case-insensitive) first, then tail match
  *    - Multiple tail matches → AMBIGUOUS error
  *
+ * Spec 755: when `sender` is supplied and refers to a builder, sender-affinity
+ * routing applies to `architect` and `architect:<name>` targets. Non-builder
+ * senders see the legacy main-first behavior, unchanged.
+ *
  * @param target - Address string: "agent" or "project:agent"
  * @param fallbackWorkspace - Workspace path when no project: prefix is given
+ * @param sender - Optional sender identity (a builder ID or 'architect').
+ *                 Enables affinity-aware architect routing per Spec 755.
  * @returns ResolveResult on success, ResolveError on failure
  */
 export function resolveTarget(
   target: string,
   fallbackWorkspace?: string,
+  sender?: string,
 ): ResolveResult | ResolveError {
   const { project, agent } = parseAddress(target);
 
@@ -115,6 +148,21 @@ export function resolveTarget(
       code: 'NO_CONTEXT' as const,
       message: 'Malformed address: agent name is empty.',
     };
+  }
+
+  // Spec 755: `architect:<name>` is a per-architect address WITHIN the
+  // current workspace, not a `project:agent` cross-workspace address.
+  // parseAddress can't distinguish them (the grammar is overloaded), so we
+  // intercept here. The resolver below applies the spoofing check when
+  // sender is a builder.
+  if (project && project.toLowerCase() === 'architect') {
+    if (!fallbackWorkspace) {
+      return {
+        code: 'NO_CONTEXT',
+        message: 'Cannot resolve architect:<name> address without workspace context.',
+      };
+    }
+    return resolveArchitectByName(agent, fallbackWorkspace, sender);
   }
 
   // Determine the workspace path
@@ -134,7 +182,51 @@ export function resolveTarget(
   }
 
   // Resolve agent within the workspace
-  return resolveAgentInWorkspace(agent, workspacePath);
+  return resolveAgentInWorkspace(agent, workspacePath, sender);
+}
+
+/**
+ * Resolve `architect:<name>` to a terminal ID within the given workspace.
+ *
+ * Spec 755 enforcement when sender is a builder:
+ *   - If the builder's `spawned_by_architect` matches `<name>`: allowed.
+ *   - If it doesn't match: rejected with the spoofing error.
+ * Non-builder senders may address any architect by name.
+ */
+function resolveArchitectByName(
+  name: string,
+  workspacePath: string,
+  sender?: string,
+): ResolveResult | ResolveError {
+  const allWorkspaces = getWorkspaceTerminals();
+  const entry = allWorkspaces.get(workspacePath);
+
+  if (!entry) {
+    return {
+      code: 'NOT_FOUND',
+      message: `Workspace '${workspacePath}' has no registered terminals.`,
+    };
+  }
+
+  // Spoofing check: builder senders can only address their own architect.
+  if (sender) {
+    const spawningArchitect = lookupBuilderSpawningArchitect(sender, workspacePath);
+    if (spawningArchitect !== undefined && spawningArchitect !== name) {
+      return {
+        code: 'NOT_FOUND',
+        message: addressSpoofingErrorMessage(sender),
+      };
+    }
+  }
+
+  const terminalId = entry.architects.get(name);
+  if (!terminalId) {
+    return {
+      code: 'NOT_FOUND',
+      message: `Architect '${name}' not found in workspace '${path.basename(workspacePath)}'.`,
+    };
+  }
+  return { terminalId, workspacePath, agent: name };
 }
 
 /**
@@ -172,11 +264,26 @@ function findWorkspaceByBasename(
 /**
  * Resolve an agent name to a terminal ID within a specific workspace.
  *
- * Checks architect first, then builders by exact match, then builders by tail match.
+ * Checks architect first (with Spec 755 affinity-aware routing when `sender`
+ * is a builder), then builders by exact match, then builders by tail match.
+ *
+ * Spec 755 architect resolution:
+ *   - Fast path: single-architect workspace with name 'main' — return that
+ *     terminal directly. Identical to today's behavior; avoids the state.db
+ *     read entirely for the common case.
+ *   - Builder sender, target 'architect': look up the builder's
+ *     spawnedByArchitect. If that architect is registered, route there.
+ *     Otherwise fall back to 'main', else error with the spec-mandated
+ *     legacy-builder / architect-gone messages.
+ *   - Builder sender, target 'architect:<name>': allowed only if <name>
+ *     matches the sender's spawnedByArchitect. Otherwise rejected (spoofing).
+ *   - Non-builder sender (or no sender), target 'architect': route to 'main'
+ *     (or first registered if 'main' is absent). Unchanged from today.
  */
 function resolveAgentInWorkspace(
   agent: string,
   workspacePath: string,
+  sender?: string,
 ): ResolveResult | ResolveError {
   const allWorkspaces = getWorkspaceTerminals();
   const entry = allWorkspaces.get(workspacePath);
@@ -188,16 +295,61 @@ function resolveAgentInWorkspace(
     };
   }
 
-  // Check architect
+  // Check architect (Spec 755 affinity-aware path).
   if (agent === 'architect' || agent === 'arch') {
-    if (!entry.architect) {
+    if (entry.architects.size === 0) {
       return {
         code: 'NOT_FOUND',
         message: `No architect terminal found in workspace '${path.basename(workspacePath)}'.`,
       };
     }
-    return { terminalId: entry.architect, workspacePath, agent: 'architect' };
+
+    // Single-architect fast path: most workspaces have only 'main'.
+    // Identical answer to the full resolution path, but skips the state.db
+    // read entirely. Guarantees latency parity for solo-architect users.
+    if (entry.architects.size === 1 && entry.architects.has(DEFAULT_ARCHITECT_NAME)) {
+      const terminalId = entry.architects.get(DEFAULT_ARCHITECT_NAME)!;
+      return { terminalId, workspacePath, agent: 'architect' };
+    }
+
+    // Builder-context detection via state.db row presence. Three-valued
+    // result distinguishes "builder with explicit name" / "legacy builder"
+    // / "not a builder" — see lookupBuilderSpawningArchitect.
+    const spawningArchitect = sender ? lookupBuilderSpawningArchitect(sender, workspacePath) : undefined;
+
+    if (spawningArchitect !== undefined && sender) {
+      // Sender is a builder.
+      if (spawningArchitect === null) {
+        // Legacy builder: row exists, spawnedByArchitect is null. Route to
+        // 'main' if present; else fail with the spec's verbatim message.
+        const main = entry.architects.get(DEFAULT_ARCHITECT_NAME);
+        if (main) return { terminalId: main, workspacePath, agent: 'architect' };
+        return {
+          code: 'NOT_FOUND',
+          message: legacyBuilderErrorMessage(sender, [...entry.architects.keys()]),
+        };
+      }
+      // Builder has an explicit spawning architect.
+      const target = entry.architects.get(spawningArchitect);
+      if (target) return { terminalId: target, workspacePath, agent: 'architect' };
+      // Architect-gone fallback: route to 'main' if present; else fail.
+      const main = entry.architects.get(DEFAULT_ARCHITECT_NAME);
+      if (main) return { terminalId: main, workspacePath, agent: 'architect' };
+      return {
+        code: 'NOT_FOUND',
+        message: architectGoneErrorMessage(sender, spawningArchitect, [...entry.architects.keys()]),
+      };
+    }
+
+    // Non-builder sender (or no sender): 'main' first, then first registered.
+    const terminalId =
+      entry.architects.get(DEFAULT_ARCHITECT_NAME) ?? entry.architects.values().next().value!;
+    return { terminalId, workspacePath, agent: 'architect' };
   }
+
+  // `architect:<name>` addressing is handled earlier in resolveTarget via
+  // resolveArchitectByName. Reaching this point means the agent is a plain
+  // workspace-local name (builder/shell), so we fall through to those.
 
   // Check builders — exact match (case-insensitive)
   for (const [builderId, terminalId] of entry.builders) {

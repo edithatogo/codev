@@ -5,6 +5,9 @@
  * All operations are synchronous and atomic.
  */
 
+import path from 'node:path';
+import { existsSync } from 'node:fs';
+import Database from 'better-sqlite3';
 import type { DashboardState, ArchitectState, Builder, UtilTerminal, Annotation } from './types.js';
 import { getDb, closeDb } from './db/index.js';
 import type { DbArchitect, DbBuilder, DbUtil, DbAnnotation } from './db/types.js';
@@ -18,13 +21,22 @@ import { isPortConflictError } from './db/errors.js';
 
 /**
  * Load complete state from database
- * Note: This is now synchronous
+ *
+ * Spec 755: `DashboardState.architect` remains a scalar shape in v1. We load
+ * the architect named 'main' if present, otherwise the first registered
+ * architect (alphabetical by name). The /api/state contract is preserved so
+ * the dashboard and VSCode extension see no shape change. Multi-architect UI
+ * is deferred to issue #2 — see plan codev/plans/755-*.md.
  */
 export function loadState(): DashboardState {
   const db = getDb();
 
-  // Load architect (singleton)
-  const architectRow = db.prepare('SELECT * FROM architect WHERE id = 1').get() as DbArchitect | undefined;
+  // Load architect (Spec 755: scalar shim — prefer 'main', else the
+  // first-registered architect, ordered by started_at, not lexicographic name).
+  let architectRow = db.prepare("SELECT * FROM architect WHERE id = 'main'").get() as DbArchitect | undefined;
+  if (!architectRow) {
+    architectRow = db.prepare('SELECT * FROM architect ORDER BY started_at LIMIT 1').get() as DbArchitect | undefined;
+  }
   const architect = architectRow ? dbArchitectToArchitectState(architectRow) : null;
 
   // Load builders
@@ -48,24 +60,53 @@ export function loadState(): DashboardState {
 }
 
 /**
- * Update architect state
- * Note: This is now synchronous
+ * Update architect state (main-only setter — preserved for backward-compat with
+ * existing callers like `workspace start` / `stop`). Spec 755 added per-name
+ * setters/getters below.
+ *
+ * If `architect` is provided with a non-default `name`, callers should use
+ * `setArchitectByName(name, architect)` instead — this function always
+ * writes the row with id = 'main'.
  */
 export function setArchitect(architect: ArchitectState | null): void {
   const db = getDb();
 
   if (architect === null) {
-    db.prepare('DELETE FROM architect WHERE id = 1').run();
+    db.prepare("DELETE FROM architect WHERE id = 'main'").run();
   } else {
     db.prepare(`
       INSERT OR REPLACE INTO architect (id, pid, port, cmd, started_at, terminal_id)
-      VALUES (1, 0, 0, @cmd, @startedAt, @terminalId)
+      VALUES ('main', 0, 0, @cmd, @startedAt, @terminalId)
     `).run({
       cmd: architect.cmd,
       startedAt: architect.startedAt,
       terminalId: architect.terminalId ?? null,
     });
   }
+}
+
+/**
+ * Update architect state by name (Spec 755). Used by the Phase 2 CLI for
+ * registering additional named architects. When `architect` is null, removes
+ * just that named architect; non-null upserts it.
+ */
+export function setArchitectByName(name: string, architect: ArchitectState | null): void {
+  const db = getDb();
+
+  if (architect === null) {
+    db.prepare('DELETE FROM architect WHERE id = ?').run(name);
+    return;
+  }
+
+  db.prepare(`
+    INSERT OR REPLACE INTO architect (id, pid, port, cmd, started_at, terminal_id)
+    VALUES (@name, 0, 0, @cmd, @startedAt, @terminalId)
+  `).run({
+    name,
+    cmd: architect.cmd,
+    startedAt: architect.startedAt,
+    terminalId: architect.terminalId ?? null,
+  });
 }
 
 /**
@@ -78,11 +119,11 @@ export function upsertBuilder(builder: Builder): void {
   db.prepare(`
     INSERT INTO builders (
       id, name, port, pid, status, phase, worktree, branch,
-      type, task_text, protocol_name, issue_number, terminal_id
+      type, task_text, protocol_name, issue_number, terminal_id, spawned_by_architect
     )
     VALUES (
       @id, @name, 0, 0, @status, @phase, @worktree, @branch,
-      @type, @taskText, @protocolName, @issueNumber, @terminalId
+      @type, @taskText, @protocolName, @issueNumber, @terminalId, @spawnedByArchitect
     )
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
@@ -94,7 +135,8 @@ export function upsertBuilder(builder: Builder): void {
       task_text = excluded.task_text,
       protocol_name = excluded.protocol_name,
       issue_number = excluded.issue_number,
-      terminal_id = excluded.terminal_id
+      terminal_id = excluded.terminal_id,
+      spawned_by_architect = COALESCE(excluded.spawned_by_architect, builders.spawned_by_architect)
   `).run({
     id: builder.id,
     name: builder.name,
@@ -107,6 +149,7 @@ export function upsertBuilder(builder: Builder): void {
     protocolName: builder.protocolName ?? null,
     issueNumber: builder.issueNumber != null ? String(builder.issueNumber) : null,
     terminalId: builder.terminalId ?? null,
+    spawnedByArchitect: builder.spawnedByArchitect ?? null,
   });
 }
 
@@ -282,12 +325,83 @@ export function clearState(): void {
 }
 
 /**
- * Get architect state
+ * Get architect state (main-only — Spec 755 scalar shim).
+ * Returns the architect named 'main' if present, otherwise the first
+ * registered architect by name. For multi-architect access, use
+ * `getArchitects()` or `getArchitectByName(name)` below.
  */
 export function getArchitect(): ArchitectState | null {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM architect WHERE id = 1').get() as DbArchitect | undefined;
+  let row = db.prepare("SELECT * FROM architect WHERE id = 'main'").get() as DbArchitect | undefined;
+  if (!row) {
+    // Spec 755: when 'main' is absent, fall back to the first-registered
+    // architect (started_at ordering), not the lexicographically-first name.
+    row = db.prepare('SELECT * FROM architect ORDER BY started_at LIMIT 1').get() as DbArchitect | undefined;
+  }
   return row ? dbArchitectToArchitectState(row) : null;
+}
+
+/**
+ * Get all architects (Spec 755).
+ */
+export function getArchitects(): ArchitectState[] {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM architect ORDER BY id').all() as DbArchitect[];
+  return rows.map(dbArchitectToArchitectState);
+}
+
+/**
+ * Get a single architect by name (Spec 755).
+ */
+export function getArchitectByName(name: string): ArchitectState | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM architect WHERE id = ?').get(name) as DbArchitect | undefined;
+  return row ? dbArchitectToArchitectState(row) : null;
+}
+
+/**
+ * Look up a builder's spawning-architect name (Spec 755).
+ *
+ * Returns:
+ *   - `string` — the recorded `spawned_by_architect` (builder context with explicit name)
+ *   - `null`   — a row exists for that builder ID but `spawned_by_architect` is NULL (legacy row)
+ *   - `undefined` — no row exists for that ID (not a builder)
+ *
+ * This three-valued return cleanly distinguishes "legacy builder" from
+ * "non-builder sender." Used by the Phase 3 affinity-aware resolver.
+ *
+ * When `workspacePath` is supplied, opens a per-workspace readonly handle
+ * directly — the right thing for Tower, which serves multiple workspaces
+ * and cannot rely on the singleton `getDb()` (which is tied to the process's
+ * startup CWD). When omitted, falls back to the singleton — convenient for
+ * CLI callers that already ran inside one workspace. Mirrors the pattern in
+ * `servers/overview.ts`.
+ */
+export function lookupBuilderSpawningArchitect(
+  builderId: string,
+  workspacePath?: string,
+): string | null | undefined {
+  if (workspacePath) {
+    const dbPath = path.join(workspacePath, '.agent-farm', 'state.db');
+    if (!existsSync(dbPath)) return undefined;
+    const wsDb = new Database(dbPath, { readonly: true });
+    try {
+      const row = wsDb
+        .prepare('SELECT spawned_by_architect FROM builders WHERE id = ?')
+        .get(builderId) as { spawned_by_architect: string | null } | undefined;
+      if (!row) return undefined;
+      return row.spawned_by_architect;
+    } finally {
+      wsDb.close();
+    }
+  }
+
+  const db = getDb();
+  const row = db.prepare('SELECT spawned_by_architect FROM builders WHERE id = ?').get(builderId) as
+    | { spawned_by_architect: string | null }
+    | undefined;
+  if (!row) return undefined;
+  return row.spawned_by_architect;
 }
 
 // Re-export closeDb for cleanup
