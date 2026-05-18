@@ -5,14 +5,14 @@ phase: implement
 plan_phases:
   - id: phase_1
     title: Storage and Tower data-model relaxation
-    status: in_progress
+    status: complete
   - id: phase_2
     title: Naming CLI and spawn-time identity capture
-    status: pending
+    status: in_progress
   - id: phase_3
     title: Affinity-aware routing
     status: pending
-current_plan_phase: phase_1
+current_plan_phase: phase_2
 gates:
   spec-approval:
     status: approved
@@ -27,7 +27,7 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history:
   - iteration: 1
     plan_phase: phase_1
@@ -46,4 +46,4 @@ history:
         file: >-
           /Users/mwk/Development/cluesmith/codev/.builders/spir-755/codev/projects/755-multi-architect-support-per-ar/755-phase_1-iter1-claude.txt
 started_at: '2026-05-17T20:51:15.851Z'
-updated_at: '2026-05-18T05:50:24.252Z'
+updated_at: '2026-05-18T05:50:26.002Z'
