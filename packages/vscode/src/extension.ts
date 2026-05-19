@@ -33,6 +33,8 @@ import { StatusProvider } from './views/status.js';
 import { WorkspaceProvider } from './views/workspace.js';
 import { BuilderTreeItem } from './views/builder-tree-item.js';
 import { BuilderFileTreeItem } from './views/builder-file-tree-item.js';
+import { BuilderDiffCache } from './views/builder-diff-cache.js';
+import { BuilderFileDecorationProvider } from './views/builder-file-decoration.js';
 import { BacklogTreeItem } from './views/backlog-tree-item.js';
 
 let connectionManager: ConnectionManager | null = null;
@@ -200,9 +202,17 @@ export async function activate(context: vscode.ExtensionContext) {
 		updateListViewTitles();
 	});
 
+	// Shared across the Builders tree (second-level changed files) and the
+	// SCM-style file decorations so both read one TTL-guarded git result.
+	const builderDiffCache = new BuilderDiffCache();
+	context.subscriptions.push(
+		{ dispose: () => builderDiffCache.dispose() },
+		vscode.window.registerFileDecorationProvider(new BuilderFileDecorationProvider(builderDiffCache)),
+	);
+
 	// List views use createTreeView so their title can carry a live item
 	// count; the rest stay on registerTreeDataProvider.
-	buildersView = vscode.window.createTreeView('codev.builders', { treeDataProvider: new BuildersProvider(overviewCache) });
+	buildersView = vscode.window.createTreeView('codev.builders', { treeDataProvider: new BuildersProvider(overviewCache, builderDiffCache) });
 	pullRequestsView = vscode.window.createTreeView('codev.pullRequests', { treeDataProvider: new PullRequestsProvider(overviewCache) });
 	backlogView = vscode.window.createTreeView('codev.backlog', { treeDataProvider: new BacklogProvider(overviewCache) });
 	recentlyClosedView = vscode.window.createTreeView('codev.recentlyClosed', { treeDataProvider: new RecentlyClosedProvider(overviewCache) });

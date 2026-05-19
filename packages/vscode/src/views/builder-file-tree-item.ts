@@ -8,31 +8,14 @@ import type { ChangeEntry, ChangeStatus, ResourcePlan } from '../commands/view-d
  * needs (it receives the item itself, like the backlog/builder rows, and
  * narrows via `instanceof`).
  *
- * `plan` (left/right `SideSpec`) is what feeds `diffUrisForChange`; `change`
- * carries the git status letter for the icon, title, and rename source.
+ * `plan` (left/right `SideSpec`) feeds `diffUrisForChange`; `change`
+ * carries the git status (used for the tooltip + rename source). The
+ * status *icon* is deliberately NOT set here — `resourceUri` lets the
+ * file-type icon show, and `BuilderFileDecorationProvider` adds the
+ * SCM-style colored status-letter badge, mirroring VSCode's Git decorator.
  *
  * Used by views/builders.ts.
  */
-
-const STATUS_ICON: Record<ChangeStatus, string> = {
-  A: 'diff-added',
-  D: 'diff-removed',
-  R: 'diff-renamed',
-  C: 'diff-renamed',
-  M: 'diff-modified',
-  T: 'diff-modified',
-  U: 'diff-modified',
-};
-
-const STATUS_COLOR: Record<ChangeStatus, string> = {
-  A: 'gitDecoration.addedResourceForeground',
-  D: 'gitDecoration.deletedResourceForeground',
-  R: 'gitDecoration.renamedResourceForeground',
-  C: 'gitDecoration.renamedResourceForeground',
-  M: 'gitDecoration.modifiedResourceForeground',
-  T: 'gitDecoration.modifiedResourceForeground',
-  U: 'gitDecoration.modifiedResourceForeground',
-};
 
 const STATUS_LABEL: Record<ChangeStatus, string> = {
   A: 'Added',
@@ -62,14 +45,8 @@ export class BuilderFileTreeItem extends vscode.TreeItem {
         ? `${dirLabel ? dirLabel + '  ' : ''}↤ ${change.oldPath}`
         : dirLabel;
 
-    // resourceUri gives a real path for the diff/label; iconPath is set
-    // explicitly to the status glyph (which overrides the file-type icon)
-    // since "what changed and how" is the point of this list.
+    // resourceUri → native file-type icon + the decoration-provider badge.
     this.resourceUri = vscode.Uri.file(path.join(worktreePath, rel));
-    this.iconPath = new vscode.ThemeIcon(
-      STATUS_ICON[change.status] ?? 'diff-modified',
-      new vscode.ThemeColor(STATUS_COLOR[change.status] ?? 'gitDecoration.modifiedResourceForeground'),
-    );
     this.tooltip = `${STATUS_LABEL[change.status] ?? 'Changed'} · ${rel}`;
     this.contextValue = 'builder-file';
     this.command = {

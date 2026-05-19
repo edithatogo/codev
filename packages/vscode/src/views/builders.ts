@@ -3,7 +3,7 @@ import type { OverviewBuilder } from '@cluesmith/codev-types';
 import type { OverviewCache } from './overview-data.js';
 import { BuilderTreeItem } from './builder-tree-item.js';
 import { BuilderFileTreeItem } from './builder-file-tree-item.js';
-import { BuilderDiffCache } from './builder-diff-cache.js';
+import type { BuilderDiffCache } from './builder-diff-cache.js';
 
 /**
  * Order builders for the Builders tree: blocked first with the longest-
@@ -30,9 +30,11 @@ function orderForDisplay(builders: OverviewBuilder[]): OverviewBuilder[] {
 export class BuildersProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
   private readonly changeEmitter = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changeEmitter.event;
-  private readonly diffCache = new BuilderDiffCache();
 
-  constructor(private cache: OverviewCache) {
+  constructor(
+    private cache: OverviewCache,
+    private readonly diffCache: BuilderDiffCache,
+  ) {
     cache.onDidChange(() => this.changeEmitter.fire());
   }
 
