@@ -7,7 +7,7 @@ import { sendMessage } from './commands/send.js';
 import { approveGate } from './commands/approve.js';
 import { cleanupBuilder } from './commands/cleanup.js';
 import { openWorktreeWindow } from './commands/open-worktree-window.js';
-import { viewDiff, activateDiffView } from './commands/view-diff.js';
+import { viewDiff, activateDiffView, diffUrisForChange } from './commands/view-diff.js';
 import { runWorktreeDev } from './commands/run-worktree-dev.js';
 import { stopWorktreeDev } from './commands/stop-worktree-dev.js';
 import { runWorkspaceDev, stopWorkspaceDev } from './commands/run-workspace-dev.js';
@@ -32,6 +32,7 @@ import { TeamProvider } from './views/team.js';
 import { StatusProvider } from './views/status.js';
 import { WorkspaceProvider } from './views/workspace.js';
 import { BuilderTreeItem } from './views/builder-tree-item.js';
+import { BuilderFileTreeItem } from './views/builder-file-tree-item.js';
 import { BacklogTreeItem } from './views/backlog-tree-item.js';
 
 let connectionManager: ConnectionManager | null = null;
@@ -370,6 +371,12 @@ export async function activate(context: vscode.ExtensionContext) {
 			openWorktreeWindow(connectionManager!, extractBuilderId(arg))),
 		vscode.commands.registerCommand('codev.viewDiff', (arg: vscode.TreeItem | string | undefined) =>
 			viewDiff(connectionManager!, extractBuilderId(arg))),
+		vscode.commands.registerCommand('codev.openBuilderFileDiff', async (arg: unknown) => {
+			if (!(arg instanceof BuilderFileTreeItem)) { return; }
+			const { left, right } = diffUrisForChange(arg.plan, { wt: arg.worktreePath, ref: arg.baseRef });
+			const title = `${arg.plan.resourcePath} (#${arg.builderId})`;
+			await vscode.commands.executeCommand('vscode.diff', left, right, title);
+		}),
 		vscode.commands.registerCommand('codev.runWorktreeDev', (arg: vscode.TreeItem | string | undefined) =>
 			runWorktreeDev(connectionManager!, terminalManager!, extractBuilderId(arg))),
 		vscode.commands.registerCommand('codev.stopWorktreeDev', () =>

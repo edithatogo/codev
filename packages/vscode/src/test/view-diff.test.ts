@@ -6,6 +6,8 @@ import {
   planResources,
   encodeDiffQuery,
   decodeDiffQuery,
+  diffUrisForChange,
+  DIFF_SCHEME,
   type ChangeEntry,
 } from '../commands/view-diff.js';
 
@@ -129,5 +131,54 @@ suite('view-diff diff-query codec', () => {
   test('preserves the empty/binary sentinels', () => {
     assert.strictEqual(decodeDiffQuery(encodeDiffQuery({ wt: '', ref: '', path: 'p', empty: true })).empty, true);
     assert.strictEqual(decodeDiffQuery(encodeDiffQuery({ wt: '', ref: '', path: 'p', binary: true })).binary, true);
+  });
+});
+
+suite('view-diff diffUrisForChange', () => {
+  const ctx = { wt: '/repo/.builders/0042', ref: 'abc123' };
+
+  test('modified → codev-diff base ↔ file: worktree', () => {
+    const [plan] = planResources(
+      [{ status: 'M', oldPath: null, path: 'src/a.ts' }],
+      new Set<string>(),
+    );
+    const { left, right } = diffUrisForChange(plan, ctx);
+    assert.strictEqual(left.scheme, DIFF_SCHEME);
+    assert.deepStrictEqual(decodeDiffQuery(left.query), {
+      wt: ctx.wt, ref: ctx.ref, path: 'src/a.ts',
+    });
+    assert.strictEqual(right.scheme, 'file');
+    assert.strictEqual(right.fsPath, '/repo/.builders/0042/src/a.ts');
+  });
+
+  test('added → empty-sentinel base ↔ file: worktree', () => {
+    const [plan] = planResources(
+      [{ status: 'A', oldPath: null, path: 'n.ts' }],
+      new Set<string>(),
+    );
+    const { left, right } = diffUrisForChange(plan, ctx);
+    assert.strictEqual(decodeDiffQuery(left.query).empty, true);
+    assert.strictEqual(right.scheme, 'file');
+  });
+
+  test('deleted → base ↔ empty-sentinel', () => {
+    const [plan] = planResources(
+      [{ status: 'D', oldPath: null, path: 'gone.ts' }],
+      new Set<string>(),
+    );
+    const { left, right } = diffUrisForChange(plan, ctx);
+    assert.strictEqual(left.scheme, DIFF_SCHEME);
+    assert.strictEqual(decodeDiffQuery(left.query).path, 'gone.ts');
+    assert.strictEqual(decodeDiffQuery(right.query).empty, true);
+  });
+
+  test('renamed → old@base ↔ new file', () => {
+    const [plan] = planResources(
+      [{ status: 'R', oldPath: 'old.ts', path: 'new.ts' }],
+      new Set<string>(),
+    );
+    const { left, right } = diffUrisForChange(plan, ctx);
+    assert.strictEqual(decodeDiffQuery(left.query).path, 'old.ts');
+    assert.strictEqual(right.fsPath, '/repo/.builders/0042/new.ts');
   });
 });

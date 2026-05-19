@@ -115,6 +115,10 @@
         "title": "Codev: View Diff"
       },
       {
+        "command": "codev.openBuilderFileDiff",
+        "title": "Codev: Open Builder File Diff"
+      },
+      {
         "command": "codev.openWorktreeWindow",
         "title": "Codev: Open Worktree in New Window"
       },
@@ -194,6 +198,10 @@
         },
         {
           "command": "codev.copyBacklogIssueNumber",
+          "when": "false"
+        },
+        {
+          "command": "codev.openBuilderFileDiff",
           "when": "false"
         },
         {

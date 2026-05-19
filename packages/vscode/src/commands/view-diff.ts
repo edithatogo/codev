@@ -221,6 +221,81 @@ function sideUri(side: SideSpec, ctx: { wt: string; ref: string; resourcePath: s
   }
 }
 
+/**
+ * Left/right URIs for one changed file — the shared seam used by both the
+ * multi-file `vscode.changes` editor and the per-file `vscode.diff` opened
+ * from the Builders tree. Left = base blob (or empty/binary placeholder);
+ * right = the on-disk worktree file (or placeholder for deletes/binary).
+ */
+export function diffUrisForChange(
+  plan: ResourcePlan,
+  ctx: { wt: string; ref: string },
+): { left: vscode.Uri; right: vscode.Uri } {
+  const sideCtx = { wt: ctx.wt, ref: ctx.ref, resourcePath: plan.resourcePath };
+  return {
+    left: sideUri(plan.left, sideCtx),
+    right: sideUri(plan.right, sideCtx),
+  };
+}
+
+// ── Git: a builder's delta vs the default branch ────────────────────────
+
+export interface BuilderChanges {
+  /** Branch name resolved from origin/HEAD (e.g. `main`); for titles. */
+  defaultBranch: string;
+  /** Immutable merge-base SHA used as the base-content cache key. */
+  baseRef: string;
+  changes: ChangeEntry[];
+  binaryPaths: Set<string>;
+}
+
+/**
+ * Resolve a builder worktree's full delta vs its default branch:
+ * default branch (origin/HEAD, fallback `main`) → merge-base SHA (fallback
+ * branch name) → `git diff --name-status -M` + `--numstat` against the
+ * working tree (committed + uncommitted tracked changes).
+ *
+ * Throws on git failure so each caller picks its own UX — the command
+ * surfaces a toast; the Builders tree shows a placeholder row.
+ */
+export async function getBuilderChanges(wt: string): Promise<BuilderChanges> {
+  // Default branch from origin/HEAD; fall back to `main`.
+  let defaultBranch = 'main';
+  try {
+    const { stdout } = await execFileAsync('git', [
+      '-C', wt, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD',
+    ]);
+    const ref = stdout.trim().replace(/^origin\//, '');
+    if (ref) { defaultBranch = ref; }
+  } catch {
+    // origin/HEAD not set — keep `main`.
+  }
+
+  // Merge-base SHA → immutable cache key for base content. Fall back to the
+  // branch name if merge-base fails (e.g. unrelated histories).
+  let baseRef = defaultBranch;
+  try {
+    const { stdout } = await execFileAsync('git', [
+      '-C', wt, 'merge-base', defaultBranch, 'HEAD',
+    ]);
+    const sha = stdout.trim();
+    if (sha) { baseRef = sha; }
+  } catch {
+    // keep defaultBranch
+  }
+
+  const [nameStatus, numstat] = await Promise.all([
+    execFileAsync('git', ['-C', wt, 'diff', '--name-status', '-M', baseRef], { maxBuffer: 64 * 1024 * 1024 }),
+    execFileAsync('git', ['-C', wt, 'diff', '--numstat', '-M', baseRef], { maxBuffer: 64 * 1024 * 1024 }),
+  ]);
+  return {
+    defaultBranch,
+    baseRef,
+    changes: parseNameStatus(nameStatus.stdout),
+    binaryPaths: parseBinaryPaths(numstat.stdout),
+  };
+}
+
 // ── Command ─────────────────────────────────────────────────────────────
 
 export async function viewDiff(
@@ -256,45 +331,15 @@ export async function viewDiff(
   }
   const wt = builder.worktreePath;
 
-  // Default branch from origin/HEAD; fall back to `main`.
-  let defaultBranch = 'main';
+  let delta: BuilderChanges;
   try {
-    const { stdout } = await execFileAsync('git', [
-      '-C', wt, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD',
-    ]);
-    const ref = stdout.trim().replace(/^origin\//, '');
-    if (ref) { defaultBranch = ref; }
-  } catch {
-    // origin/HEAD not set — keep `main`.
-  }
-
-  // Merge-base SHA → immutable cache key for base content. Fall back to the
-  // branch name if merge-base fails (e.g. unrelated histories).
-  let baseRef = defaultBranch;
-  try {
-    const { stdout } = await execFileAsync('git', [
-      '-C', wt, 'merge-base', defaultBranch, 'HEAD',
-    ]);
-    const sha = stdout.trim();
-    if (sha) { baseRef = sha; }
-  } catch {
-    // keep defaultBranch
-  }
-
-  let changes: ChangeEntry[];
-  let binaryPaths: Set<string>;
-  try {
-    const [nameStatus, numstat] = await Promise.all([
-      execFileAsync('git', ['-C', wt, 'diff', '--name-status', '-M', baseRef], { maxBuffer: 64 * 1024 * 1024 }),
-      execFileAsync('git', ['-C', wt, 'diff', '--numstat', '-M', baseRef], { maxBuffer: 64 * 1024 * 1024 }),
-    ]);
-    changes = parseNameStatus(nameStatus.stdout);
-    binaryPaths = parseBinaryPaths(numstat.stdout);
+    delta = await getBuilderChanges(wt);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     vscode.window.showErrorMessage(`Codev: git diff failed — ${message}`);
     return;
   }
+  const { defaultBranch, baseRef, changes, binaryPaths } = delta;
 
   if (changes.length === 0) {
     vscode.window.showInformationMessage(
@@ -307,11 +352,11 @@ export async function viewDiff(
     changes,
     binaryPaths,
   ).map(plan => {
-    const ctx = { wt, ref: baseRef, resourcePath: plan.resourcePath };
+    const { left, right } = diffUrisForChange(plan, { wt, ref: baseRef });
     return [
       vscode.Uri.file(path.join(wt, plan.resourcePath)),
-      sideUri(plan.left, ctx),
-      sideUri(plan.right, ctx),
+      left,
+      right,
     ];
   });
 
