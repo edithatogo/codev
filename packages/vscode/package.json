@@ -520,8 +520,8 @@
     "lint": "eslint src",
     "test": "vscode-test",
     "vsix": "vsce package --no-dependencies",
-    "vscode:publish": "vsce publish --no-dependencies",
-    "vscode:publish:pre": "vsce publish --no-dependencies --pre-release"
+    "vscode:publish": "sh scripts/publish.sh",
+    "vscode:publish:pre": "sh scripts/publish.sh --pre-release"
   },
   "dependencies": {
     "@cluesmith/codev-core": "workspace:*",
