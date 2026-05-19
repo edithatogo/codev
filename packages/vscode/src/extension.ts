@@ -157,6 +157,27 @@ export async function activate(context: vscode.ExtensionContext) {
 		if (recentlyClosedView) { recentlyClosedView.title = withCount('Recently Closed', data?.recentlyClosed.length); }
 	};
 
+	// Activity-bar badge — paint the blocked-builder count on the Codev icon.
+	// Mirrors the status-bar bell pattern (only surfaced when > 0). VSCode has
+	// no container-level badge API; per-view `TreeView.badge` bubbles up to the
+	// activity-bar icon when the sidebar is hidden, so badging `buildersView`
+	// is how we paint the icon.
+	const updateActivityBadge = () => {
+		if (!buildersView) { return; }
+		const data = overviewCache.getData();
+		const blockedCount = (connectionManager?.getState() === 'connected' && data)
+			? data.builders.filter(b => b.blocked).length
+			: 0;
+		buildersView.badge = blockedCount > 0
+			? {
+				value: blockedCount,
+				tooltip: blockedCount === 1
+					? '1 builder blocked at a human-approval gate'
+					: `${blockedCount} builders blocked at human-approval gates`,
+			}
+			: undefined;
+	};
+
 	// Close builder/dev terminal tabs when their builder disappears from Tower
 	// state. Covers cleanup triggered from the VSCode "Cleanup Builder" command,
 	// `afx cleanup` on the CLI, or any other removal path — otherwise Tower
@@ -200,6 +221,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		updateStatusBarCounts();
 		pruneClosedBuilderTerminals();
 		updateListViewTitles();
+		updateActivityBadge();
 	});
 
 	// Shared across the Builders tree (second-level changed files) and the
@@ -216,6 +238,9 @@ export async function activate(context: vscode.ExtensionContext) {
 	pullRequestsView = vscode.window.createTreeView('codev.pullRequests', { treeDataProvider: new PullRequestsProvider(overviewCache) });
 	backlogView = vscode.window.createTreeView('codev.backlog', { treeDataProvider: new BacklogProvider(overviewCache) });
 	recentlyClosedView = vscode.window.createTreeView('codev.recentlyClosed', { treeDataProvider: new RecentlyClosedProvider(overviewCache) });
+	// Seed the badge so it's correct immediately if overview data is already
+	// cached, instead of waiting for the next onDidChange tick.
+	updateActivityBadge();
 	const teamProvider = new TeamProvider(connectionManager);
 	context.subscriptions.push(
 		buildersView,
