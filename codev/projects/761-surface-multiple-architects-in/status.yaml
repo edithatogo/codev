@@ -1,0 +1,63 @@
+id: '761'
+title: surface-multiple-architects-in
+protocol: spir
+phase: review
+plan_phases:
+  - id: phase_1
+    title: 'API state: expose architects collection'
+    status: complete
+  - id: phase_2
+    title: 'Dashboard: per-architect tabs + left-pane persistent rendering'
+    status: complete
+current_plan_phase: null
+gates:
+  spec-approval:
+    status: approved
+    requested_at: '2026-05-18T20:58:41.571Z'
+    approved_at: '2026-05-18T20:59:35.988Z'
+  plan-approval:
+    status: approved
+    requested_at: '2026-05-18T21:10:17.335Z'
+    approved_at: '2026-05-18T21:11:10.216Z'
+  pr:
+    status: pending
+    requested_at: '2026-05-18T21:47:35.333Z'
+  verify-approval:
+    status: pending
+iteration: 1
+build_complete: true
+history:
+  - iteration: 1
+    plan_phase: phase_1
+    build_output: ''
+    reviews:
+      - model: gemini
+        verdict: APPROVE
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-761/codev/projects/761-surface-multiple-architects-in/761-phase_1-iter1-gemini.txt
+      - model: codex
+        verdict: REQUEST_CHANGES
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-761/codev/projects/761-surface-multiple-architects-in/761-phase_1-iter1-codex.txt
+      - model: claude
+        verdict: APPROVE
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-761/codev/projects/761-surface-multiple-architects-in/761-phase_1-iter1-claude.txt
+  - iteration: 1
+    plan_phase: phase_2
+    build_output: ''
+    reviews:
+      - model: gemini
+        verdict: REQUEST_CHANGES
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-761/codev/projects/761-surface-multiple-architects-in/761-phase_2-iter1-gemini.txt
+      - model: codex
+        verdict: REQUEST_CHANGES
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-761/codev/projects/761-surface-multiple-architects-in/761-phase_2-iter1-codex.txt
+      - model: claude
+        verdict: REQUEST_CHANGES
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-761/codev/projects/761-surface-multiple-architects-in/761-phase_2-iter1-claude.txt
+started_at: '2026-05-18T20:34:36.514Z'
+updated_at: '2026-05-18T21:47:35.333Z'

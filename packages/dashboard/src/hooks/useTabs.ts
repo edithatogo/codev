@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import type { DashboardState, Builder, UtilTerminal, Annotation } from '../lib/api.js';
+import type { DashboardState, ArchitectState } from '../lib/api.js';
 
 export interface Tab {
   id: string;
@@ -12,6 +12,49 @@ export interface Tab {
   annotationId?: string;
   filePath?: string;
   persistent?: boolean;
+  /**
+   * Spec 761: the architect's stable name (when type === 'architect').
+   * Carries the architect identity independently of the tab `id`/`label`,
+   * so consumers (deep-link parsing, localStorage persistence) don't need
+   * to parse it out of the `id` string.
+   */
+  architectName?: string;
+}
+
+/**
+ * Spec 761: derive the tab `id` for an architect entry.
+ *
+ * The first architect (always `architects[0]`, which is `main` when
+ * present per Phase 1's ordering) keeps the bare `'architect'` id so the
+ * single-architect dashboard DOM is identical to the pre-761 baseline AND
+ * `main`'s id is stable across the N=1 ↔ N>1 transition. Subsequent
+ * architects use `architect:<name>` ids.
+ */
+function architectTabId(index: number, name: string): string {
+  return index === 0 ? 'architect' : `architect:${name}`;
+}
+
+function buildArchitectTabs(state: DashboardState | null): Tab[] {
+  // Prefer the new `architects` collection; fall back to the scalar
+  // `architect` (wrapped as a one-element array) for any momentary deploy-
+  // window where dashboard.js is newer than the server response.
+  const architects: ArchitectState[] = state?.architects
+    ?? (state?.architect ? [state.architect] : []);
+  return architects.map((a, index) => {
+    // Deploy-window safety: scalar architect from an older server response
+    // may lack `name`. Default to 'main' so the label and architectName are
+    // never undefined.
+    const name = a.name ?? 'main';
+    return {
+      id: architectTabId(index, name),
+      type: 'architect' as const,
+      label: name,
+      closable: false,
+      terminalId: a.terminalId,
+      persistent: a.persistent,
+      architectName: name,
+    };
+  });
 }
 
 function buildTabs(state: DashboardState | null): Tab[] {
@@ -24,9 +67,7 @@ function buildTabs(state: DashboardState | null): Tab[] {
     tabs.push({ id: 'team', type: 'team', label: 'Team', closable: false });
   }
 
-  if (state?.architect) {
-    tabs.push({ id: 'architect', type: 'architect', label: 'Architect', closable: false, terminalId: state.architect.terminalId, persistent: state.architect.persistent });
-  }
+  tabs.push(...buildArchitectTabs(state));
 
   for (const builder of state?.builders ?? []) {
     tabs.push({
@@ -75,7 +116,16 @@ export function useTabs(state: DashboardState | null) {
   const urlTabHandled = useRef(false);
   const tabs = buildTabs(state);
 
-  // Handle URL ?tab= parameter on initial load (for deep linking from tower)
+  // Handle URL ?tab= parameter on initial load (for deep linking from tower).
+  //
+  // Spec 761: this hook deliberately does NOT restore the persisted active
+  // architect into `activeTabId`. Restoring it would cause the desktop right
+  // pane to blank on reload (every right-pane content section checks
+  // `activeTab?.type === 'work'`/etc., all of which are false when an
+  // architect tab is active). The desktop left-pane architect selection
+  // lives in App.tsx, which reads localStorage independently. The mobile
+  // tradeoff is small: on reload, the active tab defaults to `'work'`
+  // rather than restoring the previously-viewed architect.
   useEffect(() => {
     if (urlTabHandled.current || state === null) return;
 
@@ -83,37 +133,54 @@ export function useTabs(state: DashboardState | null) {
     const tabParam = urlParams.get('tab');
 
     if (tabParam) {
-      // Find matching tab by id or type
+      // Spec 761: handle the architect:<name> deep-link form. If the named
+      // architect isn't registered, fall back to the first architect tab
+      // (matches the bare ?tab=architect behaviour for graceful degradation).
+      if (tabParam.startsWith('architect:')) {
+        const name = tabParam.slice('architect:'.length);
+        const archTab = tabs.find(t => t.type === 'architect' && t.architectName === name)
+          ?? tabs.find(t => t.type === 'architect');
+        if (archTab) {
+          setActiveTabId(archTab.id);
+          urlTabHandled.current = true;
+          const url = new URL(window.location.href);
+          url.searchParams.delete('tab');
+          window.history.replaceState({}, '', url.toString());
+          return;
+        }
+      }
       const matchingTab = tabs.find(t => t.id === tabParam || t.type === tabParam);
       if (matchingTab) {
         setActiveTabId(matchingTab.id);
         urlTabHandled.current = true;
-        // Clean up URL to avoid sticky behavior on refresh
         const url = new URL(window.location.href);
         url.searchParams.delete('tab');
         window.history.replaceState({}, '', url.toString());
+        return;
       }
-    } else {
-      urlTabHandled.current = true;
     }
+    urlTabHandled.current = true;
   }, [tabs, state]);
 
   // Auto-switch to genuinely new tabs (created after page load).
   // Wait for real state (non-null) before seeding known tabs — otherwise the
   // empty first render seeds with just ['work'], and the second render
   // (with actual state) treats all existing tabs as "new" and auto-selects them.
+  //
+  // Spec 761: the previous skip condition `tab.type !== 'architect'` was
+  // removed so newly-added architects (via `afx workspace add-architect`)
+  // auto-focus the same way newly-spawned builders do today. The seed-on-
+  // non-null-state pattern below still suppresses focus theft on initial load.
   useEffect(() => {
     const currentIds = new Set(tabs.map(t => t.id));
     if (knownTabIds.current === null) {
-      // Only seed once we have real tabs (more than just dashboard)
       if (state !== null) {
         knownTabIds.current = currentIds;
       }
       return;
     }
     for (const tab of tabs) {
-      if (!knownTabIds.current.has(tab.id) && tab.type !== 'architect') {
-        // Genuinely new tab appeared — switch to it
+      if (!knownTabIds.current.has(tab.id)) {
         setActiveTabId(tab.id);
       }
     }
