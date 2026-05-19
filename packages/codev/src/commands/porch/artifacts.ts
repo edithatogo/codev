@@ -40,6 +40,45 @@ export interface ArtifactResolver {
 // =============================================================================
 
 /**
+ * Match a file basename (or directory name) against a porch project ID.
+ *
+ * Supports two project-ID formats used in this codebase:
+ *
+ * 1. **Numeric** (SPIR, ASPIR, AIR, PIR): e.g. `"0073"` or `"1298"`. Matches
+ *    filenames whose leading digits, zero-stripped, equal the project ID
+ *    (also zero-stripped). Example: `"0073"` matches `"0073-feature.md"`
+ *    and `"73-feature.md"`.
+ *
+ * 2. **Prefix-N** (BUGFIX only — historical, kept for back-compat with
+ *    existing on-disk artifacts): e.g. `"bugfix-237"`. Matches filenames
+ *    that equal `<prefix>-<N>` or start with `<prefix>-<N>-`. Example:
+ *    `"bugfix-237"` matches `"bugfix-237-stale-cache.md"`.
+ *
+ * Without this distinction, the previous regex `name.match(/^(\d+)/)`
+ * silently failed for prefix-N IDs, breaking `plan_exists` and other
+ * artifact-resolution checks for BUGFIX projects. (PIR exposed the bug
+ * historically when it also used prefix-N IDs; PIR has since been aligned
+ * with SPIR's numeric convention — see commit dc177c83.)
+ */
+export function matchesProjectId(name: string, projectId: string): boolean {
+  const base = name.replace(/\.md$/, '');
+
+  // Prefix-N format: `<letters>-<digits>` (one or more hyphen-separated letter
+  // segments followed by a numeric segment). Today this catches "bugfix-237";
+  // the shape is kept general for any future issue-driven protocol that opts
+  // for a prefix-N ID.
+  if (/^[a-z]+(?:-[a-z]+)*-\d+$/i.test(projectId)) {
+    return base === projectId || base.startsWith(`${projectId}-`);
+  }
+
+  // Numeric format: zero-stripped equality on leading digits.
+  const normalizedId = projectId.replace(/^0+/, '') || '0';
+  const numMatch = base.match(/^(\d+)/);
+  if (!numMatch) return false;
+  return (numMatch[1].replace(/^0+/, '') || '0') === normalizedId;
+}
+
+/**
  * Check if artifact content has pre-approval frontmatter.
  * Looks for YAML frontmatter with `approved:` and `validated:` fields.
  * Used by both LocalResolver and CliResolver for consistency.
@@ -66,15 +105,9 @@ export class LocalResolver implements ArtifactResolver {
     const specsDir = path.join(this.workspaceRoot, 'codev', 'specs');
     if (!fs.existsSync(specsDir)) return null;
 
-    const normalizedId = projectId.replace(/^0+/, '') || '0';
     try {
       const files = fs.readdirSync(specsDir);
-      const specFile = files.find(f => {
-        if (!f.endsWith('.md')) return false;
-        const numMatch = f.match(/^(\d+)/);
-        if (!numMatch) return false;
-        return (numMatch[1].replace(/^0+/, '') || '0') === normalizedId;
-      });
+      const specFile = files.find(f => f.endsWith('.md') && matchesProjectId(f, projectId));
       return specFile ? specFile.replace(/\.md$/, '') : null;
     } catch {
       return null;
@@ -92,18 +125,13 @@ export class LocalResolver implements ArtifactResolver {
     }
   }
 
-  getPlanContent(projectId: string, title: string): string | null {
+  getPlanContent(projectId: string, _title: string): string | null {
     // Try new location first: codev/projects/<id>-<name>/plan.md
     const projectsDir = path.join(this.workspaceRoot, 'codev', 'projects');
     if (fs.existsSync(projectsDir)) {
-      const normalizedId = projectId.replace(/^0+/, '') || '0';
       try {
         const dirs = fs.readdirSync(projectsDir);
-        const projDir = dirs.find(d => {
-          const numMatch = d.match(/^(\d+)/);
-          if (!numMatch) return false;
-          return (numMatch[1].replace(/^0+/, '') || '0') === normalizedId;
-        });
+        const projDir = dirs.find(d => matchesProjectId(d, projectId));
         if (projDir) {
           const planPath = path.join(projectsDir, projDir, 'plan.md');
           if (fs.existsSync(planPath)) {
@@ -117,15 +145,9 @@ export class LocalResolver implements ArtifactResolver {
     const plansDir = path.join(this.workspaceRoot, 'codev', 'plans');
     if (!fs.existsSync(plansDir)) return null;
 
-    const normalizedId = projectId.replace(/^0+/, '') || '0';
     try {
       const files = fs.readdirSync(plansDir);
-      const planFile = files.find(f => {
-        if (!f.endsWith('.md')) return false;
-        const numMatch = f.match(/^(\d+)/);
-        if (!numMatch) return false;
-        return (numMatch[1].replace(/^0+/, '') || '0') === normalizedId;
-      });
+      const planFile = files.find(f => f.endsWith('.md') && matchesProjectId(f, projectId));
       if (planFile) {
         return fs.readFileSync(path.join(plansDir, planFile), 'utf-8');
       }
@@ -138,15 +160,9 @@ export class LocalResolver implements ArtifactResolver {
     const reviewsDir = path.join(this.workspaceRoot, 'codev', 'reviews');
     if (!fs.existsSync(reviewsDir)) return null;
 
-    const normalizedId = projectId.replace(/^0+/, '') || '0';
     try {
       const files = fs.readdirSync(reviewsDir);
-      const reviewFile = files.find(f => {
-        if (!f.endsWith('.md')) return false;
-        const numMatch = f.match(/^(\d+)/);
-        if (!numMatch) return false;
-        return (numMatch[1].replace(/^0+/, '') || '0') === normalizedId;
-      });
+      const reviewFile = files.find(f => f.endsWith('.md') && matchesProjectId(f, projectId));
       if (reviewFile) {
         return fs.readFileSync(path.join(reviewsDir, reviewFile), 'utf-8');
       }
@@ -206,12 +222,7 @@ export class CliResolver implements ArtifactResolver {
     const children = this.listChildren('specs');
     if (!children) return null;
 
-    const normalizedId = projectId.replace(/^0+/, '') || '0';
-    const match = children.find(name => {
-      const numMatch = name.match(/^(\d+)/);
-      if (!numMatch) return false;
-      return (numMatch[1].replace(/^0+/, '') || '0') === normalizedId;
-    });
+    const match = children.find(name => matchesProjectId(name, projectId));
     return match || null;
   }
 
@@ -234,12 +245,14 @@ export class CliResolver implements ArtifactResolver {
   }
 
   hasPreApproval(artifactGlob: string): boolean {
-    // Determine artifact type from glob path (e.g., "codev/specs/0559-*.md" or "codev/plans/0559-*.md")
+    // Determine artifact type from glob path (e.g., "codev/specs/0559-*.md" or "codev/plans/bugfix-237-*.md")
     const typeMatch = artifactGlob.match(/\b(specs|plans|reviews)\b/);
-    const idMatch = artifactGlob.match(/(?:specs|plans|reviews)\/0*(\d+)/);
-    if (!idMatch) return false;
+    // Extract project ID — supports both numeric ("0073", "1298") and prefix-N ("bugfix-237") formats.
+    const prefixedMatch = artifactGlob.match(/(?:specs|plans|reviews)\/([a-z]+(?:-[a-z]+)*-\d+)/i);
+    const numericMatch = artifactGlob.match(/(?:specs|plans|reviews)\/0*(\d+)/);
+    const projectId = prefixedMatch?.[1] ?? numericMatch?.[1];
+    if (!projectId) return false;
 
-    const projectId = idMatch[1];
     let content: string | null = null;
     const artifactType = typeMatch?.[1] || 'specs';
 
@@ -262,27 +275,13 @@ export class CliResolver implements ArtifactResolver {
   private findPlanBaseName(projectId: string): string | null {
     const children = this.listChildren('plans');
     if (!children) return null;
-
-    const normalizedId = projectId.replace(/^0+/, '') || '0';
-    const match = children.find(name => {
-      const numMatch = name.match(/^(\d+)/);
-      if (!numMatch) return false;
-      return (numMatch[1].replace(/^0+/, '') || '0') === normalizedId;
-    });
-    return match || null;
+    return children.find(name => matchesProjectId(name, projectId)) || null;
   }
 
   private findReviewBaseName(projectId: string): string | null {
     const children = this.listChildren('reviews');
     if (!children) return null;
-
-    const normalizedId = projectId.replace(/^0+/, '') || '0';
-    const match = children.find(name => {
-      const numMatch = name.match(/^(\d+)/);
-      if (!numMatch) return false;
-      return (numMatch[1].replace(/^0+/, '') || '0') === normalizedId;
-    });
-    return match || null;
+    return children.find(name => matchesProjectId(name, projectId)) || null;
   }
 
   private listChildren(subPath: string): string[] | null {

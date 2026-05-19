@@ -12,6 +12,7 @@ import {
   CliResolver,
   getResolver,
   isPreApprovedContent,
+  matchesProjectId,
 } from '../artifacts.js';
 
 // ---------------------------------------------------------------------------
@@ -230,5 +231,165 @@ describe('getResolver', () => {
       artifacts: { backend: 'cli', scope: 'org/project' },
     }));
     expect(() => getResolver(tmpDir)).toThrow('af-config.json is no longer supported');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// matchesProjectId (Issue 691 — fix prefix-N project ID resolution)
+// ---------------------------------------------------------------------------
+
+describe('matchesProjectId', () => {
+  describe('numeric project IDs (SPIR / ASPIR / AIR)', () => {
+    it('matches a file whose leading digits equal the (zero-stripped) ID', () => {
+      expect(matchesProjectId('0073-feature-name.md', '0073')).toBe(true);
+      expect(matchesProjectId('0073-feature-name.md', '73')).toBe(true);
+      expect(matchesProjectId('73-feature-name.md', '0073')).toBe(true);
+    });
+
+    it('matches a directory name (no .md suffix)', () => {
+      expect(matchesProjectId('0073-feature-name', '0073')).toBe(true);
+    });
+
+    it('rejects a different numeric ID', () => {
+      expect(matchesProjectId('0073-feature-name.md', '0074')).toBe(false);
+    });
+
+    it('rejects a filename without leading digits', () => {
+      expect(matchesProjectId('feature-name.md', '0073')).toBe(false);
+    });
+  });
+
+  describe('prefix-N project IDs (BUGFIX / PIR / future issue-driven)', () => {
+    it('matches a file whose name starts with <prefix>-<N>-', () => {
+      expect(matchesProjectId('pir-1099-fix-avatar.md', 'pir-1099')).toBe(true);
+      expect(matchesProjectId('bugfix-237-stale-cache.md', 'bugfix-237')).toBe(true);
+    });
+
+    it('matches a directory name (no .md suffix)', () => {
+      expect(matchesProjectId('pir-1099-fix-avatar', 'pir-1099')).toBe(true);
+    });
+
+    it('matches when filename equals the project ID exactly (no slug)', () => {
+      expect(matchesProjectId('pir-1099.md', 'pir-1099')).toBe(true);
+      expect(matchesProjectId('pir-1099', 'pir-1099')).toBe(true);
+    });
+
+    it('rejects a different prefix', () => {
+      expect(matchesProjectId('bugfix-1099-foo.md', 'pir-1099')).toBe(false);
+    });
+
+    it('rejects a different number', () => {
+      expect(matchesProjectId('pir-1099-foo.md', 'pir-1100')).toBe(false);
+    });
+
+    it('rejects a filename where the ID is a prefix but not delimited by -', () => {
+      // "pir-1099foo.md" should NOT match "pir-1099" — the next char must be "-" or end.
+      expect(matchesProjectId('pir-1099foo.md', 'pir-1099')).toBe(false);
+    });
+
+    it('does not confuse numeric and prefixed matching', () => {
+      // A numeric ID should not match a prefix-N filename.
+      expect(matchesProjectId('pir-1099-foo.md', '1099')).toBe(false);
+      expect(matchesProjectId('pir-1099-foo.md', '0073')).toBe(false);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LocalResolver — prefix-N project ID support (Issue 691)
+// ---------------------------------------------------------------------------
+
+describe('LocalResolver — prefix-N project IDs (bugfix)', () => {
+  // PIR was historically in this group but aligned with SPIR's numeric
+  // convention in commit dc177c83. These tests exercise the prefix-N path
+  // that is still load-bearing for BUGFIX (and any future issue-driven
+  // protocol that opts for a prefix-N ID).
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkTmp();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('getPlanContent finds a prefix-N plan file (bugfix-style)', () => {
+    writeFile(
+      tmpDir,
+      'codev/plans/bugfix-237-stale-cache.md',
+      '# Plan: stale cache\n',
+    );
+
+    const resolver = new LocalResolver(tmpDir);
+    const content = resolver.getPlanContent('bugfix-237', 'stale-cache');
+    expect(content).toContain('# Plan: stale cache');
+  });
+
+  it('getReviewContent finds a prefix-N review file (bugfix-style)', () => {
+    writeFile(
+      tmpDir,
+      'codev/reviews/bugfix-237-stale-cache.md',
+      '# Review: stale cache\n',
+    );
+
+    const resolver = new LocalResolver(tmpDir);
+    const content = resolver.getReviewContent('bugfix-237', 'stale-cache');
+    expect(content).toContain('# Review: stale cache');
+  });
+
+  it('returns null for a missing prefix-N plan', () => {
+    fs.mkdirSync(path.join(tmpDir, 'codev', 'plans'), { recursive: true });
+
+    const resolver = new LocalResolver(tmpDir);
+    expect(resolver.getPlanContent('bugfix-9999', 'nothing-here')).toBeNull();
+  });
+
+  it('does not match a prefix-N plan when looking up a numeric ID with the same digits', () => {
+    // Regression guard: "bugfix-237-foo.md" must NOT be returned for projectId="237".
+    writeFile(
+      tmpDir,
+      'codev/plans/bugfix-237-stale.md',
+      '# Plan: bugfix stale cache\n',
+    );
+
+    const resolver = new LocalResolver(tmpDir);
+    expect(resolver.getPlanContent('237', '')).toBeNull();
+  });
+
+  it('still works for numeric project IDs (SPIR / ASPIR / AIR / PIR)', () => {
+    writeFile(
+      tmpDir,
+      'codev/plans/0073-user-auth.md',
+      '# Plan: user auth\n',
+    );
+
+    const resolver = new LocalResolver(tmpDir);
+    expect(resolver.getPlanContent('0073', 'user-auth')).toContain('# Plan: user auth');
+    expect(resolver.getPlanContent('73', 'user-auth')).toContain('# Plan: user auth');
+  });
+
+  it('finds a PIR plan file by bare numeric ID (post-dc177c83 convention)', () => {
+    writeFile(
+      tmpDir,
+      'codev/plans/1298-fix-native-social-login.md',
+      '# Plan: fix social login\n',
+    );
+
+    const resolver = new LocalResolver(tmpDir);
+    const content = resolver.getPlanContent('1298', 'fix-native-social-login');
+    expect(content).toContain('# Plan: fix social login');
+  });
+
+  it('finds a PIR review file by bare numeric ID (post-dc177c83 convention)', () => {
+    writeFile(
+      tmpDir,
+      'codev/reviews/1298-fix-native-social-login.md',
+      '# Review: fix social login\n',
+    );
+
+    const resolver = new LocalResolver(tmpDir);
+    const content = resolver.getReviewContent('1298', 'fix-native-social-login');
+    expect(content).toContain('# Review: fix social login');
   });
 });

@@ -305,20 +305,22 @@ export function findStatusPath(workspaceRoot: string, projectId: string): string
 /**
  * Detect project ID from the current working directory if inside a builder worktree.
  * Works from any subdirectory within the worktree.
- * Returns the porch project ID (e.g. "bugfix-237" or "0073"), or null if not in a recognized worktree.
+ * Returns the porch project ID (e.g. "bugfix-237", "1298", or "0073"), or null if not in a recognized worktree.
  */
 export function detectProjectIdFromCwd(cwd: string): string | null {
   const normalized = path.resolve(cwd).split(path.sep).join('/');
-  // Bugfix worktrees: .builders/bugfix-{N}-{slug} (slug is optional for legacy paths)
-  // Protocol worktrees: .builders/{protocol}-{N}-{slug} (aspir, spir, air)
+  // bugfix worktrees: .builders/bugfix-{N}-{slug} (slug optional)
+  //   porch project ID is "bugfix-{N}" — historical convention, kept untouched.
+  // PIR / SPIR / ASPIR / AIR worktrees: .builders/{prefix}-{N}-{slug} (slug optional)
+  //   porch project ID is the bare numeric ID.
   // Spec worktrees (legacy): .builders/{NNNN} (bare 4-digit ID, no slug)
   const match = normalized.match(
-    /\/\.builders\/(bugfix-(\d+)(?:-[^/]*)?|(?:aspir|spir|air)-(\d+)(?:-[^/]*)?|(\d{4}))(\/|$)/,
+    /\/\.builders\/(bugfix-(\d+)(?:-[^/]*)?|(?:aspir|spir|air|pir)-(\d+)(?:-[^/]*)?|(\d{4}))(\/|$)/,
   );
   if (!match) return null;
-  // Bugfix worktrees use "bugfix-N" as the porch project ID
+  // bugfix uses "bugfix-N" as the porch project ID
   if (match[2]) return `bugfix-${match[2]}`;
-  // Protocol worktrees (aspir, spir, air) use the bare numeric ID
+  // Protocol worktrees (aspir, spir, air, pir) use the bare numeric ID
   if (match[3]) return match[3];
   // Spec worktrees use zero-padded numeric IDs
   return match[4];

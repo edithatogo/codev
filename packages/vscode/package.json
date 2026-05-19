@@ -72,7 +72,8 @@
       },
       {
         "command": "codev.approveGate",
-        "title": "Codev: Approve Gate"
+        "title": "Codev: Approve Gate",
+        "icon": "$(check)"
       },
       {
         "command": "codev.cleanupBuilder",
@@ -81,6 +82,11 @@
       {
         "command": "codev.refreshOverview",
         "title": "Codev: Refresh Overview",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codev.refreshTeam",
+        "title": "Codev: Refresh Team",
         "icon": "$(refresh)"
       },
       {
@@ -105,8 +111,8 @@
         "title": "Codev: Add Review Comment"
       },
       {
-        "command": "codev.reviewDiff",
-        "title": "Codev: View Diff"
+        "command": "codev.openWorktreeWindow",
+        "title": "Codev: Open Worktree in New Window"
       },
       {
         "command": "codev.runWorktreeDev",
@@ -115,6 +121,14 @@
       {
         "command": "codev.stopWorktreeDev",
         "title": "Codev: Stop Dev Server"
+      },
+      {
+        "command": "codev.runWorkspaceDev",
+        "title": "Codev: Start Dev Server (this workspace)"
+      },
+      {
+        "command": "codev.stopWorkspaceDev",
+        "title": "Codev: Stop Dev Server (this workspace)"
       },
       {
         "command": "codev.openBuilderById",
@@ -127,6 +141,32 @@
       {
         "command": "codev.runWorktreeSetup",
         "title": "Codev: Run Worktree Setup"
+      },
+      {
+        "command": "codev.viewPlanFile",
+        "title": "Codev: View Plan File"
+      },
+      {
+        "command": "codev.viewBacklogIssue",
+        "title": "Codev: View Issue"
+      },
+      {
+        "command": "codev.openBacklogIssue",
+        "title": "Codev: Open Issue in Browser"
+      },
+      {
+        "command": "codev.copyBacklogIssueNumber",
+        "title": "Codev: Copy Issue Number"
+      },
+      {
+        "command": "codev.submitReviewComment",
+        "title": "Submit review comment",
+        "enablement": "!commentIsEmpty"
+      },
+      {
+        "command": "codev.deleteReviewComment",
+        "title": "Delete review comment",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
@@ -136,48 +176,108 @@
           "when": "false"
         },
         {
+          "command": "codev.viewBacklogIssue",
+          "when": "false"
+        },
+        {
+          "command": "codev.openBacklogIssue",
+          "when": "false"
+        },
+        {
+          "command": "codev.copyBacklogIssueNumber",
+          "when": "false"
+        },
+        {
           "command": "codev.addReviewComment",
           "when": "editorLangId == 'markdown'"
+        },
+        {
+          "command": "codev.submitReviewComment",
+          "when": "false"
+        },
+        {
+          "command": "codev.deleteReviewComment",
+          "when": "false"
         }
       ],
       "view/item/context": [
         {
+          "command": "codev.approveGate",
+          "when": "view == codev.builders && viewItem =~ /^blocked-builder-/",
+          "group": "inline@1"
+        },
+        {
           "command": "codev.openBuilderById",
-          "when": "view =~ /^codev\\.(builders|needsAttention)$/ && viewItem =~ /^(builder|blocked-builder)$/",
-          "group": "1_terminal@1"
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-/",
+          "group": "1_primary@1"
+        },
+        {
+          "command": "codev.approveGate",
+          "when": "view == codev.builders && viewItem =~ /^blocked-builder-/",
+          "group": "1_primary@2"
+        },
+        {
+          "command": "codev.viewPlanFile",
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-pir$/",
+          "group": "1_primary@3"
+        },
+        {
+          "command": "codev.openWorktreeWindow",
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-/",
+          "group": "2_worktree@1"
         },
         {
           "command": "codev.openWorktreeFolder",
-          "when": "view =~ /^codev\\.(builders|needsAttention)$/ && viewItem =~ /^(builder|blocked-builder)$/",
-          "group": "2_files@1"
-        },
-        {
-          "command": "codev.reviewDiff",
-          "when": "view =~ /^codev\\.(builders|needsAttention)$/ && viewItem =~ /^(builder|blocked-builder)$/",
-          "group": "3_review@1"
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-/",
+          "group": "2_worktree@2"
         },
         {
           "command": "codev.runWorktreeSetup",
-          "when": "view =~ /^codev\\.(builders|needsAttention)$/ && viewItem =~ /^(builder|blocked-builder)$/",
-          "group": "4_worktree@1"
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-/",
+          "group": "3_dev@1"
         },
         {
           "command": "codev.runWorktreeDev",
-          "when": "view =~ /^codev\\.(builders|needsAttention)$/ && viewItem =~ /^(builder|blocked-builder)$/",
-          "group": "4_worktree@2"
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-/",
+          "group": "3_dev@2"
         },
         {
           "command": "codev.stopWorktreeDev",
-          "when": "view =~ /^codev\\.(builders|needsAttention)$/ && viewItem =~ /^(builder|blocked-builder)$/",
-          "group": "4_worktree@3"
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-/",
+          "group": "3_dev@3"
+        },
+        {
+          "command": "codev.runWorkspaceDev",
+          "when": "view == codev.workspace && viewItem == workspace-dev-start",
+          "group": "1_primary@1"
+        },
+        {
+          "command": "codev.stopWorkspaceDev",
+          "when": "view == codev.workspace && viewItem == workspace-dev-stop",
+          "group": "1_primary@1"
+        },
+        {
+          "command": "codev.viewBacklogIssue",
+          "when": "view == codev.backlog && viewItem == backlog-item",
+          "group": "1_primary@1"
+        },
+        {
+          "command": "codev.spawnBuilder",
+          "when": "view == codev.backlog && viewItem == backlog-item",
+          "group": "1_primary@2"
+        },
+        {
+          "command": "codev.openBacklogIssue",
+          "when": "view == codev.backlog && viewItem == backlog-item",
+          "group": "1_primary@3"
+        },
+        {
+          "command": "codev.copyBacklogIssueNumber",
+          "when": "view == codev.backlog && viewItem == backlog-item",
+          "group": "1_primary@4"
         }
       ],
       "view/title": [
-        {
-          "command": "codev.refreshOverview",
-          "when": "view == codev.needsAttention",
-          "group": "navigation"
-        },
         {
           "command": "codev.refreshOverview",
           "when": "view == codev.builders",
@@ -194,9 +294,33 @@
           "group": "navigation"
         },
         {
+          "command": "codev.refreshOverview",
+          "when": "view == codev.recentlyClosed",
+          "group": "navigation"
+        },
+        {
+          "command": "codev.refreshTeam",
+          "when": "view == codev.team",
+          "group": "navigation"
+        },
+        {
           "command": "codev.reconnect",
           "when": "view == codev.status",
           "group": "navigation"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "codev.submitReviewComment",
+          "group": "inline",
+          "when": "commentController == codev-review && commentThreadIsEmpty"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "codev.deleteReviewComment",
+          "group": "inline@1",
+          "when": "commentController == codev-review && commentThread == inline-review"
         }
       ]
     },
@@ -221,6 +345,28 @@
         "command": "codev.approveGate",
         "key": "ctrl+k g",
         "mac": "cmd+k g"
+      },
+      {
+        "command": "workbench.view.extension.codev",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c",
+        "when": "!sideBarVisible || activeViewlet != 'workbench.view.extension.codev'"
+      },
+      {
+        "command": "workbench.action.closeSidebar",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c",
+        "when": "sideBarVisible && activeViewlet == 'workbench.view.extension.codev'"
+      },
+      {
+        "command": "codev.runWorkspaceDev",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r"
+      },
+      {
+        "command": "codev.stopWorkspaceDev",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s"
       }
     ],
     "viewsContainers": {
@@ -235,7 +381,6 @@
     "views": {
       "codev": [
         { "id": "codev.workspace", "name": "Workspace" },
-        { "id": "codev.needsAttention", "name": "Needs Attention" },
         { "id": "codev.builders", "name": "Builders" },
         { "id": "codev.pullRequests", "name": "Pull Requests" },
         { "id": "codev.backlog", "name": "Backlog" },
@@ -293,6 +438,17 @@
           ],
           "default": "notify",
           "description": "Behavior when Tower reports a new builder spawn"
+        },
+        "codev.gateToasts.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a VSCode notification toast when a builder reaches a human-approval gate (plan-approval, code-review, etc.)"
+        },
+        "codev.overviewRefreshSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "markdownDescription": "Auto-refresh the Builders / Pull Requests / Backlog / Recently Closed views every N seconds while the Codev sidebar is visible. `0` disables periodic refresh (event-only, the previous behavior). A shared Tower-side 30s cache throttles GitHub calls across all windows."
         }
       }
     }

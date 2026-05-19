@@ -70,9 +70,33 @@ You are working in the Codev project itself, with multiple development protocols
 - **ASPIR**: Autonomous SPIR (no human gates on spec/plan) - `codev/protocols/aspir/protocol.md`
 - **AIR**: Autonomous Implement & Review for small features - `codev/protocols/air/protocol.md`
 - **BUGFIX**: Bug fixes from GitHub issues - `codev/protocols/bugfix/protocol.md`
+- **PIR**: Plan / Implement / Review — issue-driven with two pre-PR human gates (plan-approval, dev-approval) plus a post-PR `pr` gate. Lighter than SPIR; stronger than BUGFIX/AIR. Useful when a change needs design review before coding OR pre-PR testing of running code (e.g., mobile / UI / cross-platform). See `codev/protocols/pir/protocol.md`.
 - **EXPERIMENT**: Disciplined experimentation - `codev/protocols/experiment/protocol.md`
 - **MAINTAIN**: Codebase maintenance (code hygiene + documentation sync) - `codev/protocols/maintain/protocol.md`
 - **RESEARCH**: Multi-agent research with 3-way investigation, synthesis, and critique - `codev/protocols/research/protocol.md`
+
+### File Resolution (How Codev Finds Protocols and Templates)
+
+Codev resolves protocol files, prompts, agent definitions, and roles through a four-tier lookup (highest priority first):
+
+1. `.codev/<path>` — user override (project-local customization)
+2. `codev/<path>` — project-local copy (customized and checked in)
+3. Runtime cache
+4. **Installed package skeleton** — ships with `@cluesmith/codev` (the default for every standard protocol)
+
+**The absence of `codev/protocols/<name>/` on disk is not a missing reference** — it's the normal case for any protocol you haven't customized. The protocol resolves from the installed package's skeleton at runtime. Only protocols you want to customize need to live in your repo's `codev/protocols/`.
+
+**Implication for `codev update` and CLAUDE.md / AGENTS.md merges:** when an updated template references a protocol (e.g., PIR), do NOT drop the reference because `codev/protocols/<name>/` is absent locally. The protocol resolves via the package skeleton, and dropping the reference removes the protocol from the user's available-protocol list while it's still callable from the CLI.
+
+### Protocol Verification (When You Don't Recognize a Protocol Name)
+
+If the user mentions a protocol name you don't immediately recognize, verify against the CLI before responding:
+
+```bash
+afx spawn --protocol <name> --help
+```
+
+This succeeds if the protocol is registered (including via the skeleton fallback in tier 4 of the resolution chain) and errors helpfully otherwise. The CLI is the source of truth — defer to it when in doubt.
 
 Key locations:
 - Protocol details: `codev/protocols/` (Choose appropriate protocol)
@@ -143,6 +167,26 @@ validated: [gemini, codex, claude]
 - Would be overkill for full SPIR/ASPIR ceremony
 
 **AIR uses GitHub Issues as source of truth.** Two phases: Implement → Review. See `codev/protocols/air/protocol.md`.
+
+### Use PIR for (engineer-judged — based on the nature of the work, not its size):
+
+Pick PIR when ONE or BOTH of the following apply to a GitHub-issue-driven change:
+
+**1. The approach needs review before coding starts**:
+- Root cause is ambiguous; multiple valid fixes exist
+- Area is unfamiliar or high-blast-radius (shared utilities, auth, migrations, public APIs)
+- Design-sensitive (affects conventions, patterns, architecture)
+- Cheaper to redirect at plan time than at PR time
+
+**2. The implementation needs to be TESTED before a PR is created** (PR diff alone is insufficient):
+- Mobile app changes (needs device testing on Android, iOS, possibly web)
+- UI / UX changes (visual inspection, interaction flow, accessibility)
+- Hardware-adjacent behavior (sensors, camera, permissions, notifications)
+- Integration with external services that don't mock cleanly (OAuth, payments, analytics)
+- User-journey changes that need a full-flow exercise
+- Performance-sensitive changes that need profiling on the running app
+
+**PIR uses GitHub Issues as source of truth.** Three phases: Plan (gated by `plan-approval`) → Implement (gated by `dev-approval`) → Review (PR + CMAP-2 at PR, then gated by `pr` for merge synchronization — matching SPIR's pr-gate pattern but with no post-merge verify phase). Plan and review artifacts live in `codev/plans/` and `codev/reviews/` on the builder branch, ship to main with the merge. Review file is shaped identically to SPIR's (Summary + Architecture Updates + Lessons Learned + supporting sections) so `codev/reviews/` stays semantically consistent across protocols. Lighter than SPIR (no spec phase — the issue body is the implicit spec; consult footprint matches BUGFIX/AIR's "one consult at PR" pattern). Stronger than BUGFIX/AIR (two human gates pre-PR — the human reviews the running worktree at the `dev-approval` gate, not the PR diff post-creation). CMAP at the PR is a **single advisory pass** (`max_iterations: 1`) — no iterate-until-APPROVE loop; a `REQUEST_CHANGES` is escalated to the human at the `pr` gate, not auto-re-reviewed. The CMAP-2 footprint is a design invariant: porch's model precedence is *config > protocol*, so a project-wide `porch.consultation.models` (e.g. a SPIR-tuned 3-model list) silently inflates PIR — leave it unset or scope it per-protocol to preserve the BUGFIX/AIR-parity cost. See `codev/protocols/pir/protocol.md`.
 
 ### Use SPIR for (new features):
 - Creating a **new feature from scratch** (no existing spec to amend)
@@ -286,7 +330,7 @@ When configured, each builder worktree (`.builders/<id>/`) becomes runnable — 
   "worktree": {
     "symlinks":   ["..."],        // glob patterns of files to symlink from root into each new worktree
     "postSpawn":  ["..."],        // shell commands run inside each new worktree after createWorktree
-    "devCommand": "..."           // consumed by `afx dev <builder-id>`
+    "devCommand": "..."           // consumed by `afx dev <builder-id|main>`
   }
 }
 ```
@@ -301,10 +345,13 @@ When configured, each builder worktree (`.builders/<id>/`) becomes runnable — 
 
 ```bash
 afx dev <builder-id>     # start the dev server in <builder-id>'s worktree
-afx dev --stop           # stop the currently running dev PTY
+afx dev main             # start the dev server in the MAIN workspace (Codev-managed)
+afx dev --stop           # stop the currently running dev PTY (builder or main)
 ```
 
-Only one dev PTY runs at a time (by design — see "URLs are load-bearing" below). Running `afx dev` while another builder's dev is up prompts for swap. Same-builder requests print the existing terminal URL and exit.
+Only one dev PTY runs at a time (by design — see "URLs are load-bearing" below), across **{main + all builders}**. `main` is a reserved target: it runs `worktree.devCommand` in the main checkout as a Codev-managed, swappable PTY, symmetric with builders. Starting any target while another is up prompts for swap (`afx dev <builder>` while `main` runs, or vice-versa); same-target requests print the existing terminal URL and exit. Like builder dev, main dev is a **non-persistent** PTY — a Tower restart (`pnpm -w run local-install`, crash) kills it; re-run to restart.
+
+**Launch main dev via `afx dev main`, not a bare `pnpm dev`.** A manually-run `pnpm dev` at the repo root is invisible to Codev (the deliberate "never kill what it didn't spawn" policy) — start a builder dev while it holds the ports and the builder dev silently fails to bind, or worse serves main's code under the worktree URL. `afx dev main` makes it a managed PTY that swap-detection can cleanly stop first. This only helps if you use it *consistently*; a hand-started `pnpm dev` stays unmanaged.
 
 ### VSCode
 
@@ -317,11 +364,16 @@ The same actions are available via right-click on any builder row in the Codev s
 - **Codev: Run Dev Server** — reads `worktree.devCommand` from `.codev/config.json`, asks Tower to spawn a dev PTY in the builder's worktree, and opens it as a VSCode terminal tab named `Codev: <name> (dev)`. If another builder's dev is already running, you get a modal asking whether to swap.
 - **Codev: Stop Dev Server** — kills the running dev PTY and closes its tab.
 
+The Codev sidebar's **Workspace** view also carries a dev server for *whatever folder this VSCode window is rooted at* (it is not "main"-specific):
+
+- **Start Dev Server** — runs `worktree.devCommand` for the current workspace. Target is resolved from the open folder: the main checkout → `main`; a `.builders/<id>/` worktree opened as its own window (e.g. via *Open Worktree as Workspace*) → that builder. Same single-slot swap model as builder dev (prompts if another dev is running). The row tooltip names the resolved target.
+- **Stop Dev Server** — stops this workspace's dev server; the row appears only while it is running. Scoped to the resolved target — it does not touch other devs.
+
 The three commands are also available from the command palette (Cmd+Shift+P). No default keybindings; bind via `keybindings.json` if you use them often.
 
 ### URLs are load-bearing
 
-The dev PTY uses **the same ports and URLs as main** intentionally. OAuth callbacks, CORS allowlists, cookie scoping, CSP `connect-src`, webhook URLs are all keyed off origin — running the worktree on a different port would break them. Consequence: stop main's `pnpm dev` before `afx dev`. If you don't, the spawned dev fails at bind time with its own `EADDRINUSE`.
+The dev PTY uses **the same ports and URLs as main** intentionally. OAuth callbacks, CORS allowlists, cookie scoping, CSP `connect-src`, webhook URLs are all keyed off origin — running the worktree on a different port would break them. Consequence: stop main's `pnpm dev` before `afx dev`. If you don't, the spawned dev fails at bind time with its own `EADDRINUSE`. Prefer `afx dev main` (or the Workspace view's *Start Dev Server* row) over a hand-run `pnpm dev` so Codev owns the PTY and swap-detection can stop it for you automatically.
 
 ### Cleanup semantics
 

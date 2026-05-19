@@ -7,7 +7,7 @@
  * Extracted from packages/codev/src/agent-farm/lib/tower-client.ts
  */
 
-import type { DashboardState, OverviewData } from '@cluesmith/codev-types';
+import type { DashboardState, OverviewData, IssueView } from '@cluesmith/codev-types';
 import { DEFAULT_TOWER_PORT } from './constants.js';
 import { ensureLocalKey } from './auth.js';
 
@@ -259,6 +259,32 @@ export class TowerClient {
     const query = workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : '';
     const result = await this.request<OverviewData>(`/api/overview${query}`);
     return result.ok ? result.data! : null;
+  }
+
+  /**
+   * Fetch a single issue's title/body/state/comments via Tower's
+   * forge-backed GET /api/issue. Returns null if the issue can't be
+   * resolved (forge unavailable, bad number) so callers can degrade.
+   */
+  async getIssue(issueNumber: string, workspacePath?: string): Promise<IssueView | null> {
+    const params = new URLSearchParams({ number: issueNumber });
+    if (workspacePath) { params.set('workspace', workspacePath); }
+    const result = await this.request<IssueView>(`/api/issue?${params.toString()}`);
+    return result.ok ? result.data! : null;
+  }
+
+  /**
+   * Invalidate Tower's in-memory overview cache and broadcast an
+   * `overview-changed` SSE event. Subscribed clients (VSCode sidebar,
+   * dashboard) re-fetch /api/overview on any SSE event, so this is
+   * what makes them notice out-of-band mutations to builder state —
+   * e.g., `afx cleanup` invoked from a shell or the architect. Without
+   * it, the change is invisible to clients until some other SSE event
+   * happens to fire. Best-effort: returns false if Tower isn't running.
+   */
+  async refreshOverview(): Promise<boolean> {
+    const result = await this.request<{ ok: boolean }>('/api/overview/refresh', { method: 'POST' });
+    return result.ok;
   }
 
   async getWorkspaceState(workspacePath: string): Promise<DashboardState | null> {

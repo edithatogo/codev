@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { CodevPseudoterminal } from './terminal-adapter.js';
 import type { ConnectionManager } from './connection-manager.js';
+import type { OverviewCache } from './views/overview-data.js';
 import { encodeWorkspacePath } from '@cluesmith/codev-core/workspace';
 import { resolveAgentName } from '@cluesmith/codev-core/agent-names';
 import type { TerminalType } from '@cluesmith/codev-core/tower-client';
@@ -23,14 +24,20 @@ export class TerminalManager {
   private outputChannel: vscode.OutputChannel;
   private connectionManager: ConnectionManager;
   private readonly iconPath: { light: vscode.Uri; dark: vscode.Uri };
+  private readonly _onDidChangeDevTerminals = new vscode.EventEmitter<void>();
+  /** Fires whenever the set of open dev terminals changes (start/stop/swap/cleanup). */
+  readonly onDidChangeDevTerminals = this._onDidChangeDevTerminals.event;
+  private readonly overviewCache: OverviewCache;
 
   constructor(
     connectionManager: ConnectionManager,
     outputChannel: vscode.OutputChannel,
     extensionUri: vscode.Uri,
+    overviewCache: OverviewCache,
   ) {
     this.connectionManager = connectionManager;
     this.outputChannel = outputChannel;
+    this.overviewCache = overviewCache;
     // Theme-aware icon pair. The single-Uri form rendered as solid black on
     // dark themes (VSCode doesn't resolve currentColor on terminal-tab icons).
     // codev-light.svg has dark fill (visible on light themes), codev-dark.svg
@@ -39,6 +46,46 @@ export class TerminalManager {
       light: vscode.Uri.joinPath(extensionUri, 'icons', 'codev-light.svg'),
       dark: vscode.Uri.joinPath(extensionUri, 'icons', 'codev-dark.svg'),
     };
+  }
+
+  /**
+   * Friendly builder tab title — mirrors the sidebar's `#<issueId> <issueTitle>`,
+   * prefixed `Codev: `. Falls back to `fallback` (the canonical
+   * `Codev: <agent-name>`) whenever overview data, a builder match, or an
+   * issue number is unavailable, so the title is never broken or empty.
+   *
+   * Display-only: terminal identity, cleanup, and click-to-focus all key off
+   * the `builder-<id>` map key and Terminal object — never the tab title — so
+   * changing this string has no functional side effects.
+   */
+  private friendlyBuilderLabel(builderId: string, fallback: string): string {
+    const data = this.overviewCache.getData();
+    if (!data?.builders?.length) { return fallback; }
+    // Open paths pass the canonical roleId (`builder-<protocol>-<id>`), but
+    // OverviewCache builders carry the short id the sidebar uses. resolveAgentName
+    // matches a *short* target against canonical candidates, so feed it the
+    // trailing id token, not the full roleId (otherwise it never matches and
+    // every builder falls back to the agent name).
+    const shortId = builderId.split('-').pop() ?? builderId;
+    const { builder } = resolveAgentName(shortId, data.builders);
+    // Mirror the sidebar exactly: `#${issueId ?? id} ${issueTitle ?? ''}`.
+    const num = builder?.issueId ?? builder?.id;
+    if (num === undefined || num === null || num === '') { return fallback; }
+    // Bound the tab name: `#<id>` stays whole (short, identifying), but the
+    // issue title is capped — VSCode's default `tabSizing: 'fit'` does not
+    // ellipsize a lone wide tab, so an unbounded title spans the whole group.
+    const MAX_TITLE = 25;
+    const raw = (builder?.issueTitle ?? '').trim();
+    let title = raw;
+    if (raw.length > MAX_TITLE) {
+      const slice = raw.slice(0, MAX_TITLE);
+      const lastSpace = slice.lastIndexOf(' ');
+      // Cut at the last whole word; fall back to a hard cut when the first
+      // word alone already exceeds the cap (no usable space boundary).
+      const cut = lastSpace > 0 ? slice.slice(0, lastSpace) : slice.slice(0, MAX_TITLE - 1);
+      title = `${cut.trimEnd()}…`;
+    }
+    return `Codev: #${num}${title ? ` ${title}` : ''}`;
   }
 
   /**
@@ -78,7 +125,7 @@ export class TerminalManager {
       existing.terminal.dispose();
       this.terminals.delete(key);
     }
-    await this.openTerminal(terminalId, 'builder', label, key, focus);
+    await this.openTerminal(terminalId, 'builder', this.friendlyBuilderLabel(builderId, label), key, focus);
   }
 
   /**
@@ -142,6 +189,7 @@ export class TerminalManager {
     // Tab title matches the builder-tab format (`Codev: <name>`) with a
     // `(dev)` suffix so the pairing is obvious in the tab strip.
     await this.openTerminal(terminalId, 'dev', `Codev: ${builderName} (dev)`, key, focus);
+    this._onDidChangeDevTerminals.fire();
   }
 
   /**
@@ -156,6 +204,28 @@ export class TerminalManager {
     existing.pty.close();
     existing.terminal.dispose();
     this.terminals.delete(key);
+    this._onDidChangeDevTerminals.fire();
+  }
+
+  /**
+   * Dispose the VSCode terminal tabs for a builder — both the AI terminal
+   * and any companion dev-server terminal — after the builder has been
+   * cleaned up. Tower kills the PTYs as part of cleanup, so without this
+   * the user sees a stale "Process exited" tab until they close it
+   * manually. Accepts the canonical builder roleId (e.g. `builder-spir-109`),
+   * matching the value passed to `openBuilder`.
+   */
+  closeBuilderTerminal(builderId: string): void {
+    let devClosed = false;
+    for (const key of [`builder-${builderId}`, `dev-${builderId}`]) {
+      const existing = this.terminals.get(key);
+      if (!existing) { continue; }
+      existing.pty.close();
+      existing.terminal.dispose();
+      this.terminals.delete(key);
+      if (key.startsWith('dev-')) { devClosed = true; }
+    }
+    if (devClosed) { this._onDidChangeDevTerminals.fire(); }
   }
 
   /**
@@ -214,9 +284,19 @@ export class TerminalManager {
     const authKey = await this.getAuthKey();
     const pty = new CodevPseudoterminal(wsUrl, authKey, this.outputChannel);
     const position = vscode.workspace.getConfiguration('codev').get<string>('terminalPosition', 'editor');
-    const location = position === 'editor'
-      ? { viewColumn: type === 'architect' ? vscode.ViewColumn.One : vscode.ViewColumn.Two }
-      : vscode.TerminalLocation.Panel;
+
+    // Dev servers are long-running background logs — always the bottom panel,
+    // regardless of the `codev.terminalPosition` setting (which governs the
+    // architect/builder/shell terminals: architect → editor group 1, the
+    // rest → group 2).
+    let location: vscode.TerminalLocation | vscode.TerminalEditorLocationOptions;
+    if (type === 'dev' || position !== 'editor') {
+      location = vscode.TerminalLocation.Panel;
+    } else if (type === 'architect') {
+      location = { viewColumn: vscode.ViewColumn.One };
+    } else {
+      location = { viewColumn: vscode.ViewColumn.Two };
+    }
 
     const terminal = vscode.window.createTerminal({ name, pty, location, iconPath: this.iconPath });
 
@@ -269,5 +349,6 @@ export class TerminalManager {
       managed.terminal.dispose();
     }
     this.terminals.clear();
+    this._onDidChangeDevTerminals.dispose();
   }
 }

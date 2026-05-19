@@ -254,3 +254,103 @@ describe('porch protocol loading', () => {
     });
   });
 });
+
+/**
+ * PIR-specific protocol shape tests (Issue 691).
+ *
+ * PIR's contract is meaningful enough that we lock it in here:
+ *   plan      → gated by 'plan-approval' → next 'implement'
+ *   implement → gated by 'dev-approval'   → next 'review'
+ *   review    → no gate, terminal (next: null)
+ *
+ * The PIR protocol.json itself lives at codev/protocols/pir/ in the repo;
+ * to keep these tests independent of working-tree state, we synthesize a
+ * minimal PIR-shaped protocol and verify loadProtocol parses it correctly.
+ */
+describe('PIR protocol shape', () => {
+  const testDir = path.join(tmpdir(), `porch-pir-test-${Date.now()}`);
+  const pirDir = path.join(testDir, 'codev/protocols/pir');
+
+  const pirProtocol = {
+    name: 'pir',
+    alias: 'plan-implement-review',
+    version: '1.0.0',
+    description: 'PIR: Plan → Implement → Review for GitHub-issue-driven work with two human gates',
+    input: { type: 'github-issue', required: true },
+    phases: [
+      {
+        id: 'plan',
+        name: 'Plan',
+        type: 'build_verify',
+        gate: 'plan-approval',
+        next: 'implement',
+      },
+      {
+        id: 'implement',
+        name: 'Implement',
+        type: 'build_verify',
+        gate: 'dev-approval',
+        next: 'review',
+      },
+      {
+        id: 'review',
+        name: 'Review',
+        type: 'build_verify',
+        next: null,
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    fs.mkdirSync(pirDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pirDir, 'protocol.json'),
+      JSON.stringify(pirProtocol, null, 2),
+    );
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(testDir)) {
+      fs.rmSync(testDir, { recursive: true });
+    }
+  });
+
+  it('loads and normalizes the three PIR phases', () => {
+    const protocol = loadProtocol(testDir, 'pir');
+
+    expect(protocol.name).toBe('pir');
+    expect(protocol.phases).toHaveLength(3);
+    expect(protocol.phases.map(p => p.id)).toEqual(['plan', 'implement', 'review']);
+  });
+
+  it('gates the plan phase on plan-approval and transitions to implement', () => {
+    const protocol = loadProtocol(testDir, 'pir');
+    expect(getPhaseGate(protocol, 'plan')).toBe('plan-approval');
+    expect(getNextPhase(protocol, 'plan')?.id).toBe('implement');
+  });
+
+  it('gates the implement phase on dev-approval and transitions to review', () => {
+    const protocol = loadProtocol(testDir, 'pir');
+    expect(getPhaseGate(protocol, 'implement')).toBe('dev-approval');
+    expect(getNextPhase(protocol, 'implement')?.id).toBe('review');
+  });
+
+  it('leaves the review phase ungated and terminal', () => {
+    const protocol = loadProtocol(testDir, 'pir');
+    expect(getPhaseGate(protocol, 'review')).toBeNull();
+    expect(getNextPhase(protocol, 'review')).toBeNull();
+  });
+
+  it('resolves the plan-implement-review alias', () => {
+    const protocol = loadProtocol(testDir, 'plan-implement-review');
+    expect(protocol.name).toBe('pir');
+  });
+
+  it('treats dev-approval as a valid gate name (no whitelist)', () => {
+    // Sanity check: porch must accept new gate names purely from data. If a
+    // whitelist were ever added, this test would break before PIR ships.
+    const protocol = loadProtocol(testDir, 'pir');
+    const gate = getPhaseGate(protocol, 'implement');
+    expect(gate).toBe('dev-approval');
+  });
+});

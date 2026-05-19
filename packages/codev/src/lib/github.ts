@@ -116,6 +116,25 @@ export async function fetchIssueList(
 }
 
 /**
+ * Resolve the current user's forge login.
+ * Routes through the `user-identity` concept command (default:
+ * `gh api user --jq .login`). The concept emits a bare string, not JSON,
+ * so `raw: true` is required. Returns null on failure (e.g. `gh`
+ * unauthenticated) so callers can degrade gracefully.
+ */
+export async function fetchCurrentUser(
+  cwd?: string,
+  forgeConfig?: ForgeConfig | null,
+): Promise<string | null> {
+  const result = await executeForgeCommand('user-identity', {}, {
+    cwd,
+    forgeConfig,
+    raw: true,
+  });
+  return typeof result === 'string' && result.trim() ? result.trim() : null;
+}
+
+/**
  * Fetch recently closed issues (last 24 hours).
  * Routes through the `recently-closed` concept command.
  * Returns null on failure.
@@ -124,7 +143,15 @@ export async function fetchRecentlyClosed(
   cwd?: string,
   forgeConfig?: ForgeConfig | null,
 ): Promise<ForgeIssueListItem[] | null> {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  // Full ISO-8601 timestamp, NOT a bare date. The concept query is
+  // `closed:>$CODEV_SINCE_DATE`; GitHub search supports second-precision
+  // datetime qualifiers and `>` against a precise timestamp is exact
+  // (verified). A bare `YYYY-MM-DD` was the bug: GitHub's `>` excludes the
+  // entire sinceDate day, collapsing the 24h window to "since UTC midnight"
+  // (≈0h just after 00:00Z) and silently hiding genuinely-recent closures.
+  // Seconds precision (no millis) matches GitHub's documented format.
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    .toISOString().replace(/\.\d{3}Z$/, 'Z');
   const result = await executeForgeCommand('recently-closed', {
     CODEV_SINCE_DATE: since,
   }, {
@@ -149,7 +176,11 @@ export async function fetchRecentMergedPRs(
   cwd?: string,
   forgeConfig?: ForgeConfig | null,
 ): Promise<ForgePR[] | null> {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  // Full ISO-8601 timestamp (seconds precision), not a bare date — same
+  // GitHub bare-date `>` day-exclusion bug as fetchRecentlyClosed.
+  // `merged:>$CODEV_SINCE_DATE` against a precise timestamp is exact.
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    .toISOString().replace(/\.\d{3}Z$/, 'Z');
   const result = await executeForgeCommand('recently-merged', {
     CODEV_SINCE_DATE: since,
   }, {

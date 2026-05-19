@@ -82,7 +82,14 @@ export interface OverviewBuilder {
   protocol: string;
   planPhases: Array<{ id: string; title: string; status: string }>;
   progress: number;
+  /** Human-readable label for the gate the builder is blocked on (e.g. "plan review"). */
   blocked: string | null;
+  /**
+   * Canonical gate name (e.g. "plan-approval") for the gate the builder is
+   * blocked on. Use this when calling `porch approve` — `blocked` is a
+   * display label and won't match porch's gate keys.
+   */
+  blockedGate: string | null;
   blockedSince: string | null;
   startedAt: string | null;
   idleMs: number;
@@ -133,7 +140,27 @@ export interface OverviewData {
   pendingPRs: OverviewPR[];
   backlog: OverviewBacklogItem[];
   recentlyClosed: OverviewRecentlyClosed[];
+  /** Auto-detected GitHub login of the current user (via the user-identity forge concept). */
+  currentUser?: string;
   errors?: { prs?: string; issues?: string };
+}
+
+// --- Issue view (GET /api/issue) ---
+
+/**
+ * A single issue as returned by the `issue-view` forge concept and
+ * surfaced verbatim by Tower's GET /api/issue. Mirrors the server-side
+ * IssueViewResult (packages/codev/src/lib/forge-contracts.ts).
+ */
+export interface IssueView {
+  title: string;
+  body: string;
+  state: string;
+  comments: Array<{
+    body: string;
+    createdAt: string;
+    author: { login: string };
+  }>;
 }
 
 // --- Team (GET /workspace/:path/api/team) ---
@@ -151,11 +178,18 @@ export interface ReviewBlockingEntry {
 }
 
 export interface TeamMemberGitHubData {
+  // node arrays are capped at GitHub search `first` (20) and feed lists /
+  // review-blocking; the *Count fields are the true totals (search.issueCount)
+  // and must be used for any "N assigned / N open" display.
   assignedIssues: { number: number; title: string; url: string }[];
+  assignedIssuesCount: number;
   openPRs: { number: number; title: string; url: string }[];
+  openPRsCount: number;
   recentActivity: {
     mergedPRs: { number: number; title: string; url: string; mergedAt: string }[];
+    mergedPRsCount: number;
     closedIssues: { number: number; title: string; url: string; closedAt: string }[];
+    closedIssuesCount: number;
   };
   reviewBlocking: ReviewBlockingEntry[];
 }

@@ -32,9 +32,10 @@ export async function sendMessage(connectionManager: ConnectionManager): Promise
   if (!message) { return; }
 
   const result = await client.sendMessage(picked.id, message, { workspace: workspacePath });
-  if (result.ok) {
-    vscode.window.showInformationMessage(`Codev: Message sent to ${picked.label}`);
-  } else {
+  if (!result.ok) {
     vscode.window.showErrorMessage(`Codev: Failed to send — ${result.error}`);
+    return;
   }
+
+  vscode.window.showInformationMessage(`Codev: Message sent to ${picked.label}`);
 }

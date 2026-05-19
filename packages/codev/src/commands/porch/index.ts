@@ -48,6 +48,7 @@ import {
   type CheckEnv,
 } from './checks.js';
 import { loadCheckOverrides } from './config.js';
+import { notifyTerminal, gateApprovedMessage } from './notify.js';
 import { loadConfig } from '../../lib/config.js';
 import { version } from '../../version.js';
 
@@ -121,18 +122,65 @@ function logCheckOverrides(
 // ============================================================================
 
 /**
- * porch status <id>
+ * porch status <id> [--json]
  * Shows current state and prescriptive next steps.
+ *
+ * `--json`: emits a single-line JSON object with the project's current state
+ * and gate status, suppressing all human-readable output. Consumed by the
+ * VSCode Needs Attention view (Issue 691) and any other tooling that needs
+ * structured access to gate state.
+ *
+ * JSON shape:
+ *   {
+ *     "id": string,
+ *     "title": string,
+ *     "protocol": string,
+ *     "phase": string,
+ *     "iteration": number,
+ *     "build_complete": boolean,
+ *     "gate": string | null,
+ *     "gate_status": "pending" | "approved" | null,
+ *     "gate_requested_at": string | null,   // ISO timestamp
+ *     "gate_approved_at": string | null     // ISO timestamp
+ *   }
  */
-export async function status(workspaceRoot: string, projectId: string, resolver?: ArtifactResolver): Promise<void> {
+export async function status(
+  workspaceRoot: string,
+  projectId: string,
+  resolver?: ArtifactResolver,
+  options?: { json?: boolean },
+): Promise<void> {
   const statusPath = findStatusPath(workspaceRoot, projectId);
   if (!statusPath) {
+    if (options?.json) {
+      console.error(`Project ${projectId} not found.`);
+      process.exit(1);
+    }
     throw new Error(`Project ${projectId} not found.\nRun 'porch init' to create a new project.`);
   }
 
   const state = readState(statusPath);
   const protocol = loadProtocol(workspaceRoot, state.protocol);
   const phaseConfig = getPhaseConfig(protocol, state.phase);
+
+  if (options?.json) {
+    const gateName = getPhaseGate(protocol, state.phase);
+    const gateStatus = gateName ? state.gates[gateName] : undefined;
+    const out = {
+      id: state.id,
+      title: state.title,
+      protocol: state.protocol,
+      phase: state.phase,
+      iteration: state.iteration,
+      build_complete: state.build_complete,
+      gate: gateName ?? null,
+      gate_status: gateStatus?.status ?? null,
+      gate_requested_at: gateStatus?.requested_at ?? null,
+      gate_approved_at: gateStatus?.approved_at ?? null,
+    };
+    process.stdout.write(JSON.stringify(out) + '\n');
+    return;
+  }
 
   // Header
   console.log('');
@@ -682,6 +730,24 @@ export async function approve(
   state.gates[gateName].approved_at = new Date().toISOString();
   await writeStateAndCommit(statusPath, state, `chore(porch): ${state.id} ${gateName} gate-approved`);
 
+  // Wake the builder iff porch was invoked from OUTSIDE the builder's
+  // worktree. The wake-up wakes an *idle* builder; when the builder is
+  // the one running `porch approve` (the user typed feedback into the
+  // builder's pane and the builder ran the command itself), it's already
+  // active and the message would be echoed back as the builder's next
+  // input — Claude then "responds" to its own approval message.
+  //
+  // workspaceRoot is process.cwd() at CLI invocation. When called from
+  // inside the worktree it resolves to the same path as artifactRoot.
+  const calledFromBuilderWorktree = path.resolve(workspaceRoot) === path.resolve(artifactRoot);
+  if (!calledFromBuilderWorktree) {
+    notifyTerminal({
+      target: state.id,
+      message: gateApprovedMessage(gateName),
+      worktreeDir: workspaceRoot,
+    });
+  }
+
   console.log('');
   console.log(chalk.green(`Gate ${gateName} approved.`));
 
@@ -1006,6 +1072,12 @@ export async function cli(args: string[]): Promise<void> {
     return id;
   }
 
+  // Commands that mutate state. After dispatching, we fire a Tower
+  // overview-refresh so subscribed clients (VSCode sidebar, dashboard)
+  // pick up the change immediately instead of waiting for an unrelated
+  // SSE event to incidentally cause a re-fetch.
+  const MUTATING_COMMANDS = new Set(['next', 'done', 'gate', 'approve', 'rollback', 'verify', 'init']);
+
   try {
     switch (command) {
       case 'pending':
@@ -1025,9 +1097,12 @@ export async function cli(args: string[]): Promise<void> {
         process.exit(1);
         break;
 
-      case 'status':
-        await status(workspaceRoot, getProjectId(rest[0]), resolver);
+      case 'status': {
+        const json = rest.includes('--json');
+        const positional = rest.find(a => !a.startsWith('--'));
+        await status(workspaceRoot, getProjectId(positional), resolver, { json });
         break;
+      }
 
       case 'check':
         await check(workspaceRoot, getProjectId(rest[0]), resolver);
@@ -1129,6 +1204,18 @@ export async function cli(args: string[]): Promise<void> {
         console.log('Project ID is auto-detected from worktree path or when exactly one project exists.');
         console.log('');
         process.exit(command && command !== '--help' && command !== '-h' ? 1 : 0);
+    }
+
+    // After a successful mutating command, broadcast `overview-changed`
+    // via Tower so VSCode / dashboard refresh without a manual reload.
+    // Best-effort — silently no-ops if Tower isn't running.
+    if (command && MUTATING_COMMANDS.has(command)) {
+      try {
+        const { TowerClient } = await import('../../agent-farm/lib/tower-client.js');
+        await new TowerClient().refreshOverview();
+      } catch {
+        // Tower not running / unreachable — non-fatal.
+      }
     }
   } catch (err) {
     console.error(chalk.red(`Error: ${(err as Error).message}`));

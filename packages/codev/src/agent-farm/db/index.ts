@@ -431,6 +431,42 @@ function ensureLocalDatabase(): Database.Database {
     db.prepare('INSERT INTO _migrations (version) VALUES (9)').run();
   }
 
+  // Migration v10: Add 'pir' to builders.type CHECK constraint (Issue 691).
+  // Reintroduced post main-merge (the original collided with main's v9).
+  // Drift-robust: derive builders_new from the LIVE builders DDL (only the
+  // table name + the type CHECK literal are rewritten), so `SELECT *` can
+  // never column-mismatch regardless of columns earlier migrations added
+  // (e.g. v9's spawned_by_architect). Idempotent: skips if 'pir' is already
+  // in the constraint (covers fresh installs and DBs that ran the old v9).
+  const v10 = db.prepare('SELECT version FROM _migrations WHERE version = 10').get();
+  if (!v10) {
+    const builders = db
+      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='builders'")
+      .get() as { sql: string } | undefined;
+
+    if (builders?.sql && !builders.sql.includes("'pir'")) {
+      const newSql = builders.sql
+        .replace(/^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["'`]?builders["'`]?/i, 'CREATE TABLE builders_new')
+        .replace(/(CHECK\s*\(\s*type\s+IN\s*\([^)]*)\)/i, "$1, 'pir')");
+      db.exec(`
+        ${newSql};
+        INSERT INTO builders_new SELECT * FROM builders;
+        DROP TABLE builders;
+        ALTER TABLE builders_new RENAME TO builders;
+        CREATE INDEX IF NOT EXISTS idx_builders_status ON builders(status);
+        CREATE INDEX IF NOT EXISTS idx_builders_port ON builders(port);
+        CREATE TRIGGER IF NOT EXISTS builders_updated_at
+          AFTER UPDATE ON builders
+          FOR EACH ROW
+          BEGIN
+            UPDATE builders SET updated_at = datetime('now') WHERE id = NEW.id;
+          END;
+      `);
+      console.log("[info] Migrated builders table: added 'pir' to type CHECK constraint (v10)");
+    }
+    db.prepare('INSERT INTO _migrations (version) VALUES (10)').run();
+  }
+
   return db;
 }
 

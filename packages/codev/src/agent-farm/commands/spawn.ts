@@ -58,7 +58,7 @@ import {
   fetchGitHubIssue,
   executePreSpawnHooks,
   slugify,
-  findExistingBugfixWorktree,
+  findExistingIssueWorktree,
   validateResumeWorktree,
   createPtySession,
   startBuilderSession,
@@ -207,8 +207,12 @@ function getSpawnMode(options: SpawnOptions): BuilderType {
   if (options.worktree) return 'worktree';
 
   if (options.issueNumber) {
-    // Protocol drives mode for issue-based spawns
+    // Protocol drives the mode for issue-based spawns. Each issue-driven
+    // protocol has its own mode value and its own dispatch entry — they share
+    // an implementation through `spawnIssueDrivenBuilder`, not through the
+    // dispatcher.
     if (options.protocol === 'bugfix') return 'bugfix';
+    if (options.protocol === 'pir') return 'pir';
     return 'spec';
   }
 
@@ -669,20 +673,34 @@ async function spawnWorktree(options: SpawnOptions, config: Config): Promise<voi
 }
 
 /**
- * Spawn builder for a GitHub issue (bugfix mode)
+ * Spawn builder for an issue-driven protocol (BUGFIX, PIR, …).
+ *
+ * Implements the shared spawn pattern: fetch the GitHub issue, derive the
+ * builder ID / worktree / branch from `prefix`, run pre-spawn hooks, create
+ * or resume the worktree, initialize porch, render the builder prompt from
+ * the protocol's template, and start the PTY session.
+ *
+ * Each calling protocol owns a one-line wrapper (`spawnBugfix`, `spawnPir`)
+ * that passes its prefix. The dispatcher (`getSpawnMode` + `handlers`) routes
+ * each protocol to its dedicated wrapper — there is no shared dispatch entry.
  */
-async function spawnBugfix(options: SpawnOptions, config: Config): Promise<void> {
+async function spawnIssueDrivenBuilder(
+  options: SpawnOptions,
+  config: Config,
+  prefix: 'bugfix' | 'pir',
+): Promise<void> {
+  const protocolLabel = prefix === 'pir' ? 'PIR' : 'Bugfix';
   const issueNumber = options.issueNumber!;
   const protocol = await resolveIssueProtocol(options, config);
   const forgeConfig = loadForgeConfig(config.workspaceRoot);
 
-  logger.header(`${options.resume ? 'Resuming' : 'Spawning'} Bugfix Builder for Issue #${issueNumber}`);
+  logger.header(`${options.resume ? 'Resuming' : 'Spawning'} ${protocolLabel} Builder for Issue #${issueNumber}`);
 
   // Fetch issue from GitHub
   logger.info('Fetching issue from GitHub...');
   const issue = await fetchGitHubIssue(issueNumber, { cwd: config.workspaceRoot, forgeConfig });
 
-  const builderId = buildAgentName('bugfix', String(issueNumber));
+  const builderId = buildAgentName(prefix, String(issueNumber));
 
   // When resuming, find the existing worktree by issue number pattern
   // instead of recomputing from the current title (which may have changed).
@@ -691,15 +709,15 @@ async function spawnBugfix(options: SpawnOptions, config: Config): Promise<void>
   let branchName: string;
   if (options.branch) {
     branchName = options.branch;
-    worktreeName = `bugfix-${issueNumber}`;
+    worktreeName = `${prefix}-${issueNumber}`;
   } else if (options.resume) {
     // Migration: try ID-only path first, fall back to old title-based path
-    const idOnlyName = `bugfix-${issueNumber}`;
+    const idOnlyName = `${prefix}-${issueNumber}`;
     const idOnlyPath = resolve(config.buildersDir, idOnlyName);
     if (existsSync(idOnlyPath)) {
       worktreeName = idOnlyName;
     } else {
-      const existing = findExistingBugfixWorktree(config.buildersDir, issueNumber);
+      const existing = findExistingIssueWorktree(config.buildersDir, prefix, issueNumber);
       if (existing) {
         worktreeName = existing;
       } else {
@@ -708,7 +726,7 @@ async function spawnBugfix(options: SpawnOptions, config: Config): Promise<void>
     }
     branchName = `builder/${worktreeName}`;
   } else {
-    worktreeName = `bugfix-${issueNumber}`;
+    worktreeName = `${prefix}-${issueNumber}`;
     branchName = `builder/${worktreeName}`;
   }
 
@@ -755,21 +773,26 @@ async function spawnBugfix(options: SpawnOptions, config: Config): Promise<void>
   await ensureDirectories(config);
   await checkDependencies();
 
+  // Porch project ID:
+  //   - PIR uses the bare issue number (matches SPIR's convention, so
+  //     artifacts land at codev/{plans,reviews}/<N>-<slug>.md).
+  //   - BUGFIX uses <prefix>-<N> (historical, kept untouched).
+  //
+  // Distinct from the worktree dir (.builders/<prefix>-<N>/), the branch
+  // (builder/<prefix>-<N>), and the Tower agent name (builder-<prefix>-<N>).
+  // All four are namespaced differently — porch state ID lines up with
+  // artifacts; the other three encode protocol for collision-free worktree
+  // / branch / agent management.
+  const porchProjectId = prefix === 'pir' ? String(issueNumber) : `${prefix}-${issueNumber}`;
+
   if (options.resume) {
     validateResumeWorktree(worktreePath);
   } else if (options.branch) {
     await createWorktreeFromBranch(config, branchName, worktreePath, { remote: options.remote });
-    // Pre-initialize porch for --branch mode too
-    const porchProjectId = `bugfix-${issueNumber}`;
     const slug = slugify(issue.title);
     await initPorchInWorktree(worktreePath, protocol, porchProjectId, slug);
   } else {
     await createWorktree(config, branchName, worktreePath);
-
-    // Pre-initialize porch so the builder doesn't need to figure out project ID.
-    // Use bugfix-{N} as the porch project ID (not the builder agent name).
-    // This aligns with porch's CWD-based detection from worktree paths.
-    const porchProjectId = `bugfix-${issueNumber}`;
     const slug = slugify(issue.title);
     await initPorchInWorktree(worktreePath, protocol, porchProjectId, slug);
   }
@@ -777,8 +800,10 @@ async function spawnBugfix(options: SpawnOptions, config: Config): Promise<void>
   const templateContext: TemplateContext = {
     protocol_name: protocol.toUpperCase(), mode,
     mode_soft: mode === 'soft', mode_strict: mode === 'strict',
-    project_id: builderId,
-    input_description: `a fix for GitHub Issue #${issueNumber}`,
+    // The porch project ID — what `porch next/done/approve` expects.
+    // NOT the builder agent name (which includes the `builder-` prefix).
+    project_id: porchProjectId,
+    input_description: `work for GitHub Issue #${issueNumber}`,
     issue: { number: issueNumber, title: issue.title, body: issue.body || '(No description provided)' },
   };
   if (options.branch) {
@@ -800,13 +825,23 @@ async function spawnBugfix(options: SpawnOptions, config: Config): Promise<void>
 
   upsertBuilder({
     id: builderId,
-    name: `Bugfix #${issueNumber}: ${issue.title.substring(0, 40)}${issue.title.length > 40 ? '...' : ''}`,
+    name: `${protocolLabel} #${issueNumber}: ${issue.title.substring(0, 40)}${issue.title.length > 40 ? '...' : ''}`,
     status: 'implementing', phase: 'init',
-    worktree: worktreePath, branch: branchName, type: 'bugfix', issueNumber, terminalId,
+    worktree: worktreePath, branch: branchName, type: prefix, issueNumber, terminalId,
     spawnedByArchitect: SPAWNING_ARCHITECT_NAME,
   });
 
-  logSpawnSuccess(`Bugfix builder for issue #${issueNumber}`, terminalId, mode);
+  logSpawnSuccess(`${protocolLabel} builder for issue #${issueNumber}`, terminalId, mode);
+}
+
+/** Spawn a BUGFIX builder via the shared issue-driven helper. */
+async function spawnBugfix(options: SpawnOptions, config: Config): Promise<void> {
+  return spawnIssueDrivenBuilder(options, config, 'bugfix');
+}
+
+/** Spawn a PIR builder via the shared issue-driven helper. */
+async function spawnPir(options: SpawnOptions, config: Config): Promise<void> {
+  return spawnIssueDrivenBuilder(options, config, 'pir');
 }
 
 // =============================================================================
@@ -855,6 +890,7 @@ export async function spawn(options: SpawnOptions): Promise<void> {
   const handlers: Record<BuilderType, () => Promise<void>> = {
     spec: () => spawnSpec(options, config),
     bugfix: () => spawnBugfix(options, config),
+    pir: () => spawnPir(options, config),
     task: () => spawnTask(options, config),
     protocol: () => spawnProtocol(options, config),
     shell: () => spawnShell(options, config),

@@ -1,8 +1,9 @@
 /**
- * Tests for notifyArchitect (Spec 0108)
+ * Tests for notifyTerminal — the builder wake-up after gate approval.
  *
- * Verifies that porch sends gate notifications via afx send
- * and that failures are swallowed (fire-and-forget).
+ * Architect-bound notifications were removed deliberately; the only caller
+ * of notifyTerminal today is the gate-approve path, which wakes the builder
+ * so its idle Claude session advances on the next turn.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -18,14 +19,13 @@ vi.mock('node:child_process', () => ({
 }));
 
 import { execFile } from 'node:child_process';
-import { notifyArchitect } from '../notify.js';
+import { notifyTerminal, gateApprovedMessage } from '../notify.js';
 
 const mockExecFile = vi.mocked(execFile);
 
-describe('notifyArchitect', () => {
+describe('notifyTerminal', () => {
   beforeEach(() => {
     mockExecFile.mockReset();
-    // Restore default success-callback implementation after each test
     mockExecFile.mockImplementation(
       (_cmd: any, _args: any, _opts: any, cb: any) => {
         cb(null);
@@ -34,37 +34,51 @@ describe('notifyArchitect', () => {
     );
   });
 
-  it('calls execFile with correct arguments', () => {
-    notifyArchitect('0108', 'spec-approval', '/projects/test');
+  it('routes message to the named target via afx send', () => {
+    notifyTerminal({
+      target: 'pir-0108',
+      message: 'wake up',
+      worktreeDir: '/projects/test',
+    });
 
     expect(mockExecFile).toHaveBeenCalledTimes(1);
     const [cmd, args, opts] = mockExecFile.mock.calls[0];
     expect(cmd).toBe(process.execPath);
     expect(args).toContain('send');
-    expect(args).toContain('architect');
+    expect(args).toContain('pir-0108');
+    expect(args).toContain('wake up');
     expect(args).toContain('--raw');
-    expect(args).toContain('--no-enter');
     expect((opts as { cwd: string }).cwd).toBe('/projects/test');
   });
 
-  it('formats message with gate name and project id', () => {
-    notifyArchitect('0108', 'plan-approval', '/projects/test');
+  it('submits as a regular message (no --no-enter)', () => {
+    notifyTerminal({
+      target: 'pir-0108',
+      message: 'approved',
+      worktreeDir: '/projects/test',
+    });
 
-    const message = mockExecFile.mock.calls[0][1]![3];
-    expect(message).toContain('GATE: plan-approval (Builder 0108)');
-    expect(message).toContain('Builder 0108 is waiting for approval.');
-    expect(message).toContain('Run: porch approve 0108 plan-approval');
+    const args = mockExecFile.mock.calls[0][1]!;
+    expect(args).not.toContain('--no-enter');
   });
 
   it('sets timeout to 10 seconds', () => {
-    notifyArchitect('0108', 'spec-approval', '/projects/test');
+    notifyTerminal({
+      target: 'pir-0108',
+      message: 'x',
+      worktreeDir: '/projects/test',
+    });
 
     const opts = mockExecFile.mock.calls[0][2] as { timeout: number };
     expect(opts.timeout).toBe(10_000);
   });
 
   it('sets cwd to worktreeDir', () => {
-    notifyArchitect('0108', 'spec-approval', '/my/worktree');
+    notifyTerminal({
+      target: 'pir-0108',
+      message: 'x',
+      worktreeDir: '/my/worktree',
+    });
 
     const opts = mockExecFile.mock.calls[0][2] as { cwd: string };
     expect(opts.cwd).toBe('/my/worktree');
@@ -80,40 +94,33 @@ describe('notifyArchitect', () => {
       }
     );
 
-    // Should not throw
-    expect(() => notifyArchitect('0108', 'spec-approval', '/projects/test')).not.toThrow();
+    expect(() =>
+      notifyTerminal({ target: 'pir-0108', message: 'x', worktreeDir: '/p' })
+    ).not.toThrow();
 
     expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Gate notification failed')
-    );
-
-    consoleSpy.mockRestore();
-  });
-
-  it('logs error message on failure', () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-    mockExecFile.mockImplementation(
-      (_cmd: any, _args: any, _opts: any, cb: any) => {
-        cb(new Error('connection refused'));
-        return undefined as any;
-      }
-    );
-
-    notifyArchitect('0108', 'spec-approval', '/projects/test');
-
-    expect(consoleSpy).toHaveBeenCalledWith(
-      '[porch] Gate notification failed: connection refused'
+      expect.stringContaining('notifyTerminal(pir-0108) failed')
     );
 
     consoleSpy.mockRestore();
   });
 
   it('uses afx binary path ending with bin/afx.js', () => {
-    notifyArchitect('0108', 'spec-approval', '/projects/test');
+    notifyTerminal({
+      target: 'pir-0108',
+      message: 'x',
+      worktreeDir: '/projects/test',
+    });
 
     const args = mockExecFile.mock.calls[0][1]!;
-    // The afx binary should be a resolved path ending with bin/afx.js
     expect(args[0]).toMatch(/bin\/afx\.js$/);
+  });
+});
+
+describe('gateApprovedMessage', () => {
+  it('references the gate and porch next', () => {
+    const msg = gateApprovedMessage('dev-approval');
+    expect(msg).toContain('dev-approval');
+    expect(msg).toContain('porch next');
   });
 });

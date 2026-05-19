@@ -33,11 +33,17 @@ export interface ReviewBlockingEntry {
 
 // Keep in sync with the canonical definition in @cluesmith/codev-types.
 export interface TeamMemberGitHubData {
+  // node arrays are capped at GitHub search `first` (20) and feed lists /
+  // review-blocking; the *Count fields are the true totals (search.issueCount).
   assignedIssues: { number: number; title: string; url: string }[];
+  assignedIssuesCount: number;
   openPRs: { number: number; title: string; url: string }[];
+  openPRsCount: number;
   recentActivity: {
     mergedPRs: { number: number; title: string; url: string; mergedAt: string }[];
+    mergedPRsCount: number;
     closedIssues: { number: number; title: string; url: string; closedAt: string }[];
+    closedIssuesCount: number;
   };
   reviewBlocking: ReviewBlockingEntry[];
 }
@@ -100,9 +106,11 @@ export function buildTeamGraphQLQuery(members: TeamMember[], owner: string, name
       const alias = toAlias(m.github);
       return `
     ${alias}_assigned: search(query: "repo:${repo} assignee:${m.github} is:issue is:open", type: ISSUE, first: 20) {
+      issueCount
       nodes { ... on Issue { number title url } }
     }
     ${alias}_prs: search(query: "repo:${repo} author:${m.github} is:pr is:open", type: ISSUE, first: 20) {
+      issueCount
       nodes {
         ... on PullRequest {
           number
@@ -118,9 +126,11 @@ export function buildTeamGraphQLQuery(members: TeamMember[], owner: string, name
       }
     }
     ${alias}_merged: search(query: "repo:${repo} author:${m.github} is:pr is:merged merged:>=${since}", type: ISSUE, first: 20) {
+      issueCount
       nodes { ... on PullRequest { number title url mergedAt } }
     }
     ${alias}_closed: search(query: "repo:${repo} assignee:${m.github} is:issue is:closed closed:>=${since}", type: ISSUE, first: 20) {
+      issueCount
       nodes { ... on Issue { number title url closedAt } }
     }`;
     })
@@ -257,20 +267,27 @@ export function parseTeamGraphQLResponse(
     if (!isValidGitHubHandle(member.github)) continue;
 
     const alias = toAlias(member.github);
-    const assigned = data[`${alias}_assigned`] as { nodes?: Array<{ number: number; title: string; url: string }> } | undefined;
-    const prs = data[`${alias}_prs`] as { nodes?: OpenPrNode[] } | undefined;
-    const merged = data[`${alias}_merged`] as { nodes?: Array<{ number: number; title: string; url: string; mergedAt: string }> } | undefined;
-    const closed = data[`${alias}_closed`] as { nodes?: Array<{ number: number; title: string; url: string; closedAt: string }> } | undefined;
+    const assigned = data[`${alias}_assigned`] as { issueCount?: number; nodes?: Array<{ number: number; title: string; url: string }> } | undefined;
+    const prs = data[`${alias}_prs`] as { issueCount?: number; nodes?: OpenPrNode[] } | undefined;
+    const merged = data[`${alias}_merged`] as { issueCount?: number; nodes?: Array<{ number: number; title: string; url: string; mergedAt: string }> } | undefined;
+    const closed = data[`${alias}_closed`] as { issueCount?: number; nodes?: Array<{ number: number; title: string; url: string; closedAt: string }> } | undefined;
 
+    const assignedNodes = assigned?.nodes ?? [];
     const openPrNodes = prs?.nodes ?? [];
+    const mergedNodes = merged?.nodes ?? [];
+    const closedNodes = closed?.nodes ?? [];
     prsByAuthor.set(member.github, openPrNodes);
 
     result.set(member.github, {
-      assignedIssues: (assigned?.nodes ?? []).map(n => ({ number: n.number, title: n.title, url: n.url })),
+      assignedIssues: assignedNodes.map(n => ({ number: n.number, title: n.title, url: n.url })),
+      assignedIssuesCount: assigned?.issueCount ?? assignedNodes.length,
       openPRs: openPrNodes.map(n => ({ number: n.number, title: n.title, url: n.url })),
+      openPRsCount: prs?.issueCount ?? openPrNodes.length,
       recentActivity: {
-        mergedPRs: (merged?.nodes ?? []).map(n => ({ number: n.number, title: n.title, url: n.url, mergedAt: n.mergedAt })),
-        closedIssues: (closed?.nodes ?? []).map(n => ({ number: n.number, title: n.title, url: n.url, closedAt: n.closedAt })),
+        mergedPRs: mergedNodes.map(n => ({ number: n.number, title: n.title, url: n.url, mergedAt: n.mergedAt })),
+        mergedPRsCount: merged?.issueCount ?? mergedNodes.length,
+        closedIssues: closedNodes.map(n => ({ number: n.number, title: n.title, url: n.url, closedAt: n.closedAt })),
+        closedIssuesCount: closed?.issueCount ?? closedNodes.length,
       },
       reviewBlocking: [],
     });

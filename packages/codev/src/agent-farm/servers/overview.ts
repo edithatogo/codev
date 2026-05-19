@@ -14,6 +14,7 @@ import {
   fetchIssueList,
   fetchRecentlyClosed,
   fetchRecentMergedPRs,
+  fetchCurrentUser,
   parseLinkedIssue,
   parseLabelDefaults,
 } from '../../lib/github.js';
@@ -42,7 +43,14 @@ export interface BuilderOverview {
   protocol: string;
   planPhases: PlanPhase[];
   progress: number;
+  /** Human-readable label for the gate the builder is blocked on (e.g. "plan review"). */
   blocked: string | null;
+  /**
+   * Canonical gate name (e.g. "plan-approval") for the gate the builder is
+   * blocked on. Use this when calling `porch approve` — `blocked` is a
+   * display label and won't match porch's gate keys.
+   */
+  blockedGate: string | null;
   blockedSince: string | null;
   startedAt: string | null;
   idleMs: number;
@@ -93,6 +101,8 @@ export interface OverviewData {
   pendingPRs: PROverview[];
   backlog: BacklogItem[];
   recentlyClosed: RecentlyClosedItem[];
+  /** Auto-detected forge login of the current user (via the user-identity concept). */
+  currentUser?: string;
   errors?: { prs?: string; issues?: string };
 }
 
@@ -331,15 +341,22 @@ function loadProtocolPhases(workspaceRoot: string, protocolName: string): string
 /**
  * Detect if a builder is blocked on a gate (requested but not approved).
  * Returns a human-readable label or null.
+ *
+ * The allowlist mirrors the gates emitted by the bundled protocols (SPIR,
+ * ASPIR, BUGFIX, AIR, PIR). New protocols that introduce new gate names must
+ * register them here, otherwise their gate-pending state is invisible to
+ * `OverviewBuilder.blocked` and downstream UIs (VSCode Needs Attention tree,
+ * VSCode toast, dashboard NeedsAttentionList, status bar counter).
  */
-export function detectBlocked(parsed: ParsedStatus): string | null {
-  const gateLabels: Record<string, string> = {
-    'spec-approval': 'spec review',
-    'plan-approval': 'plan review',
-    'pr': 'PR review',
-  };
+const GATE_LABELS: Record<string, string> = {
+  'spec-approval': 'spec review',
+  'plan-approval': 'plan review',
+  'dev-approval': 'dev review',
+  'pr': 'PR review',
+};
 
-  for (const [gate, label] of Object.entries(gateLabels)) {
+export function detectBlocked(parsed: ParsedStatus): string | null {
+  for (const [gate, label] of Object.entries(GATE_LABELS)) {
     if (parsed.gates[gate] === 'pending' && parsed.gateRequestedAt[gate]) {
       return label;
     }
@@ -348,11 +365,27 @@ export function detectBlocked(parsed: ParsedStatus): string | null {
 }
 
 /**
+ * Canonical gate name (e.g. "plan-approval") for the gate the builder is
+ * blocked on. Sibling to `detectBlocked` which returns the display label.
+ * Returns null if the builder isn't blocked.
+ */
+export function detectBlockedGate(parsed: ParsedStatus): string | null {
+  for (const gate of Object.keys(GATE_LABELS)) {
+    if (parsed.gates[gate] === 'pending' && parsed.gateRequestedAt[gate]) {
+      return gate;
+    }
+  }
+  return null;
+}
+
+/**
  * Detect when the current blocked gate was first requested.
  * Returns the ISO timestamp string or null if not blocked.
+ *
+ * Keep this list in sync with `detectBlocked`'s `gateLabels` keys.
  */
 export function detectBlockedSince(parsed: ParsedStatus): string | null {
-  const gateNames = ['spec-approval', 'plan-approval', 'pr'];
+  const gateNames = ['spec-approval', 'plan-approval', 'dev-approval', 'pr'];
   for (const gate of gateNames) {
     if (parsed.gates[gate] === 'pending' && parsed.gateRequestedAt[gate]) {
       return parsed.gateRequestedAt[gate];
@@ -424,6 +457,10 @@ export function worktreeNameToRoleId(dirName: string): string | null {
   const bugfixMatch = lower.match(/^bugfix-(\d+)/);
   if (bugfixMatch) return `builder-bugfix-${Number(bugfixMatch[1])}`;
 
+  // PIR: pir-1298-slug → builder-pir-1298
+  const pirMatch = lower.match(/^pir-(\d+)/);
+  if (pirMatch) return `builder-pir-${Number(pirMatch[1])}`;
+
   // Task: task-NAvW → builder-task-navw
   const taskMatch = lower.match(/^task-([a-z0-9]+)/);
   if (taskMatch) return `builder-task-${taskMatch[1]}`;
@@ -470,6 +507,13 @@ export function extractProjectIdFromWorktreeName(dirName: string): string | null
   const bugfixMatch = dirName.match(/^bugfix-(\d+)/);
   if (bugfixMatch) return `bugfix-${bugfixMatch[1]}`;
 
+  // PIR: pir-1298-slug → "1298" (porch project ID is just the issue
+  // number, aligning with SPIR's convention so artifacts land in
+  // codev/{plans,reviews}/<N>-<slug>.md without a protocol prefix).
+  // Worktree dir keeps the `pir-` prefix for namespace separation.
+  const pirMatch = dirName.match(/^pir-(\d+)/);
+  if (pirMatch) return pirMatch[1];
+
   // Legacy numeric: 0110 or 0110-slug → "0110"
   const numericMatch = dirName.match(/^(\d+)(?:-|$)/);
   if (numericMatch) return numericMatch[1];
@@ -514,6 +558,7 @@ export function discoverBuilders(workspaceRoot: string): BuilderOverview[] {
         planPhases: [],
         progress: 0,
         blocked: null,
+        blockedGate: null,
         blockedSince: null,
         startedAt: null,
         idleMs: 0,
@@ -565,6 +610,7 @@ export function discoverBuilders(workspaceRoot: string): BuilderOverview[] {
             planPhases: parsed.planPhases,
             progress: calculateProgress(parsed, workspaceRoot),
             blocked: detectBlocked(parsed),
+            blockedGate: detectBlockedGate(parsed),
             blockedSince: detectBlockedSince(parsed),
             startedAt: parsed.startedAt || null,
             idleMs: computeIdleMs(parsed),
@@ -593,6 +639,7 @@ export function discoverBuilders(workspaceRoot: string): BuilderOverview[] {
         planPhases: [],
         progress: 0,
         blocked: null,
+        blockedGate: null,
         blockedSince: null,
         startedAt: null,
         idleMs: 0,
@@ -678,7 +725,9 @@ export class OverviewCache {
   private issueCache = new Map<string, { data: ForgeIssueListItem[]; fetchedAt: number }>();
   private closedCache = new Map<string, { data: ForgeIssueListItem[]; fetchedAt: number }>();
   private mergedPRCache = new Map<string, { data: ForgePR[]; fetchedAt: number }>();
+  private currentUserCache = new Map<string, { data: string; fetchedAt: number }>();
   private readonly TTL = 30_000;
+  private readonly USER_TTL = 3_600_000; // 1h — GitHub identity is session-stable
 
   /**
    * Build the overview response. Aggregates builder state, PRs, and backlog.
@@ -731,12 +780,14 @@ export class OverviewCache {
         .filter((id): id is string => id !== null),
     );
 
-    // 2. Fetch PRs, issues, recently closed, and merged PRs in parallel (each is independently cached)
-    const [prs, issues, closed, mergedPRs] = await Promise.all([
+    // 2. Fetch PRs, issues, recently closed, merged PRs, and current user in
+    //    parallel (each is independently cached)
+    const [prs, issues, closed, mergedPRs, currentUser] = await Promise.all([
       this.fetchPRsCached(workspaceRoot),
       this.fetchIssuesCached(workspaceRoot),
       this.fetchRecentlyClosedCached(workspaceRoot),
       this.fetchMergedPRsCached(workspaceRoot),
+      this.fetchCurrentUserCached(workspaceRoot),
     ]);
 
     // 3. Process PRs
@@ -819,6 +870,9 @@ export class OverviewCache {
     }
 
     const result: OverviewData = { builders, pendingPRs, backlog, recentlyClosed };
+    if (currentUser) {
+      result.currentUser = currentUser;
+    }
     if (Object.keys(errors).length > 0) {
       result.errors = errors;
     }
@@ -833,6 +887,7 @@ export class OverviewCache {
     this.issueCache.clear();
     this.closedCache.clear();
     this.mergedPRCache.clear();
+    this.currentUserCache.clear();
   }
 
   // ===========================================================================
@@ -865,6 +920,26 @@ export class OverviewCache {
       this.issueCache.set(cwd, { data, fetchedAt: now });
     }
     return data;
+  }
+
+  /**
+   * Resolve the current user's forge login via the `user-identity` concept.
+   * Long TTL — identity is stable for the lifetime of a Tower session.
+   * Only successful resolutions are cached, so a transient failure (gh
+   * logged out, offline) self-heals on the next overview poll.
+   */
+  private async fetchCurrentUserCached(cwd: string): Promise<string | null> {
+    const now = Date.now();
+    const cached = this.currentUserCache.get(cwd);
+    if (cached && (now - cached.fetchedAt) < this.USER_TTL) {
+      return cached.data;
+    }
+
+    const login = await fetchCurrentUser(cwd);
+    if (login !== null) {
+      this.currentUserCache.set(cwd, { data: login, fetchedAt: now });
+    }
+    return login;
   }
 
   private async fetchRecentlyClosedCached(cwd: string): Promise<ForgeIssueListItem[] | null> {

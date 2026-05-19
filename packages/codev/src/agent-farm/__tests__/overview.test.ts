@@ -28,12 +28,13 @@ import {
 // Mocks
 // ============================================================================
 
-const { mockFetchPRList, mockFetchIssueList, mockFetchRecentlyClosed, mockFetchMergedPRs, mockLoadProtocol } = vi.hoisted(() => ({
+const { mockFetchPRList, mockFetchIssueList, mockFetchRecentlyClosed, mockFetchMergedPRs, mockLoadProtocol, mockFetchCurrentUser } = vi.hoisted(() => ({
   mockFetchPRList: vi.fn(),
   mockFetchIssueList: vi.fn(),
   mockFetchRecentlyClosed: vi.fn(),
   mockFetchMergedPRs: vi.fn(),
   mockLoadProtocol: vi.fn(),
+  mockFetchCurrentUser: vi.fn(),
 }));
 
 vi.mock('../../lib/github.js', async (importOriginal) => {
@@ -44,6 +45,7 @@ vi.mock('../../lib/github.js', async (importOriginal) => {
     fetchIssueList: mockFetchIssueList,
     fetchRecentlyClosed: mockFetchRecentlyClosed,
     fetchRecentMergedPRs: mockFetchMergedPRs,
+    fetchCurrentUser: mockFetchCurrentUser,
   };
 });
 
@@ -126,6 +128,7 @@ describe('overview', () => {
     mockFetchIssueList.mockResolvedValue([]);
     mockFetchRecentlyClosed.mockResolvedValue([]);
     mockFetchMergedPRs.mockResolvedValue([]);
+    mockFetchCurrentUser.mockResolvedValue('octocat');
   });
 
   afterEach(() => {
@@ -781,6 +784,14 @@ describe('overview', () => {
       expect(extractProjectIdFromWorktreeName('bugfix-296-slug')).toBe('bugfix-296');
     });
 
+    it('extracts bare numeric ID from PIR worktree (aligns with SPIR convention)', () => {
+      expect(extractProjectIdFromWorktreeName('pir-1298-fix-foo')).toBe('1298');
+    });
+
+    it('extracts bare numeric ID from PIR worktree with no slug', () => {
+      expect(extractProjectIdFromWorktreeName('pir-1298')).toBe('1298');
+    });
+
     it('extracts legacy numeric ID', () => {
       expect(extractProjectIdFromWorktreeName('0110')).toBe('0110');
     });
@@ -1383,6 +1394,36 @@ describe('overview', () => {
 
       // fetchPRList should only be called once (second call is cached)
       expect(mockFetchPRList).toHaveBeenCalledTimes(1);
+    });
+
+    it('resolves currentUser from the user-identity concept', async () => {
+      mockFetchCurrentUser.mockResolvedValue('octocat');
+
+      const cache = new OverviewCache();
+      const data = await cache.getOverview(tmpDir);
+
+      expect(data.currentUser).toBe('octocat');
+      expect(mockFetchCurrentUser).toHaveBeenCalledWith(tmpDir);
+    });
+
+    it('omits currentUser when user-identity resolution fails', async () => {
+      mockFetchCurrentUser.mockResolvedValue(null);
+
+      const cache = new OverviewCache();
+      const data = await cache.getOverview(tmpDir);
+
+      expect(data.currentUser).toBeUndefined();
+      expect(data.backlog).toEqual([]);
+    });
+
+    it('caches currentUser across getOverview calls', async () => {
+      mockFetchCurrentUser.mockResolvedValue('octocat');
+
+      const cache = new OverviewCache();
+      await cache.getOverview(tmpDir);
+      await cache.getOverview(tmpDir);
+
+      expect(mockFetchCurrentUser).toHaveBeenCalledTimes(1);
     });
 
     it('invalidates cache on refresh', async () => {
