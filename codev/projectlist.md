@@ -233,6 +233,11 @@ Projects currently in development (conceived through committed), sorted by prior
 
 ```yaml
 releases:
+  - version: "v3.0.8"
+    name: "Ionic"
+    status: released
+    target_date: "2026-05-19"
+    notes: "Bugfix patch — multi-architect routing fix (#774, the headline v3.0.5 feature was non-functional end-to-end since shipping: detectCurrentBuilderId opened the empty worktree-local state.db instead of the workspace's, falling back to a non-canonical sender ID and breaking affinity routing); plus VSCode extension round (#771: per-builder file trees, View Diff, accordion mode, image paste, Backlog dedup)."
   - version: "v3.0.7"
     name: "Ionic"
     status: released
