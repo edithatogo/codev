@@ -42,6 +42,12 @@ export class BuildersProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return element;
   }
 
+  // Required for `TreeView.reveal` (used by the accordion). Builder rows are
+  // roots → undefined; file rows are never revealed.
+  getParent(): vscode.TreeItem | undefined {
+    return undefined;
+  }
+
   async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
     // Second level: a builder's changed files. VSCode only calls this for
     // an *expanded* builder, so collapsed builders cost no git.
@@ -63,6 +69,10 @@ export class BuildersProvider implements vscode.TreeDataProvider<vscode.TreeItem
         ? `blocked on ${b.blocked}${waitTime}`
         : `[${b.phase}]`;
       const item = new BuilderTreeItem(b.id, `#${b.issueId ?? b.id} ${b.issueTitle ?? ''} ${phaseLabel}`);
+      // Stable id (not the churning label) so VSCode persists expansion across
+      // the frequent overview-poll refreshes, and so the accordion's
+      // collapseAll+reveal can target this row reliably.
+      item.id = b.id;
       // Expandable so the second-level changed-files list can hang off it.
       // The row keeps its open-terminal command (single click); the chevron
       // toggles the file list.

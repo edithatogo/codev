@@ -227,6 +227,44 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.registerTreeDataProvider('codev.status', new StatusProvider(connectionManager)),
 	);
 
+	// Builders accordion: expanding one builder auto-collapses the others so a
+	// reviewer can't have diffs from unrelated worktrees open at once. The
+	// deterministic collapseAll+reveal pair (vs fighting VSCode's expansion
+	// reconciliation) is guarded against the expand/collapse events it itself
+	// generates. Toggle via the header button / `codev.buildersAutoCollapse`.
+	const readAccordion = () =>
+		vscode.workspace.getConfiguration('codev').get<boolean>('buildersAutoCollapse', true);
+	let accordionOn = readAccordion();
+	let reconciling = false;
+	// The builder we've made (or are making) the single open one. The id check
+	// is the real guard: `reveal({expand:true})` re-fires onDidExpandElement
+	// for the same builder, and that re-fire can land *after* the await chain
+	// (so `reconciling` is already false). Matching builderId makes the
+	// re-fire a no-op regardless of timing — `reconciling` only debounces
+	// rapid expands of *different* builders.
+	let openBuilderId: string | undefined;
+	vscode.commands.executeCommand('setContext', 'codev.buildersAutoCollapse', accordionOn);
+	context.subscriptions.push(
+		buildersView.onDidExpandElement(async (e) => {
+			if (!accordionOn) { return; }
+			if (!(e.element instanceof BuilderTreeItem)) { return; }
+			if (e.element.builderId === openBuilderId || reconciling) { return; }
+			openBuilderId = e.element.builderId;
+			reconciling = true;
+			try {
+				await vscode.commands.executeCommand('workbench.actions.treeView.codev.builders.collapseAll');
+				await buildersView!.reveal(e.element, { expand: true, select: false, focus: false });
+			} finally {
+				reconciling = false;
+			}
+		}),
+		vscode.workspace.onDidChangeConfiguration((e) => {
+			if (!e.affectsConfiguration('codev.buildersAutoCollapse')) { return; }
+			accordionOn = readAccordion();
+			vscode.commands.executeCommand('setContext', 'codev.buildersAutoCollapse', accordionOn);
+		}),
+	);
+
 	// Periodic overview refresh. VSCode has no timer-based refresh (event-only),
 	// so an idle workspace never sees externally-merged PRs / new issues. Mirror
 	// the dashboard's poll idiom: refresh on a cadence while the Codev sidebar is
@@ -405,6 +443,10 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.commands.registerCommand('codev.viewPlanFile', (arg: vscode.TreeItem | string | undefined) =>
 			viewPlanFile(connectionManager!, extractBuilderId(arg))),
 		vscode.commands.registerCommand('codev.refreshOverview', () => overviewCache.refresh()),
+		vscode.commands.registerCommand('codev.enableBuildersAutoCollapse', () =>
+			vscode.workspace.getConfiguration('codev').update('buildersAutoCollapse', true, vscode.ConfigurationTarget.Global)),
+		vscode.commands.registerCommand('codev.disableBuildersAutoCollapse', () =>
+			vscode.workspace.getConfiguration('codev').update('buildersAutoCollapse', false, vscode.ConfigurationTarget.Global)),
 		vscode.commands.registerCommand('codev.reconnect', () => connectionManager?.reconnect()),
 		vscode.commands.registerCommand('codev.connectTunnel', () => connectTunnel(connectionManager!)),
 		vscode.commands.registerCommand('codev.disconnectTunnel', () => disconnectTunnel(connectionManager!)),
