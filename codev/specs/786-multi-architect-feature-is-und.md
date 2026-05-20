@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID**: spec-2026-05-20-786-multi-architect-feature
-- **Status**: draft (iter-3 — architect decisions applied, ready for iter-2 CMAP)
+- **Status**: draft (iter-4 — post iter-2 CMAP, Gemini & Claude APPROVE, Codex REQUEST_CHANGES addressed)
 - **Created**: 2026-05-20
 - **GitHub Issue**: [#786](https://github.com/cluesmith/codev/issues/786)
 - **Predecessors**: #755 (v3.0.5 primitive), #761 (v3.0.6 dashboard tabs), #774 (v3.0.8 routing fix)
@@ -89,11 +89,13 @@ A user can add, manage, evict, and recover sibling architects with the same flue
 
 ### Functional (MUST)
 - [ ] `afx workspace remove-architect <name>` exists. Removes the named sibling from Tower's in-memory map, deletes the persisted row from `state.db.architect` AND from `terminal_sessions`, terminates the architect's terminal cleanly (no zombie shellper). Refuses to remove `main`. Refuses to remove a name that doesn't exist. **Does NOT refuse to remove an architect that has in-flight builders** — per OQ-A, those builders' subsequent `afx send architect` calls fall back to `main` via the existing routing chain.
-- [ ] Sibling architect rows survive `afx workspace stop` + `afx workspace start`. Specifically: `stopInstance` no longer indiscriminately deletes ALL rows; siblings' rows persist across the stop/start boundary, and `launchInstance` re-spawns them with their recorded `cmd` and re-injected `CODEV_ARCHITECT_NAME`. `main`'s existing behaviour is unchanged.
+- [ ] Sibling architect rows survive `afx workspace stop` + `afx workspace start`. Specifically: `stopInstance` no longer indiscriminately deletes ALL rows; siblings' rows persist across the stop/start boundary, and `launchInstance` re-spawns them with their recorded `cmd` and re-injected `CODEV_ARCHITECT_NAME`. `main`'s existing behaviour is unchanged. **The row-deletion paths must distinguish "intentional stop" from "permanent exit":** intentional stop (via `stopInstance` / `handleWorkspaceStopAll`) preserves sibling rows; permanent exit (max-restart exhaustion, explicit `remove-architect`) deletes them per OQ-B. The exit handlers at `tower-instances.ts:452-462`, `:507`, `:777-793`, `:830-846` and the reconciliation exit handler at `tower-terminals.ts:665-677` must each be inspected and updated to honour this distinction (e.g. a "shutdown in progress" flag, or routing intentional stops through a different teardown path that skips the `setArchitectByName(name, null)` call).
+- [ ] `launchInstance` correctly boots `main` even when sibling rows already exist (i.e. don't gate `main` creation on `entry.architects.size === 0` after this change — that pre-condition becomes unsafe once siblings can be loaded via reconciliation before `main` is created). Concretely: ensure `main` is always present after `launchInstance` returns success.
 - [ ] **Identity preservation across shellper auto-restart.** `tower-terminals.ts` reconciliation builds `restartOptions.env` with `CODEV_ARCHITECT_NAME: <name>` for every architect (where `<name>` comes from `dbSession.role_id`). When a sibling's claude process dies and shellper restarts it, the new process spawns with the correct architect name in env.
 - [ ] Sibling-architect tabs in the dashboard's `ArchitectTabStrip` carry a close affordance that triggers `remove-architect`. `main`'s tab has no close button.
-- [ ] `afx status` enumerates ALL registered architects, showing name, PID, port (if any), and terminal ID. The v1 collapse logic at `tower-terminals.ts:928-940` is replaced with per-architect emission.
+- [ ] `afx status` enumerates ALL registered architects when Tower is running, showing **at minimum: architect name and terminal ID**. PID and port are shown when available from Tower's in-memory `PtySession` (the architect-row's stored `pid`/`port` are 0 — `setArchitect()` / `setArchitectByName()` persist literal `0` per `state.ts:79, :103` — so PID/port enumeration requires Tower's live data, not state.db). In Tower-down (fallback) mode, `afx status` enumerates by name and `cmd` only; PID/port are omitted with a note ("Tower not running"). The v1 collapse logic at `tower-terminals.ts:928-940` is replaced with per-architect emission.
 - [ ] VSCode extension Workspace sidebar exposes an expandable "Architects" tree section containing one entry per architect (per OQ-D). The section is present at N=1 (showing just `main`) and expands to show siblings when added.
+- [ ] **VSCode click behaviour and terminal-slot model**: Clicking a child entry (e.g. `main` or a sibling name) opens that architect's terminal in the VSCode editor area. Each architect gets its own VSCode terminal slot keyed by architect name — `terminal-manager.ts` must replace its singleton `'architect'` key (used at `:96, :116, :333` today) with per-name keys (e.g. `architect:<name>`). Opening the same architect twice reuses the existing terminal; opening a different architect creates (or focuses) its own terminal. The existing `codev.openArchitectTerminal` command is extended (or replaced with a parameterised variant) to accept the architect name as an argument; the tree-item `command.arguments` carries the name.
 - [ ] `validateArchitectName` rejects the reserved name `main` in addition to its existing checks. (Today `main` is accepted by the regex and rejected only by collision.)
 - [ ] `architect:<name>` address grammar resolves correctly when used from another architect — confirmed by integration test that exercises `main` → `architect:ob-refine` and the reverse, both delivering to the correct PTY.
 
@@ -241,7 +243,10 @@ When a sibling is removed, the dashboard's active-tab state must not be left poi
   - `packages/codev/src/agent-farm/commands/workspace-add-architect.ts` (no expected changes — already calls validation)
   - `packages/codev/src/agent-farm/commands/workspace-remove-architect.ts` (new)
   - `packages/codev/src/agent-farm/commands/status.ts` (enumeration)
-  - `packages/codev/src/agent-farm/client/workspace-client.ts` (new `removeArchitect` RPC)
+  - `packages/core/src/tower-client.ts` (new `removeArchitect` RPC; re-exported via `packages/codev/src/agent-farm/lib/tower-client.ts`)
+  - `packages/codev/src/agent-farm/servers/tower-routes.ts:~2061` (`handleWorkspaceStopAll` is the second caller of `deleteWorkspaceTerminalSessions`; plan must decide whether it preserves sibling rows or remains a full wipe — per Claude's plan-time note)
+  - `packages/vscode/src/terminal-manager.ts` (replace singleton `'architect'` key with per-name keys)
+  - `packages/vscode/src/extension.ts` (register parameterised `codev.openArchitectTerminal` command accepting architect name)
   - `packages/dashboard/src/components/ArchitectTabStrip.tsx` (close affordance render)
   - `packages/dashboard/src/components/TabBar.tsx` (no expected changes — `closable` flag plumbing already works)
   - `packages/dashboard/src/hooks/useTabs.ts` (`closable` flag wiring for sibling architects only — `main`'s tab stays `closable: false`)
@@ -285,19 +290,21 @@ When a sibling is removed, the dashboard's active-tab state must not be left poi
 - **Test Scenarios**: Added shellper-auto-restart identity test (per Codex), auto-numbering-after-remove test, Tower stop+start vs crash recovery distinction.
 - **Dependencies**: `validateArchitectName` correctly attributed to `utils/architect-name.ts` (not `workspace-add-architect.ts` per Claude).
 
-Note: All iter-1 CMAP feedback incorporated in iter-2. Architect resolutions for the four blocking OQs incorporated in iter-3. Awaiting iter-2 CMAP.
+**Iter-2 CMAP verdicts**:
+- **Gemini**: APPROVE. 3 plan-time notes (no spec changes required): stopInstance / exit-handler cascade, launchInstance boot for `main` when siblings already exist, VSCode `getChildren` rework.
+- **Claude**: APPROVE. 2 plan-time notes: reconciliation exit-handler at `tower-terminals.ts:665-677` needs `setArchitectByName(name, null)` cleanup for OQ-B (asymmetry vs addArchitect's exit handler); active-tab fallback to `main` requires explicit code (existing `useTabs:194` fallback goes to `'work'`, not `main`).
+- **Codex**: REQUEST_CHANGES with 4 findings — all addressed in iter-4:
+  1. Graceful stop vs permanent-exit row-deletion distinction — added explicit MUST distinguishing intentional stop from permanent exit at the exit-handler level (also enumerates the five exit handlers that need inspection).
+  2. VSCode terminal-slot semantics — added explicit MUST pinning click behaviour, per-name keying in `terminal-manager.ts`, and the parameterised `codev.openArchitectTerminal` command.
+  3. `afx status` contract — scoped to Tower-running mode for PID/port (verified that `setArchitect()` / `setArchitectByName()` write `pid:0, port:0` at `state.ts:79, :103`); fallback mode enumerates name + cmd only.
+  4. Wrong client path reference — corrected to `packages/core/src/tower-client.ts` (re-exported via `lib/tower-client.ts`). Added `tower-routes.ts` second-caller note per Claude.
 
-**Iter-3 (architect decisions, 2026-05-20)**:
-- OQ-A resolved: remove anyway, fallback to main.
-- OQ-B resolved: auto-delete persisted row on permanent exit (override of builder recommendation — architect rationale recorded in Architect Decisions section: state.db should mirror reality, no ghost rows).
-- OQ-D resolved: expandable "Architects" sidebar section in VSCode.
-- OQ-G resolved: prompt with informational sub-decision; remove not blocked (per OQ-A).
-- Added plan-time direction on dashboard active-tab handling when sibling removed.
+Architect resolutions for the four blocking OQs were applied in iter-3 and remain valid after iter-2 CMAP. Iter-3 work integrated into iter-4 with iter-2 CMAP corrections.
 
 ## Approval
 - [ ] Architect Review (spec-approval gate)
 - [x] Expert AI Consultation iter-1 complete
-- [ ] Expert AI Consultation iter-2 complete (post architect decisions)
+- [x] Expert AI Consultation iter-2 complete (Gemini & Claude APPROVE; Codex REQUEST_CHANGES addressed)
 
 ## Notes
 
