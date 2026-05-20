@@ -252,7 +252,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// List views use createTreeView so their title can carry a live item
 	// count; the rest stay on registerTreeDataProvider.
-	buildersView = vscode.window.createTreeView('codev.builders', { treeDataProvider: new BuildersProvider(overviewCache, builderDiffCache) });
+	const buildersProvider = new BuildersProvider(overviewCache, builderDiffCache);
+	buildersView = vscode.window.createTreeView('codev.builders', { treeDataProvider: buildersProvider });
 	pullRequestsView = vscode.window.createTreeView('codev.pullRequests', { treeDataProvider: new PullRequestsProvider(overviewCache) });
 	backlogView = vscode.window.createTreeView('codev.backlog', { treeDataProvider: new BacklogProvider(overviewCache) });
 	recentlyClosedView = vscode.window.createTreeView('codev.recentlyClosed', { treeDataProvider: new RecentlyClosedProvider(overviewCache) });
@@ -305,6 +306,23 @@ export async function activate(context: vscode.ExtensionContext) {
 			if (!e.affectsConfiguration('codev.buildersAutoCollapse')) { return; }
 			accordionOn = readAccordion();
 			vscode.commands.executeCommand('setContext', 'codev.buildersAutoCollapse', accordionOn);
+		}),
+	);
+
+	// Builders file-view-as-tree: each builder's changed-files list renders
+	// as a folder tree (with single-child folder chains compacted, like
+	// VSCode SCM) when on, or as a flat list when off. Toggle via the
+	// header button / `codev.buildersFileViewAsTree`. Same mechanics as
+	// accordion above — read setting, mirror to context key, refresh
+	// provider on change so the tree redraws in the new mode.
+	const readFileViewAsTree = () =>
+		vscode.workspace.getConfiguration('codev').get<boolean>('buildersFileViewAsTree', true);
+	vscode.commands.executeCommand('setContext', 'codev.buildersFileViewAsTree', readFileViewAsTree());
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeConfiguration((e) => {
+			if (!e.affectsConfiguration('codev.buildersFileViewAsTree')) { return; }
+			vscode.commands.executeCommand('setContext', 'codev.buildersFileViewAsTree', readFileViewAsTree());
+			buildersProvider.refresh();
 		}),
 	);
 
@@ -518,6 +536,10 @@ export async function activate(context: vscode.ExtensionContext) {
 			vscode.workspace.getConfiguration('codev').update('buildersAutoCollapse', true, vscode.ConfigurationTarget.Global)),
 		vscode.commands.registerCommand('codev.disableBuildersAutoCollapse', () =>
 			vscode.workspace.getConfiguration('codev').update('buildersAutoCollapse', false, vscode.ConfigurationTarget.Global)),
+		vscode.commands.registerCommand('codev.enableBuildersFileTreeMode', () =>
+			vscode.workspace.getConfiguration('codev').update('buildersFileViewAsTree', true, vscode.ConfigurationTarget.Global)),
+		vscode.commands.registerCommand('codev.disableBuildersFileTreeMode', () =>
+			vscode.workspace.getConfiguration('codev').update('buildersFileViewAsTree', false, vscode.ConfigurationTarget.Global)),
 		vscode.commands.registerCommand('codev.reconnect', () => connectionManager?.reconnect()),
 		vscode.commands.registerCommand('codev.connectTunnel', () => connectTunnel(connectionManager!)),
 		vscode.commands.registerCommand('codev.disconnectTunnel', () => disconnectTunnel(connectionManager!)),
