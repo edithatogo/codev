@@ -2,7 +2,7 @@
 
 ## Metadata
 - **ID**: spec-2026-05-20-786-multi-architect-feature
-- **Status**: draft (iter-2, post-CMAP)
+- **Status**: draft (iter-3 — architect decisions applied, ready for iter-2 CMAP)
 - **Created**: 2026-05-20
 - **GitHub Issue**: [#786](https://github.com/cluesmith/codev/issues/786)
 - **Predecessors**: #755 (v3.0.5 primitive), #761 (v3.0.6 dashboard tabs), #774 (v3.0.8 routing fix)
@@ -88,18 +88,19 @@ A user can add, manage, evict, and recover sibling architects with the same flue
 ## Success Criteria
 
 ### Functional (MUST)
-- [ ] `afx workspace remove-architect <name>` exists. Removes the named sibling from Tower's in-memory map, deletes the persisted row from `state.db.architect` AND from `terminal_sessions`, terminates the architect's terminal cleanly (no zombie shellper). Refuses to remove `main`. Refuses to remove a name that doesn't exist.
+- [ ] `afx workspace remove-architect <name>` exists. Removes the named sibling from Tower's in-memory map, deletes the persisted row from `state.db.architect` AND from `terminal_sessions`, terminates the architect's terminal cleanly (no zombie shellper). Refuses to remove `main`. Refuses to remove a name that doesn't exist. **Does NOT refuse to remove an architect that has in-flight builders** — per OQ-A, those builders' subsequent `afx send architect` calls fall back to `main` via the existing routing chain.
 - [ ] Sibling architect rows survive `afx workspace stop` + `afx workspace start`. Specifically: `stopInstance` no longer indiscriminately deletes ALL rows; siblings' rows persist across the stop/start boundary, and `launchInstance` re-spawns them with their recorded `cmd` and re-injected `CODEV_ARCHITECT_NAME`. `main`'s existing behaviour is unchanged.
 - [ ] **Identity preservation across shellper auto-restart.** `tower-terminals.ts` reconciliation builds `restartOptions.env` with `CODEV_ARCHITECT_NAME: <name>` for every architect (where `<name>` comes from `dbSession.role_id`). When a sibling's claude process dies and shellper restarts it, the new process spawns with the correct architect name in env.
 - [ ] Sibling-architect tabs in the dashboard's `ArchitectTabStrip` carry a close affordance that triggers `remove-architect`. `main`'s tab has no close button.
 - [ ] `afx status` enumerates ALL registered architects, showing name, PID, port (if any), and terminal ID. The v1 collapse logic at `tower-terminals.ts:928-940` is replaced with per-architect emission.
-- [ ] VSCode extension Workspace sidebar exposes one entry per architect (or an "Architects" expandable group containing all of them — final shape per OQ-5).
+- [ ] VSCode extension Workspace sidebar exposes an expandable "Architects" tree section containing one entry per architect (per OQ-D). The section is present at N=1 (showing just `main`) and expands to show siblings when added.
 - [ ] `validateArchitectName` rejects the reserved name `main` in addition to its existing checks. (Today `main` is accepted by the regex and rejected only by collision.)
 - [ ] `architect:<name>` address grammar resolves correctly when used from another architect — confirmed by integration test that exercises `main` → `architect:ob-refine` and the reverse, both delivering to the correct PTY.
 
 ### Functional (SHOULD)
-- [ ] When a sibling architect's terminal crashes permanently (max restarts exceeded), the existing exit-handler clear at `tower-instances.ts:454-458` runs; subsequent `afx send architect` from its builder falls back to `main` per `tower-messages.ts:336`. No spec change needed beyond a regression test.
+- [ ] When a sibling architect's terminal crashes permanently (max restarts exceeded), the existing exit-handler clear at `tower-instances.ts:454-458` runs AND **the persisted row is auto-deleted from `state.db.architect` and `terminal_sessions`** (per OQ-B). Subsequent `afx send architect` from its builder falls back to `main` per `tower-messages.ts:336`. Regression test asserts both the row deletion and the fallback behaviour.
 - [ ] Dashboard tab labelling is consistent: `main`'s tab shows "main" (per `useTabs.ts:47` default and Spec 761's first-architect-id-is-bare design) even when siblings exist.
+- [ ] **Dashboard active-tab state survives sibling removal cleanly.** If the active tab was the removed sibling, the active tab switches to `main`. If `main` was already active, it stays active. `useTabs` does not leave `activeTabId` pointing at a removed name.
 
 ### Functional (COULD)
 - [ ] `remove-architect` interaction with auto-numbering: removing `architect-3` leaves the slot "gap-filled" by the next add per `autoNumberArchitectName`'s existing semantics. No renumbering of existing architects.
@@ -174,20 +175,23 @@ A user can add, manage, evict, and recover sibling architects with the same flue
 
 **Recommendation**: **Approach 1.** The issue scopes #786 as an umbrella SPIR exactly because the gaps interrelate. Splitting them re-creates the very problem the issue exists to fix.
 
-## Open Questions
+## Architect Decisions (resolved 2026-05-20)
 
-### Critical (Blocks Progress)
-- [ ] **OQ-A: Removing a sibling with in-flight builders.** When `remove-architect ob-refine` runs and `ob-refine` spawned builders that are still active, what happens to those builders? Options: (a) refuse to remove until builders are cleaned up; (b) remove the architect and let the existing `tower-messages.ts:336` fallback route their messages to `main`; (c) prompt the user. *Recommended: (b)* — it's mechanically simple, already partially implemented, and matches the existing crash-recovery semantics. *Architect call at spec-approval gate.*
+The architect resolved the four blocking open questions from iter-2 review. These are now decisions, not open questions, and bind the plan/implementation phases.
 
-### Important (Affects Design)
-- [ ] **OQ-B: Permanent-exit semantics.** Today when an architect's claude process exits permanently (max restarts exceeded), the exit handler clears the in-memory map entry. Should this also delete the persisted row, or leave it for the user to explicitly remove? *Recommended: leave the row* — the user added it intentionally; making it appear/disappear silently is confusing. *Architect call at spec-approval gate.*
-- [ ] **OQ-C: Crash detection mechanism.** Passive (lazy — discover on next route attempt) vs active (Tower polls/heartbeats architect terminals). Passive matches the existing fallback and is cheaper. *Recommended: passive.*
-- [ ] **OQ-D: VSCode extension shape.** One entry per architect, or an "Architects" expandable section, or a single entry that opens a chooser? *Recommended: expandable section* — matches VSCode tree conventions and is discoverable with N=1 (collapsed by default). *Architect call at spec-approval gate.*
-- [ ] **OQ-E: Reserved-name check for `main` — add to `validateArchitectName` or to a higher-level layer.** Two options: extend the pure utility, or add a second check at the add-architect call site. *Recommended: extend the utility* — it's the canonical validation point and tests already live next to it.
+### Resolved (Critical)
+- **OQ-A → REMOVE ANYWAY, fallback to main.** When `remove-architect <name>` runs against an architect with in-flight builders, remove the architect anyway. The builders' subsequent `afx send architect` calls fall back to `main` via the existing `tower-messages.ts:336` chain. *Rationale*: minimal new state, matches crash-recovery semantics.
+- **OQ-B → AUTO-DELETE the persisted row on permanent exit.** When an architect's claude process exits permanently (max restarts exceeded), the exit handler clears the in-memory map entry AND deletes the corresponding rows from `state.db.architect` and `terminal_sessions`. *Rationale (architect override of builder recommendation)*: keep `state.db` an accurate mirror of reality. A ghost row creates a discoverability problem — the user sees an architect that doesn't actually exist anymore. Bringing back a removed architect is a fresh `add-architect` call with the same name — explicit, not implicit.
+- **OQ-D → EXPANDABLE 'Architects' SECTION in VSCode sidebar.** The VSCode Workspace view collapses all architects under one "Architects" tree node. Expanded with N=1 still shows main inline-discoverable; with N>1 the user can pick. *Rationale*: matches VSCode tree conventions, scales to many siblings, doesn't clutter the sidebar at N=1.
+- **OQ-G → PROMPT before closing a sibling tab, with informational sub-decision.** Clicking the X on a sibling architect tab shows a confirmation: "Remove architect `<name>`?" The dialog includes informational text about any in-flight builders this sibling spawned, but does NOT block removal (because OQ-A says "remove anyway"). *Rationale*: prevents accidental removals; surfaces the in-flight builders fact transparently without making it a barrier.
 
-### Nice-to-Know (Optimization)
-- [ ] **OQ-F: Should `afx status` show sibling architects unconditionally or only when N>1?** *Recommended: always show* for predictability.
-- [ ] **OQ-G: Dashboard close-button confirmation prompt?** When the user clicks X on a sibling tab, prompt "Remove architect X?" or just execute? *Recommended: prompt, with an "include in-flight builders?" sub-decision tied to OQ-A.*
+### Resolved (Non-blocking, recorded for plan)
+- **OQ-C → Passive crash detection.** Lazy — discover on next route attempt via the existing `tower-messages.ts:336` fallback. No Tower-side heartbeat or polling.
+- **OQ-E → Extend the pure `validateArchitectName` utility** with the reserved-name check for `main`. Tests live next to the utility.
+- **OQ-F → `afx status` always enumerates architects** (`main` + siblings) unconditionally, for predictability.
+
+### Plan-time note (architect direction, not a spec change)
+When a sibling is removed, the dashboard's active-tab state must not be left pointing at the removed name. **Behaviour**: if the removed sibling was the active tab, switch active tab to `main`; if `main` was active, stay on `main`. The active-tab logic in `useTabs` must handle this without leaving `active = <removed-name>` stale. The plan should pin this in the implementation, not just leave it implicit.
 
 ## Performance Requirements
 
@@ -211,12 +215,12 @@ A user can add, manage, evict, and recover sibling architects with the same flue
 3. **Tower stop + start**: Add sibling. `afx tower stop` then start Tower. Same expectations as scenario 2.
 4. **Crash recovery (regression)**: Add sibling. Kill Tower process directly (SIGKILL). Shellpers survive. Restart Tower. Verify sibling restored as today.
 5. **Shellper auto-restart identity**: Add sibling. Kill its claude process directly. Shellper auto-restarts it. Verify the new claude process has `CODEV_ARCHITECT_NAME=<sibling-name>` in env (assertable via a builder spawned from it — that builder's `spawningArchitect` is the sibling, not main).
-6. **Permanent exit fallback**: Force max-restart exhaustion on a sibling. Verify in-memory entry is cleared, persisted row behaviour per OQ-B's resolution, and `afx send architect` from builders spawned by it falls back to `main`.
+6. **Permanent exit fallback**: Force max-restart exhaustion on a sibling. Verify in-memory entry is cleared, the persisted rows in `state.db.architect` and `terminal_sessions` are auto-deleted (per OQ-B), `afx status` no longer lists the gone sibling, and `afx send architect` from builders spawned by it falls back to `main`.
 7. **Naming validation**: Confirm `validateArchitectName` rejects: `main` (new reserved-name check), empty, whitespace-only, names with `:`, spaces, uppercase, underscores. Accept: `ob-refine`, `team-a`, `architect-2`.
 8. **Architect-to-architect**: From `main`'s terminal, send to `architect:ob-refine` — lands on ob-refine. Reverse direction also works.
 9. **Surface enumeration**: `afx status` lists `main` and any siblings with PID/port/terminal_id. VSCode sidebar shows all architects per OQ-D's resolution.
-10. **Dashboard close affordance**: Click X on sibling tab → architect is removed (same flow as CLI remove). Close button absent on `main` tab. Prompt behaviour per OQ-G.
-11. **Remove-with-in-flight-builders**: Behaviour per OQ-A resolution.
+10. **Dashboard close affordance**: Click X on sibling tab → confirmation prompt appears ("Remove architect `<name>`?") with informational text about in-flight builders (per OQ-G). Confirm → architect removed via the same flow as CLI remove. Close button absent on `main` tab. After removal: if the removed sibling was the active tab, active tab is `main`; if `main` was active, stays active (per architect's plan-time note).
+11. **Remove-with-in-flight-builders**: Add sibling, spawn a builder from it, remove the sibling while the builder is active. Removal succeeds (does not block per OQ-A). Builder's subsequent `afx send architect` lands on `main` per `tower-messages.ts:336` fallback.
 12. **Auto-numbering after remove**: Add `architect-2`, `architect-3`. Remove `architect-2`. Add a new architect — its name is `architect-2` (gap-filled by existing `autoNumberArchitectName`).
 
 ### Non-Functional Tests
@@ -281,22 +285,23 @@ A user can add, manage, evict, and recover sibling architects with the same flue
 - **Test Scenarios**: Added shellper-auto-restart identity test (per Codex), auto-numbering-after-remove test, Tower stop+start vs crash recovery distinction.
 - **Dependencies**: `validateArchitectName` correctly attributed to `utils/architect-name.ts` (not `workspace-add-architect.ts` per Claude).
 
-Note: All iter-1 consultation feedback has been incorporated. Awaiting iter-2 CMAP.
+Note: All iter-1 CMAP feedback incorporated in iter-2. Architect resolutions for the four blocking OQs incorporated in iter-3. Awaiting iter-2 CMAP.
+
+**Iter-3 (architect decisions, 2026-05-20)**:
+- OQ-A resolved: remove anyway, fallback to main.
+- OQ-B resolved: auto-delete persisted row on permanent exit (override of builder recommendation — architect rationale recorded in Architect Decisions section: state.db should mirror reality, no ghost rows).
+- OQ-D resolved: expandable "Architects" sidebar section in VSCode.
+- OQ-G resolved: prompt with informational sub-decision; remove not blocked (per OQ-A).
+- Added plan-time direction on dashboard active-tab handling when sibling removed.
 
 ## Approval
 - [ ] Architect Review (spec-approval gate)
 - [x] Expert AI Consultation iter-1 complete
-- [ ] Expert AI Consultation iter-2 complete
+- [ ] Expert AI Consultation iter-2 complete (post architect decisions)
 
 ## Notes
 
-This spec deliberately leaves four things to the architect at the spec-approval gate:
-- **OQ-A** (remove-with-in-flight-builders) — affects test scenarios and dashboard UX
-- **OQ-B** (permanent-exit row deletion) — affects user-visible state lifecycle
-- **OQ-D** (VSCode shape) — affects the extension surface
-- **OQ-G** (close-button confirmation) — UX
-
-Each has a recommendation; the architect can accept the recommendations or redirect. The other open questions (OQ-C, OQ-E, OQ-F) are non-blocking and can be resolved during planning.
+All previously-blocking open questions are resolved as Architect Decisions above. Remaining non-blocking items (OQ-C/E/F) are recorded as resolved-for-planning. Iter-2 CMAP will review the spec with these decisions baked in.
 
 The verify phase MUST include manual exercise of the headline value prop on a real workspace, per [[feedback_e2e_headline_path]]. Automated tests are necessary but not sufficient — the v3.0.5 → v3.0.7 routing break passed unit tests for three minor versions.
 
