@@ -24,7 +24,7 @@ import { activateReviewDecorations } from './review-decorations.js';
 import { activateReviewComments } from './comments/plan-review.js';
 import { BuilderSpawnHandler } from './builder-spawn-handler.js';
 import { BuilderTerminalLinkProvider } from './terminal-link-provider.js';
-import { BuildersProvider } from './views/builders.js';
+import { BuildersProvider, isIdleWaiting } from './views/builders.js';
 import { PullRequestsProvider } from './views/pull-requests.js';
 import { BacklogProvider, spawnableBacklog } from './views/backlog.js';
 import { RecentlyClosedProvider } from './views/recently-closed.js';
@@ -127,16 +127,23 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.onDidChangeActiveTerminal(syncTerminalFocusContext));
 	syncTerminalFocusContext(); // seed initial state
 
-	// Update status bar with builder/gate counts
+	// Update status bar with builder + needs-attention counts.
+	// Two "needs me" signals: blocked (formal gate) and idle-waiting
+	// (PTY silent past threshold, likely paused at a non-gate question
+	// — see isIdleWaiting in views/builders.ts). Each is shown only
+	// when > 0, with its own icon.
 	const updateStatusBarCounts = () => {
 		if (!statusBarItem || connectionManager?.getState() !== 'connected') { return; }
 		const data = overviewCache.getData();
 		if (!data) { return; }
 		const builderCount = data.builders.length;
+		const now = Date.now();
 		const blockedCount = data.builders.filter(b => b.blocked).length;
-		statusBarItem.text = blockedCount > 0
-			? `$(server) Codev: ${builderCount} builders · $(bell) ${blockedCount} blocked`
-			: `$(server) Codev: ${builderCount} builders`;
+		const idleCount = data.builders.filter(b => isIdleWaiting(b, now)).length;
+		let text = `$(server) Codev: ${builderCount} builders`;
+		if (blockedCount > 0) { text += ` · $(bell) ${blockedCount} blocked`; }
+		if (idleCount > 0) { text += ` · $(comment-discussion) ${idleCount} waiting`; }
+		statusBarItem.text = text;
 	};
 
 	// List views show their item count in the title: "Builders (3)".
@@ -157,25 +164,34 @@ export async function activate(context: vscode.ExtensionContext) {
 		if (recentlyClosedView) { recentlyClosedView.title = withCount('Recently Closed', data?.recentlyClosed.length); }
 	};
 
-	// Activity-bar badge — paint the blocked-builder count on the Codev icon.
-	// Mirrors the status-bar bell pattern (only surfaced when > 0). VSCode has
-	// no container-level badge API; per-view `TreeView.badge` bubbles up to the
-	// activity-bar icon when the sidebar is hidden, so badging `buildersView`
-	// is how we paint the icon.
+	// Activity-bar badge — paint the "needs me" count on the Codev icon.
+	// Combines both signals: blocked (formal gate) + idle-waiting (PTY
+	// silent past threshold). VSCode has no container-level badge API;
+	// per-view `TreeView.badge` bubbles up to the activity-bar icon
+	// when the sidebar is hidden, so badging `buildersView` is how
+	// we paint the icon. Badge only set when there's at least one
+	// item needing the user.
 	const updateActivityBadge = () => {
 		if (!buildersView) { return; }
 		const data = overviewCache.getData();
-		const blockedCount = (connectionManager?.getState() === 'connected' && data)
-			? data.builders.filter(b => b.blocked).length
-			: 0;
-		buildersView.badge = blockedCount > 0
-			? {
-				value: blockedCount,
-				tooltip: blockedCount === 1
-					? '1 builder blocked at a human-approval gate'
-					: `${blockedCount} builders blocked at human-approval gates`,
-			}
-			: undefined;
+		if (connectionManager?.getState() !== 'connected' || !data) {
+			buildersView.badge = undefined;
+			return;
+		}
+		const now = Date.now();
+		const blockedCount = data.builders.filter(b => b.blocked).length;
+		const idleCount = data.builders.filter(b => isIdleWaiting(b, now)).length;
+		const total = blockedCount + idleCount;
+		if (total === 0) {
+			buildersView.badge = undefined;
+			return;
+		}
+		const tooltip = (blockedCount > 0 && idleCount > 0)
+			? `${blockedCount} blocked, ${idleCount} waiting on input`
+			: blockedCount > 0
+				? (blockedCount === 1 ? '1 builder blocked at a human-approval gate' : `${blockedCount} builders blocked at human-approval gates`)
+				: (idleCount === 1 ? '1 builder waiting on input' : `${idleCount} builders waiting on input`);
+		buildersView.badge = { value: total, tooltip };
 	};
 
 	// Close builder/dev terminal tabs when their builder disappears from Tower

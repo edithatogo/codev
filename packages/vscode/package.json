@@ -252,7 +252,7 @@
         },
         {
           "command": "codev.openBuilderById",
-          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-/",
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder|awaiting-builder)-/",
           "group": "1_primary@1"
         },
         {
@@ -262,37 +262,37 @@
         },
         {
           "command": "codev.viewPlanFile",
-          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-pir$/",
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder|awaiting-builder)-pir$/",
           "group": "1_primary@3"
         },
         {
           "command": "codev.viewDiff",
-          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-/",
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder|awaiting-builder)-/",
           "group": "2_worktree@0"
         },
         {
           "command": "codev.openWorktreeWindow",
-          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-/",
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder|awaiting-builder)-/",
           "group": "2_worktree@1"
         },
         {
           "command": "codev.openWorktreeFolder",
-          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-/",
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder|awaiting-builder)-/",
           "group": "2_worktree@2"
         },
         {
           "command": "codev.runWorktreeSetup",
-          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-/",
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder|awaiting-builder)-/",
           "group": "3_dev@1"
         },
         {
           "command": "codev.runWorktreeDev",
-          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-/",
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder|awaiting-builder)-/",
           "group": "3_dev@2"
         },
         {
           "command": "codev.stopWorktreeDev",
-          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder)-/",
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder|awaiting-builder)-/",
           "group": "3_dev@3"
         },
         {
