@@ -273,6 +273,12 @@ export function getBuilderHarness(workspaceRoot?: string): HarnessProvider {
  * Resolved view of the `worktree` config block with defaults applied.
  * Unset fields collapse to empty / null so callers don't have to branch.
  */
+/** One row in the VSCode "Open Dev URL" workspace surface. */
+export interface WorktreeDevUrl {
+  label: string;
+  url: string;
+}
+
 export interface ResolvedWorktreeConfig {
   /** Glob patterns to symlink from workspace root into each worktree. `[]` when unset. */
   symlinks: string[];
@@ -280,6 +286,14 @@ export interface ResolvedWorktreeConfig {
   postSpawn: string[];
   /** Command for `afx dev <builder-id>`. `null` when unset. */
   devCommand: string | null;
+  /**
+   * Canonical resolved list of dev URLs for the VSCode "Open Dev URL"
+   * workspace-view row. Always an array — `[]` when neither `devUrl`
+   * nor `devUrls` is set in the user config. A legacy single
+   * `devUrl: "<url>"` is normalized to `[{ label: "Open Dev URL", url }]`
+   * so consumers don't have to branch.
+   */
+  devUrls: WorktreeDevUrl[];
 }
 
 /**
@@ -296,7 +310,24 @@ export function getWorktreeConfig(workspaceRoot?: string): ResolvedWorktreeConfi
     symlinks: w?.symlinks ?? [],
     postSpawn: w?.postSpawn ?? [],
     devCommand: w?.devCommand ?? null,
+    devUrls: resolveDevUrls(w),
   };
+}
+
+/**
+ * Resolution: `devUrls` (array) wins over `devUrl` (legacy single).
+ * Filters out malformed entries (non-string label/url, empty after trim).
+ */
+function resolveDevUrls(w: { devUrl?: string; devUrls?: Array<{ label?: string; url?: string }> } | undefined): WorktreeDevUrl[] {
+  if (Array.isArray(w?.devUrls)) {
+    return w.devUrls
+      .map(e => ({ label: typeof e?.label === 'string' ? e.label.trim() : '', url: typeof e?.url === 'string' ? e.url.trim() : '' }))
+      .filter(e => e.label && e.url);
+  }
+  if (typeof w?.devUrl === 'string' && w.devUrl.trim()) {
+    return [{ label: 'Open Dev URL', url: w.devUrl.trim() }];
+  }
+  return [];
 }
 
 /**

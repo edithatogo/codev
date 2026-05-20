@@ -149,6 +149,10 @@
         "title": "Codev: Stop Dev Server (this workspace)"
       },
       {
+        "command": "codev.openDevUrl",
+        "title": "Codev: Open Dev URL"
+      },
+      {
         "command": "codev.pasteImage",
         "title": "Codev: Paste Image into Terminal",
         "icon": "$(file-media)"

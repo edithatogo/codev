@@ -212,6 +212,25 @@ export interface UserConfig {
      * Example: 'pnpm dev'.
      */
     devCommand?: string;
+    /**
+     * URL the dev server listens on, used by the VSCode extension's
+     * "Open Dev URL" workspace-view row to open the running app in the
+     * user's default browser. Legacy single-URL form — for multi-service
+     * setups prefer `devUrls`. Optional; the row is hidden when both
+     * fields are unset. Example: 'http://localhost:3000'.
+     */
+    devUrl?: string;
+    /**
+     * Multiple labeled dev URLs — surfaced as one workspace-view row
+     * per entry (label = row text, url = what gets opened). Takes
+     * precedence over `devUrl` if both are set. The palette command
+     * `Codev: Open Dev URL` shows a QuickPick of these when invoked
+     * without a specific target.
+     * Example:
+     *   [{ "label": "App",   "url": "http://localhost:3000" },
+     *    { "label": "API",   "url": "http://localhost:3001" }]
+     */
+    devUrls?: Array<{ label: string; url: string }>;
   };
 }
 

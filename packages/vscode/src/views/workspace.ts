@@ -4,6 +4,7 @@ import type { ConnectionManager } from '../connection-manager.js';
 import type { TerminalManager } from '../terminal-manager.js';
 import { getTowerAddress } from '../workspace-detector.js';
 import { resolveWorkspaceDevTarget } from '../commands/dev-shared.js';
+import { readWorktreeDevUrls } from '../commands/open-dev-url.js';
 
 /**
  * Workspace-level entry points: architect terminal, Tower web dashboard,
@@ -132,6 +133,25 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<vscode.TreeIte
         title: 'Start Dev Server',
       };
       items.push(startDev);
+    }
+
+    // Open Dev URL rows: one per entry in `worktree.devUrls` (or one
+    // for the legacy `worktree.devUrl`). Visible independent of dev-PTY
+    // state. Opens in the user's default browser (real DevTools, real
+    // cookies, real OAuth) — not the embedded Simple Browser webview.
+    // Closed the tab? Click the row again for a fresh one.
+    const devUrls = readWorktreeDevUrls(workspacePath);
+    for (const { label, url } of devUrls) {
+      const row = new vscode.TreeItem(label);
+      row.iconPath = new vscode.ThemeIcon('globe');
+      row.tooltip = `Open ${url} in your default browser`;
+      row.contextValue = 'workspace-dev-url';
+      row.command = {
+        command: 'codev.openDevUrl',
+        title: label,
+        arguments: [url],
+      };
+      items.push(row);
     }
 
     return items;

@@ -11,6 +11,7 @@ import { viewDiff, activateDiffView, diffUrisForChange } from './commands/view-d
 import { runWorktreeDev } from './commands/run-worktree-dev.js';
 import { stopWorktreeDev } from './commands/stop-worktree-dev.js';
 import { runWorkspaceDev, stopWorkspaceDev } from './commands/run-workspace-dev.js';
+import { openDevUrl } from './commands/open-dev-url.js';
 import { pasteImage } from './commands/paste-image.js';
 import { openWorktreeFolder } from './commands/open-worktree-folder.js';
 import { runWorktreeSetup } from './commands/run-worktree-setup.js';
@@ -501,6 +502,8 @@ export async function activate(context: vscode.ExtensionContext) {
 			runWorkspaceDev(connectionManager!, terminalManager!)),
 		vscode.commands.registerCommand('codev.stopWorkspaceDev', () =>
 			stopWorkspaceDev(connectionManager!, terminalManager!)),
+		vscode.commands.registerCommand('codev.openDevUrl', (urlArg?: unknown) =>
+			openDevUrl(connectionManager!, typeof urlArg === 'string' ? urlArg : undefined)),
 		vscode.commands.registerCommand('codev.pasteImage', () =>
 			pasteImage(connectionManager!, terminalManager!)),
 		vscode.commands.registerCommand('codev.refreshTeam', () => teamProvider.refresh()),
