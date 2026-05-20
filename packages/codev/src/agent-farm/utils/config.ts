@@ -315,19 +315,17 @@ export function getWorktreeConfig(workspaceRoot?: string): ResolvedWorktreeConfi
 }
 
 /**
- * Resolution: `devUrls` (array) wins over `devUrl` (legacy single).
- * Filters out malformed entries (non-string label/url, empty after trim).
+ * Filter malformed entries (missing/empty `label` or `url`). Both
+ * fields are mandatory by schema — no default-label fallback.
  */
-function resolveDevUrls(w: { devUrl?: string; devUrls?: Array<{ label?: string; url?: string }> } | undefined): WorktreeDevUrl[] {
-  if (Array.isArray(w?.devUrls)) {
-    return w.devUrls
-      .map(e => ({ label: typeof e?.label === 'string' ? e.label.trim() : '', url: typeof e?.url === 'string' ? e.url.trim() : '' }))
-      .filter(e => e.label && e.url);
-  }
-  if (typeof w?.devUrl === 'string' && w.devUrl.trim()) {
-    return [{ label: 'Open Dev URL', url: w.devUrl.trim() }];
-  }
-  return [];
+function resolveDevUrls(w: { devUrls?: Array<{ label?: string; url?: string }> } | undefined): WorktreeDevUrl[] {
+  if (!Array.isArray(w?.devUrls)) { return []; }
+  return w.devUrls
+    .map(e => ({
+      label: typeof e?.label === 'string' ? e.label.trim() : '',
+      url: typeof e?.url === 'string' ? e.url.trim() : '',
+    }))
+    .filter(e => e.label && e.url);
 }
 
 /**

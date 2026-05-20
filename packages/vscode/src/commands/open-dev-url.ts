@@ -1,8 +1,9 @@
 /**
- * Codev: Open Dev URL — open a URL configured under `worktree.devUrl`
- * (legacy single) or `worktree.devUrls` (multi, labeled) in the user's
- * default browser. Surfaced as one workspace-view row per configured
- * URL (label = row text) plus a palette command.
+ * Codev: Open Dev URL — open URLs configured under `worktree.devUrls`
+ * in the user's default browser. Surfaced as one workspace-view row
+ * per configured URL (label = row text), plus a palette command.
+ * Both `label` and `url` are mandatory per schema; entries missing
+ * either are silently filtered out.
  *
  * Why the default browser over VSCode's Simple Browser: DevTools /
  * Console / Network are dev-loop essentials Simple Browser doesn't
@@ -23,37 +24,25 @@ export interface WorktreeDevUrl {
 
 /**
  * Read the canonical resolved dev-URL list from the workspace's
- * `.codev/config.json`. Mirrors the resolution rule in core's
- * `getWorktreeConfig`: `devUrls` (array) wins over `devUrl` (legacy
- * single); a single `devUrl` is normalized to `[{ label: "Open Dev URL", url }]`.
- * Returns `[]` for missing/malformed config so callers don't have to
- * branch.
+ * `.codev/config.json`. Filters entries missing either `label` or
+ * `url` (both are mandatory per schema). Returns `[]` for
+ * missing/malformed config so callers don't have to branch.
  */
 export function readWorktreeDevUrls(workspacePath: string | null): WorktreeDevUrl[] {
   if (!workspacePath) { return []; }
   try {
     const raw = fs.readFileSync(path.join(workspacePath, '.codev', 'config.json'), 'utf-8');
-    const parsed = JSON.parse(raw) as {
-      worktree?: {
-        devUrl?: unknown;
-        devUrls?: unknown;
-      };
-    };
-    const w = parsed.worktree;
-    if (Array.isArray(w?.devUrls)) {
-      return w.devUrls
-        .map((e): WorktreeDevUrl => {
-          const label = e && typeof (e as { label?: unknown }).label === 'string'
-            ? ((e as { label: string }).label).trim() : '';
-          const url = e && typeof (e as { url?: unknown }).url === 'string'
-            ? ((e as { url: string }).url).trim() : '';
-          return { label, url };
-        })
-        .filter(e => e.label && e.url);
-    }
-    if (typeof w?.devUrl === 'string' && w.devUrl.trim()) {
-      return [{ label: 'Open Dev URL', url: w.devUrl.trim() }];
-    }
+    const parsed = JSON.parse(raw) as { worktree?: { devUrls?: unknown } };
+    const devUrls = parsed.worktree?.devUrls;
+    if (!Array.isArray(devUrls)) { return []; }
+    return devUrls
+      .map((e): WorktreeDevUrl => ({
+        label: e && typeof (e as { label?: unknown }).label === 'string'
+          ? ((e as { label: string }).label).trim() : '',
+        url: e && typeof (e as { url?: unknown }).url === 'string'
+          ? ((e as { url: string }).url).trim() : '',
+      }))
+      .filter(e => e.label && e.url);
   } catch {
     // benign — fall through to []
   }
@@ -76,7 +65,7 @@ export async function openDevUrl(
 
   if (devUrls.length === 0) {
     vscode.window.showWarningMessage(
-      'Codev: `worktree.devUrl` / `worktree.devUrls` not configured in `.codev/config.json`',
+      'Codev: `worktree.devUrls` not configured in `.codev/config.json`',
     );
     return;
   }
