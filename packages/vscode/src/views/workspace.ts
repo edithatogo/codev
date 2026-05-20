@@ -82,14 +82,19 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<vscode.TreeIte
     const workspacePath = this.connectionManager.getWorkspacePath();
     const devTarget = workspacePath ? resolveWorkspaceDevTarget(workspacePath) : null;
 
-    // Mutually exclusive: show Start when this workspace's dev is stopped,
-    // Stop when it's running. The visible control is itself the state
-    // indicator (play/stop model) — never both, no row-count jitter.
-    const targetDevRunning = !!devTarget && this.terminalManager
-      .listDevTerminals()
-      .some(d => d.builderId === devTarget.id);
+    // Mutually exclusive: show Start when no dev is running anywhere, Stop
+    // when one is — regardless of which target started it. The single-slot
+    // model in dev-shared.ts means listDevTerminals() has at most one entry;
+    // reflect the slot's occupancy here so a dev started from a builder's
+    // right-click context menu is visible/stoppable from the Workspace view
+    // too. The visible control is itself the state indicator (play/stop
+    // model) — never both, no row-count jitter.
+    const allDevs = this.terminalManager.listDevTerminals();
+    const targetDev = devTarget ? allDevs.find(d => d.builderId === devTarget.id) : undefined;
+    const otherDev = !targetDev ? allDevs[0] : undefined; // single-slot ⇒ at most one
 
-    if (targetDevRunning) {
+    if (targetDev) {
+      // This workspace's own dev is the running one. Today's Stop row.
       const stopDev = new vscode.TreeItem('Stop Dev Server');
       stopDev.iconPath = new vscode.ThemeIcon('debug-stop');
       stopDev.tooltip = `Stop the dev server for this workspace (target: ${devTarget!.id})`;
@@ -99,7 +104,23 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<vscode.TreeIte
         title: 'Stop Dev Server',
       };
       items.push(stopDev);
+    } else if (otherDev) {
+      // A dev is running, but for a different target — surface it so the
+      // user can see/stop it without leaving the Workspace view. Goes
+      // through codev.stopWorktreeDev which targets the dev slot directly
+      // (kills every dev in the local registry; single-slot invariant
+      // means that's exactly the one running).
+      const stopDev = new vscode.TreeItem('Stop Dev Server');
+      stopDev.iconPath = new vscode.ThemeIcon('debug-stop');
+      stopDev.tooltip = `Stop the dev server (currently running for ${otherDev.builderId})`;
+      stopDev.contextValue = 'workspace-dev-stop-other';
+      stopDev.command = {
+        command: 'codev.stopWorktreeDev',
+        title: 'Stop Dev Server',
+      };
+      items.push(stopDev);
     } else {
+      // No dev anywhere — today's Start row for this workspace's target.
       const startDev = new vscode.TreeItem('Start Dev Server');
       startDev.iconPath = new vscode.ThemeIcon('play');
       startDev.tooltip = devTarget
