@@ -450,6 +450,18 @@ export async function activate(context: vscode.ExtensionContext) {
 		}),
 		vscode.commands.registerCommand('codev.viewBacklogIssue', (arg: vscode.TreeItem | string | undefined) =>
 			viewBacklogIssue(connectionManager!, extractIssueId(arg))),
+		vscode.commands.registerCommand('codev.referenceIssueInArchitect', async (arg: vscode.TreeItem | string | undefined) => {
+			// Inline-button action on a backlog row: open + focus the architect
+			// terminal, then type `#<id> ` into its prompt without submitting,
+			// so the user can keep typing their context before hitting Enter.
+			const issueId = extractIssueId(arg);
+			if (!issueId) { return; }
+			await vscode.commands.executeCommand('codev.openArchitectTerminal');
+			const ok = terminalManager?.injectArchitectText(`#${issueId} `);
+			if (!ok) {
+				vscode.window.showWarningMessage('Codev: Architect terminal not available');
+			}
+		}),
 		vscode.commands.registerCommand('codev.sendMessage', () => sendMessage(connectionManager!)),
 		vscode.commands.registerCommand('codev.approveGate', (arg: vscode.TreeItem | string | undefined, options?: { skipConfirmation?: boolean }) =>
 			approveGate(connectionManager!, overviewCache, extractBuilderId(arg), options)),
