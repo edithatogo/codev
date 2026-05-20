@@ -169,7 +169,12 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<vscode.TreeIte
     const devUrls = readWorktreeDevUrls(workspacePath);
     for (const { label, url } of devUrls) {
       const row = new vscode.TreeItem(label);
-      row.iconPath = new vscode.ThemeIcon('globe');
+      // 'link-external' (square + outgoing arrow) — VSCode's conventional
+      // "opens outside the editor" glyph; matches what
+      // vscode.env.openExternal actually does, and distinguishes this row
+      // from "Open Web Interface" above (which keeps the more abstract
+      // 'globe' for the Tower dashboard).
+      row.iconPath = new vscode.ThemeIcon('link-external');
       row.tooltip = `Open ${url} in your default browser`;
       row.contextValue = 'workspace-dev-url';
       row.command = {
