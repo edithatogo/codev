@@ -2,6 +2,16 @@
 
 What's changed in the Codev VS Code extension, version by version, written for the developers who use it.
 
+## [Unreleased]
+
+### What's new
+
+- **Count badge on the Codev activity-bar icon.** The sidebar icon now carries a numeric badge for builders that need your attention.
+- **Builders waiting silently for input now surface as "waiting on input."** A builder whose terminal has been idle for more than 5 minutes, and isn't blocked at a gate or finished, gets a chat-bubble icon in the Builders tree and an `N waiting` segment in the status bar.
+- **Single-click a builder row to expand its file list.** Clicking a builder row now opens its terminal *and* expands the file list underneath — previously the expand chevron was a separate click.
+- **Send a backlog issue to the architect inline.** Each backlog row has a new inline button that pastes the issue's `#<id>` reference straight into the architect input, no copy-paste step.
+- **Issue markdown previews update live.** Leave an issue preview open and it refreshes in place when the underlying issue changes (new comment, label edit, etc.) instead of going stale.
+
 ## [3.0.7] - 2026-05-20
 
 ### What's new
