@@ -35,6 +35,8 @@ import type { SessionManager, ReconnectRestartOptions } from '../../terminal/ses
 import type { PtySession } from '../../terminal/pty-session.js';
 import type { WorkspaceTerminals, TerminalEntry, DbTerminalSession } from './tower-types.js';
 import { normalizeWorkspacePath, buildArchitectArgs } from './tower-utils.js';
+import { setArchitectByName } from '../state.js';
+import { isIntentionallyStopping } from './tower-instances.js';
 
 // ============================================================================
 // Module-private state (lifecycle driven by orchestrator)
@@ -674,16 +676,26 @@ async function _reconcileTerminalSessionsInner(): Promise<void> {
     if (ptySession) {
       ptySession.on('exit', () => {
         const currentEntry = getWorkspaceTerminalsEntry(workspacePath);
+        let exitedArchitectName: string | null = null;
         if (dbSession.type === 'architect') {
           // Spec 755: remove the entry whose terminalId matches session.id.
           for (const [name, tid] of currentEntry.architects) {
             if (tid === session.id) {
+              exitedArchitectName = name;
               currentEntry.architects.delete(name);
               break;
             }
           }
         }
         deleteTerminalSession(session.id);
+        // Spec 786 Phase 3 / OQ-B: delete the persisted architect row on
+        // permanent exit; preserve on intentional stop. Symmetric with the
+        // four exit handlers in tower-instances.ts.
+        if (exitedArchitectName && !isIntentionallyStopping(workspacePath)) {
+          try {
+            setArchitectByName(exitedArchitectName, null);
+          } catch { /* best-effort cleanup */ }
+        }
       });
     }
 
