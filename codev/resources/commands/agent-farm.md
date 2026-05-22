@@ -165,6 +165,19 @@ The first architect started in a workspace (by `afx workspace start`) is named `
 - Names match `[a-z][a-z0-9-]*`, max 64 characters.
 - Empty `--name` is rejected (use no `--name` to auto-number).
 - Reusing an already-registered name in the same workspace is rejected.
+- `main` is reserved (Spec 786) — the validator rejects it explicitly. `main` is the workspace's default architect, created by `afx workspace start`.
+
+**Auto-numbering (Spec 755):**
+
+When `--name` is omitted, Tower picks the smallest unused integer ≥ 2 from the existing `architect-<N>` set:
+
+- `{}` → `architect-2`
+- `{main}` → `architect-2`
+- `{main, architect-2}` → `architect-3`
+- `{main, architect-3}` → `architect-2` (fills the gap)
+- Custom names (e.g. `sibling`) don't participate in the numbering sequence.
+
+Removing a numbered architect leaves a gap that the next auto-add fills (no renumbering of existing architects).
 
 **Examples:**
 
@@ -178,8 +191,73 @@ afx workspace add-architect --name sibling
 
 **Related**:
 
-- Every architect terminal Tower starts has `CODEV_ARCHITECT_NAME` injected into its environment. `afx spawn` reads this variable to tag each new builder row with the spawning architect's name (`spawnedByArchitect`). Builders running in an architect terminal therefore inherit that architect's identity transparently.
-- Cleanup: when the architect's PTY exits, Tower removes the entry from the in-memory map AND the local state.db, so re-registering the same name later works without collision.
+- Every architect terminal Tower starts has `CODEV_ARCHITECT_NAME` injected into its environment. `afx spawn` reads this variable to tag each new builder row with the spawning architect's name (`spawnedByArchitect`). Builders running in an architect terminal therefore inherit that architect's identity transparently. Spec 786 Phase 2 also re-injects this variable when shellper auto-restarts an architect's PTY, so identity is preserved across crash recovery.
+
+---
+
+#### afx workspace remove-architect
+
+Remove a previously-added sibling architect from an active workspace (Spec 786 Phase 4).
+
+```bash
+afx workspace remove-architect <name>
+```
+
+**Arguments:**
+
+- `<name>` - The architect to remove. The default `main` architect cannot be removed.
+
+**Description:**
+
+Removes the named sibling architect from Tower's in-memory map, terminates its PTY cleanly, and deletes its row from `state.db.architect`. Removing an architect with in-flight builders is allowed — those builders' subsequent `afx send architect` calls fall back to `main` via the existing routing chain (Spec 786 OQ-A).
+
+**Examples:**
+
+```bash
+# Remove a sibling:
+afx workspace remove-architect sibling
+
+# Refuses to remove main:
+afx workspace remove-architect main
+# ✗ Cannot remove the default 'main' architect.
+```
+
+**Available surfaces:**
+
+- CLI (this command)
+- Dashboard: click the X on a sibling architect's tab → confirmation modal lists any in-flight builders (informational; remove proceeds regardless per OQ-A).
+- VSCode extension: right-click a sibling under the "Architects" tree section → "Remove Architect" → modal confirmation.
+
+---
+
+#### Architect address grammar
+
+`afx send architect[:<name>]` routes messages to the named architect's PTY (Spec 755).
+
+- `architect` (no name) — resolves to the SPAWNING architect when the sender is a builder (`spawnedByArchitect`); falls back to `main` when the spawning architect is gone or the sender isn't a builder. This is the headline value prop of multi-architect support.
+- `architect:<name>` — explicit target. Works from any sender, including architect-to-architect messaging (e.g. `main` sending to `architect:sibling`).
+- Names containing `:` are rejected by the validator (collides with the grammar).
+
+**Example:**
+
+```bash
+# Inside main's terminal, send to sibling:
+afx send architect:sibling "Please check this"
+
+# Inside a builder spawned by sibling, send back to it:
+afx send architect "Status update"
+```
+
+---
+
+#### Persistence and recovery
+
+Spec 786 Phase 3 added graceful-restart persistence for sibling architects:
+
+- **`afx workspace stop` → `afx workspace start`**: sibling architects survive. Tower's `stopInstance` marks the workspace as "intentionally stopping" so the cascaded exit handlers skip deleting `state.db.architect` rows. On next start, `launchInstance` creates `main` and then re-spawns persisted siblings via `addArchitect`.
+- **Tower crash**: `terminal_sessions` rows + shellper processes survive. Tower's `reconcileTerminalSessions()` reconnects on startup.
+- **Permanent exit (max-restart exhaustion, `remove-architect`)**: rows are auto-deleted from `state.db.architect` (Spec 786 OQ-B — keeps state.db an accurate mirror of reality).
+- **`afx workspace stop-all`** (or the dashboard's stop-all): full wipe, including sibling rows. Use this when you want to start over from scratch.
 
 ---
 
