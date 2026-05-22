@@ -1002,7 +1002,7 @@ function buildImplQuery(
   let changedFiles: string[] = [];
   try {
     const defaultBranch = resolveDefaultBranch(workspaceRoot);
-    const ref = diffRef ?? execSync(`git merge-base HEAD ${defaultBranch}`, { cwd: workspaceRoot, encoding: 'utf-8' }).trim();
+    const ref = diffRef ?? execFileSync('git', ['merge-base', 'HEAD', defaultBranch], { cwd: workspaceRoot, encoding: 'utf-8' }).trim();
     const result = getDiffStat(workspaceRoot, ref);
     diffStat = result.stat;
     changedFiles = result.files;
@@ -1412,13 +1412,21 @@ function resolveArchitectQuery(workspaceRoot: string, type: string, options: Con
       // form do the rest. If verification fails, crash explicitly rather
       // than silently degrade to reviewing the architect's checked-out
       // tree (cmap-3 Gemini finding).
+      // Verify both refs up front. Without verifying head, getDiffStat would
+      // fail later inside buildImplQuery, which swallows diff errors and drops
+      // the reviewer into "explore the filesystem" — silently degrading the
+      // architect-mode review against whatever's checked out locally. Verify
+      // both so the failure surfaces here with an actionable message.
+      // cmap-3 round-2 finding (Codex).
       let diffRef: string;
       try {
-        execFileSync('git', ['rev-parse', '--verify', `origin/${pr.baseRefName}`], {
-          cwd: workspaceRoot,
-          encoding: 'utf-8',
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
+        for (const refName of [pr.baseRefName, pr.headRefName]) {
+          execFileSync('git', ['rev-parse', '--verify', `origin/${refName}`], {
+            cwd: workspaceRoot,
+            encoding: 'utf-8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+        }
         diffRef = `origin/${pr.baseRefName}...origin/${pr.headRefName}`;
       } catch (err) {
         throw new Error(

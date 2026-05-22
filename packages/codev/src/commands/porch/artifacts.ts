@@ -371,9 +371,12 @@ export class CliResolver implements ArtifactResolver {
  * reading directly from the ref the reviewer is meant to evaluate.
  *
  * Best-effort `git fetch origin <branch>` is attempted once at construction
- * for refs that include an `origin/` prefix; failure is silent so the
- * resolver also works with refs that are already locally present
- * (including bare branch names like `builder/777-foo`).
+ * for refs that include an `origin/` prefix. Fetch failure for the
+ * already-cached / offline case stays silent (the subsequent `git show`
+ * surfaces missing-ref errors), but auth / network / unknown failures emit
+ * a stderr warning since stale local refs could otherwise silently corrupt
+ * the review. Refs without an `origin/` prefix (e.g. local branches like
+ * `builder/777-foo`) skip the fetch entirely.
  */
 export class GitRefResolver implements ArtifactResolver {
   constructor(
