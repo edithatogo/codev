@@ -325,6 +325,44 @@ export function clearState(): void {
 }
 
 /**
+ * Spec 786: clear runtime state but preserve the architect registry.
+ *
+ * Used by `afx workspace stop` so sibling architects survive a graceful stop/
+ * start cycle. The `architect` table is the durable registration; `builders`,
+ * `utils`, and `annotations` are runtime concerns and get wiped as before.
+ *
+ * `clearState()` (the full-wipe variant) is preserved for callers that genuinely
+ * want everything gone (uninstall / nuke flows / `handleWorkspaceStopAll`).
+ */
+export function clearRuntime(): void {
+  const db = getDb();
+
+  const clear = db.transaction(() => {
+    db.prepare('DELETE FROM builders').run();
+    db.prepare('DELETE FROM utils').run();
+    db.prepare('DELETE FROM annotations').run();
+  });
+
+  clear();
+}
+
+/**
+ * Spec 786: remove a single architect by name from `state.db.architect`.
+ *
+ * Idempotent — no-op if the named row is absent. Used by `remove-architect`
+ * (Phase 4) and the permanent-exit handler (Phase 3 / OQ-B).
+ *
+ * For callsite clarity this is spelled as its own function rather than
+ * relying on `setArchitectByName(name, null)`. The two are functionally
+ * equivalent today; this function exists so that "remove" reads as "remove"
+ * at the call site.
+ */
+export function removeArchitect(name: string): void {
+  const db = getDb();
+  db.prepare('DELETE FROM architect WHERE id = ?').run(name);
+}
+
+/**
  * Get architect state (main-only — Spec 755 scalar shim).
  * Returns the architect named 'main' if present, otherwise the first
  * registered architect by name. For multi-architect access, use

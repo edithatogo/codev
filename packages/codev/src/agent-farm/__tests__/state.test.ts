@@ -335,4 +335,107 @@ describe('State Management', () => {
       });
     });
   });
+
+  // Spec 786 Phase 1: removeArchitect helper and clearRuntime variant.
+  describe('removeArchitect (Spec 786)', () => {
+    it('removes a named architect row from state.db', () => {
+      state.setArchitectByName('ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: new Date().toISOString(),
+        terminalId: 'term-1',
+      });
+      // Confirm it was inserted
+      let architects = state.getArchitects();
+      expect(architects.some(a => a.name === 'ob-refine')).toBe(true);
+
+      state.removeArchitect('ob-refine');
+
+      architects = state.getArchitects();
+      expect(architects.some(a => a.name === 'ob-refine')).toBe(false);
+    });
+
+    it('is idempotent — removing a non-existent name is a no-op', () => {
+      expect(() => state.removeArchitect('nonexistent')).not.toThrow();
+    });
+
+    it('does not affect other architects', () => {
+      state.setArchitect({
+        cmd: 'claude',
+        startedAt: new Date().toISOString(),
+        terminalId: 'main-term',
+      });
+      state.setArchitectByName('ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: new Date().toISOString(),
+        terminalId: 'sibling-term',
+      });
+
+      state.removeArchitect('ob-refine');
+
+      const architects = state.getArchitects();
+      expect(architects.some(a => a.name === 'main')).toBe(true);
+      expect(architects.some(a => a.name === 'ob-refine')).toBe(false);
+    });
+  });
+
+  describe('clearRuntime (Spec 786)', () => {
+    it('preserves all architect rows while wiping runtime tables', () => {
+      // Set up: main + a sibling + a builder + a util + an annotation
+      state.setArchitect({
+        cmd: 'claude',
+        startedAt: new Date().toISOString(),
+        terminalId: 'main-term',
+      });
+      state.setArchitectByName('ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: new Date().toISOString(),
+        terminalId: 'sibling-term',
+      });
+      state.upsertBuilder({
+        id: 'B001',
+        name: 'test-builder',
+        status: 'implementing' as const,
+        phase: 'init',
+        worktree: '/tmp/worktree',
+        branch: 'feature-branch',
+        type: 'spec' as const,
+      });
+
+      state.clearRuntime();
+
+      // Architects survive
+      const architects = state.getArchitects();
+      expect(architects).toHaveLength(2);
+      expect(architects.some(a => a.name === 'main')).toBe(true);
+      expect(architects.some(a => a.name === 'ob-refine')).toBe(true);
+
+      // Builders are gone
+      const result = state.loadState();
+      expect(result.builders).toEqual([]);
+      expect(result.utils).toEqual([]);
+      expect(result.annotations).toEqual([]);
+    });
+
+    it('differs from clearState which wipes architects too', () => {
+      // Confirm the differential behaviour: clearState removes architects;
+      // clearRuntime preserves them.
+      state.setArchitect({
+        cmd: 'claude',
+        startedAt: new Date().toISOString(),
+      });
+      state.setArchitectByName('ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: new Date().toISOString(),
+      });
+
+      state.clearState();
+
+      const architectsAfterClear = state.getArchitects();
+      expect(architectsAfterClear).toHaveLength(0);
+    });
+  });
 });
