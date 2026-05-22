@@ -16,7 +16,7 @@ import { query as claudeQuery } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 import { readCodevFile, findWorkspaceRoot } from '../../lib/skeleton.js';
 import { resolveDefaultBranch } from '../../lib/default-branch.js';
-import { getResolver } from '../porch/artifacts.js';
+import { getResolver, GitRefResolver, type ArtifactResolver } from '../porch/artifacts.js';
 import { MetricsDB } from './metrics.js';
 import { extractUsage, extractReviewText, type SDKResultLike, type UsageData } from './usage-extractor.js';
 import { executeForgeCommandSync } from '../../lib/forge.js';
@@ -66,6 +66,10 @@ export interface ConsultOptions {
   protocol?: string;
   type?: string;
   issue?: string;
+  // Read spec/plan from this git ref instead of the local workspace.
+  // Defaults to the PR's headRefName when --issue resolves to a PR.
+  // Closes #777 Defect A.
+  branch?: string;
   // Porch flags
   output?: string;
   planPhase?: string;
@@ -204,24 +208,31 @@ function loadDotenv(workspaceRoot: string): void {
 /**
  * Find spec content by project ID using the artifact resolver.
  * Returns a ContentRef with content and label, or null if not found.
+ *
+ * Accepts an explicit `resolver` to support reading from a git ref (#777
+ * Defect A) instead of the architect's local workspace. When omitted,
+ * falls back to the workspace-root resolver from `.codev/config.json`.
  */
-function findSpecContent(workspaceRoot: string, id: string): ContentRef | null {
-  const resolver = getResolver(workspaceRoot);
-  const content = resolver.getSpecContent(id, '');
+function findSpecContent(workspaceRoot: string, id: string, resolver?: ArtifactResolver): ContentRef | null {
+  const r = resolver ?? getResolver(workspaceRoot);
+  const content = r.getSpecContent(id, '');
   if (!content) return null;
-  const label = resolver.findSpecBaseName(id, '') ?? id;
+  const label = r.findSpecBaseName(id, '') ?? id;
   return { content, label };
 }
 
 /**
  * Find plan content by project ID using the artifact resolver.
  * Returns a ContentRef with content and label, or null if not found.
+ *
+ * Accepts an explicit `resolver` to support reading from a git ref (#777
+ * Defect A) instead of the architect's local workspace.
  */
-function findPlanContent(workspaceRoot: string, id: string): ContentRef | null {
-  const resolver = getResolver(workspaceRoot);
-  const content = resolver.getPlanContent(id, '');
+function findPlanContent(workspaceRoot: string, id: string, resolver?: ArtifactResolver): ContentRef | null {
+  const r = resolver ?? getResolver(workspaceRoot);
+  const content = r.getPlanContent(id, '');
   if (!content) return null;
-  const baseName = resolver.findSpecBaseName(id, '') ?? id;
+  const baseName = r.findSpecBaseName(id, '') ?? id;
   return { content, label: baseName };
 }
 
@@ -1259,6 +1270,48 @@ function resolveBuilderQuery(workspaceRoot: string, type: string, options: Consu
 }
 
 /**
+ * Pick the artifact resolver for an architect-mode consult.
+ *
+ * Closes #777 Defect A. Resolution order:
+ *   1. Explicit `--branch <ref>` → read from that ref.
+ *   2. PR exists for the issue → read from `origin/<headRefName>`. This is
+ *      the routine "architect supplying missing consult" case.
+ *   3. Neither → fall back to the local workspace, with a warning so the
+ *      architect knows the verdict may target a stale artifact.
+ */
+function resolveArtifactSource(
+  workspaceRoot: string,
+  issueId: string,
+  branchOption: string | undefined,
+): { resolver: ArtifactResolver; sourceLabel: string } {
+  if (branchOption) {
+    return {
+      resolver: new GitRefResolver(workspaceRoot, branchOption),
+      sourceLabel: `--branch ${branchOption}`,
+    };
+  }
+
+  try {
+    const pr = findPRForIssue(workspaceRoot, issueId);
+    const ref = `origin/${pr.headRefName}`;
+    return {
+      resolver: new GitRefResolver(workspaceRoot, ref),
+      sourceLabel: `${ref} (PR #${pr.number})`,
+    };
+  } catch {
+    console.error(
+      `Warning: no PR found for issue #${issueId} and no --branch given; ` +
+      `reading spec/plan from local workspace. Verdicts may not reflect ` +
+      `the in-progress version.`,
+    );
+    return {
+      resolver: getResolver(workspaceRoot),
+      sourceLabel: 'local workspace',
+    };
+  }
+}
+
+/**
  * Resolve query for architect context (requires --issue)
  */
 function resolveArchitectQuery(workspaceRoot: string, type: string, options: ConsultOptions): string {
@@ -1277,18 +1330,22 @@ function resolveArchitectQuery(workspaceRoot: string, type: string, options: Con
 
   switch (type) {
     case 'spec': {
-      const spec = findSpecContent(workspaceRoot, issueId);
-      if (!spec) throw new Error(`Spec ${issueId} not found`);
-      const plan = findPlanContent(workspaceRoot, issueId);
+      const { resolver, sourceLabel } = resolveArtifactSource(workspaceRoot, issueId, options.branch);
+      const spec = findSpecContent(workspaceRoot, issueId, resolver);
+      if (!spec) throw new Error(`Spec ${issueId} not found at ${sourceLabel}`);
+      const plan = findPlanContent(workspaceRoot, issueId, resolver);
+      console.error(`Source: ${sourceLabel}`);
       console.error(`Spec: ${spec.label}`);
       if (plan) console.error(`Plan: ${plan.label}`);
       return buildSpecQuery(spec, plan);
     }
 
     case 'plan': {
-      const plan = findPlanContent(workspaceRoot, issueId);
-      if (!plan) throw new Error(`Plan ${issueId} not found`);
-      const spec = findSpecContent(workspaceRoot, issueId);
+      const { resolver, sourceLabel } = resolveArtifactSource(workspaceRoot, issueId, options.branch);
+      const plan = findPlanContent(workspaceRoot, issueId, resolver);
+      if (!plan) throw new Error(`Plan ${issueId} not found at ${sourceLabel}`);
+      const spec = findSpecContent(workspaceRoot, issueId, resolver);
+      console.error(`Source: ${sourceLabel}`);
       console.error(`Plan: ${plan.label}`);
       if (spec) console.error(`Spec: ${spec.label}`);
       return buildPlanQuery(plan, spec);
@@ -1319,9 +1376,14 @@ function resolveArchitectQuery(workspaceRoot: string, type: string, options: Con
         // locally present, etc.). Let buildImplQuery hit its empty-changedFiles
         // fallback rather than crashing the whole command.
       }
-      const spec = findSpecContent(workspaceRoot, issueId);
-      const plan = findPlanContent(workspaceRoot, issueId);
+      // Read spec/plan from the PR's branch by default so they match the
+      // diff source (#777 Defect A). --branch overrides the PR default.
+      const ref = options.branch ?? `origin/${pr.headRefName}`;
+      const resolver = new GitRefResolver(workspaceRoot, ref);
+      const spec = findSpecContent(workspaceRoot, issueId, resolver);
+      const plan = findPlanContent(workspaceRoot, issueId, resolver);
       console.error(`Project: ${issueId} (PR #${pr.number}, branch: ${pr.headRefName})`);
+      console.error(`Source: ${ref}`);
       if (spec) console.error(`Spec: ${spec.label}`);
       if (plan) console.error(`Plan: ${plan.label}`);
       return buildImplQuery(workspaceRoot, spec, plan, options.planPhase, diffRef);
