@@ -54,6 +54,7 @@ The following are **not** part of the BUGFIX protocol and must **not** be cited 
 - Commit format `[Spec NNNN][Phase]` — BUGFIX intentionally uses `Fix #N:` / `[Bugfix #N]`.
 - `status.yaml` fields like `build_complete: false` — porch manages `status.yaml`; the builder is **forbidden** from editing it directly. Treat porch state as informational, not a fixable issue.
 - Phase-scoping concerns — BUGFIX is a single-phase protocol; there are no plan phases to scope against.
+- **DO NOT** flag the syntax of `git diff` examples that appear in review-file prose (e.g., `git diff ci..HEAD` inside a "Files Changed" caption). Quoted diff syntax is documentation, not a command. Apply two-dot/three-dot scrutiny only to diffs you compute yourself.
 
 ## Verdict Format
 

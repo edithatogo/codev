@@ -32,6 +32,10 @@ You are performing a final self-check during the Review phase. The builder has c
    - Are commits atomic and well-described?
    - Is the change diff reasonable in size?
 
+## Scope
+
+- **DO NOT** flag the syntax of `git diff` examples that appear in review-file prose (e.g., `git diff ci..HEAD` inside a "Files Changed" caption or "How to Test Locally" section). Quoted diff syntax is documentation, not a command. Apply two-dot/three-dot scrutiny only to diffs you compute yourself.
+
 ## Verdict Format
 
 After your review, provide your verdict in exactly this format:
