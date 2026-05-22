@@ -842,16 +842,27 @@ export async function getTerminalsForWorkspace(
             // Clean up on exit (only fires for permanent death when restartOnExit is set)
             ptySession.on('exit', () => {
               const currentEntry = getWorkspaceTerminalsEntry(dbSession.workspace_path);
+              let exitedArchitectName: string | null = null;
               if (dbSession.type === 'architect') {
                 // Spec 755: remove the entry whose terminalId matches newSession.id.
                 for (const [name, tid] of currentEntry.architects) {
                   if (tid === newSession.id) {
+                    exitedArchitectName = name;
                     currentEntry.architects.delete(name);
                     break;
                   }
                 }
               }
               deleteTerminalSession(newSession.id);
+              // Spec 786 Phase 3 / OQ-B: delete the persisted architect row on
+              // permanent exit; preserve on intentional stop. Symmetric with
+              // the five other exit handlers (4 in tower-instances.ts, 1 in
+              // the reconciliation path above).
+              if (exitedArchitectName && !isIntentionallyStopping(dbSession.workspace_path)) {
+                try {
+                  setArchitectByName(exitedArchitectName, null);
+                } catch { /* best-effort cleanup */ }
+              }
             });
           }
           const originalSessionId = dbSession.id;

@@ -685,6 +685,69 @@ describe('tower-instances', () => {
   // these tests cover the observable behaviour: the flag is exported, set/
   // cleared correctly by stopInstance, and cleared via `finally` on errors.
 
+  // =========================================================================
+  // Spec 786 Phase 3 — launchInstance sibling reconciliation
+  // =========================================================================
+  //
+  // After main is created, launchInstance reads state.db.architect (via
+  // getArchitects()) and calls addArchitect for each persisted non-main row
+  // not already in entry.architects. This is what restores siblings across
+  // `afx workspace stop` + `afx workspace start`.
+
+  describe('Spec 786 Phase 3 — launchInstance sibling reconciliation', () => {
+    it('launchInstance succeeds even when sibling reconciliation has to handle non-empty state.db', async () => {
+      // This test confirms launchInstance is robust to whatever state.db
+      // contains at the time it runs (the reconciliation loop is wrapped in
+      // try/catch that logs WARN on per-sibling failure and on the loop as a
+      // whole). It does NOT assert specific log behaviour because state.db is
+      // shared with other tests and other test environments; instead it asserts
+      // launchInstance itself returns success when main creation succeeds.
+      //
+      // The reconciliation loop's behaviour at the unit level is documented in
+      // the "skips main" test below (source-level property check) and exercised
+      // end-to-end via integration tests in the verify phase.
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tower-launch-reconcile-'));
+      fs.mkdirSync(path.join(tmpDir, 'codev'));
+
+      try {
+        const deps = makeDeps({
+          getTerminalManager: vi.fn().mockReturnValue({
+            getSession: vi.fn(),
+            killSession: vi.fn(),
+            createSession: vi.fn().mockResolvedValue({ id: 'main-term', pid: 1234 }),
+            createSessionRaw: vi.fn(),
+            listSessions: vi.fn().mockReturnValue([]),
+          }) as any,
+        });
+        initInstances(deps);
+
+        const result = await launchInstance(tmpDir);
+        // Reconciliation runs after main is created. Any error in the
+        // reconciliation loop is caught + logged but does NOT fail the launch.
+        expect(result.success).toBe(true);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it('skips main in the reconciliation loop (main is already created above)', async () => {
+      // This is a behavioural property: the reconciliation loop has a guard
+      // `if (a.name === 'main') continue;`. The intent is that even if main
+      // appears in state.db (which it does after Phase 3 stop), launchInstance
+      // doesn't double-create it. The earlier test verifies the main creation
+      // happens unconditionally via the `!entry.architects.has('main')` gate;
+      // this test documents the guard's existence by checking the source.
+      const src = fs.readFileSync(
+        path.resolve(__dirname, '../servers/tower-instances.ts'),
+        'utf8',
+      );
+      // Sentinel check: the reconciliation loop must skip 'main'.
+      expect(src).toMatch(/if\s*\(\s*a\.name\s*===\s*['"]main['"]\s*\)\s*continue/);
+      // And must skip already-present names for idempotency.
+      expect(src).toMatch(/if\s*\(\s*entry\.architects\.has\(\s*a\.name\s*\)\s*\)\s*continue/);
+    });
+  });
+
   describe('Spec 786 Phase 3 — intentional-stop flag', () => {
     it('exports isIntentionallyStopping; returns false when no stop is in progress', async () => {
       const { isIntentionallyStopping } = await import('../servers/tower-instances.js');
@@ -731,6 +794,47 @@ describe('tower-instances', () => {
       // After stopInstance returns, the flag must be cleared (the `finally`
       // block runs even on success).
       expect(isIntentionallyStopping('/project/path')).toBe(false);
+    });
+
+    it('handleWorkspaceStopAll remains a full wipe (does NOT set the intentional-stop flag)', async () => {
+      // Spec 786 Phase 3: `handleWorkspaceStopAll` (the explicit "stop-all"
+      // route) must remain a full wipe — sibling architect rows are deleted
+      // along with main. This is the documented design difference vs
+      // `stopInstance` which preserves sibling rows.
+      //
+      // The correct behaviour is FRAGILE — it depends on `handleWorkspaceStopAll`
+      // NOT setting `intentionallyStopping`. A future refactor that routes the
+      // stop-all path through `stopInstance` would silently flip the semantics.
+      // This test pins the property at the source level.
+      const routesSrc = fs.readFileSync(
+        path.resolve(__dirname, '../servers/tower-routes.ts'),
+        'utf8',
+      );
+
+      // Extract the handleWorkspaceStopAll function body.
+      const fnStart = routesSrc.indexOf('async function handleWorkspaceStopAll');
+      expect(fnStart).toBeGreaterThan(-1);
+      // Find the closing brace of the function by matching braces from fnStart.
+      let depth = 0;
+      let i = routesSrc.indexOf('{', fnStart);
+      let fnEnd = -1;
+      for (; i < routesSrc.length; i++) {
+        if (routesSrc[i] === '{') depth++;
+        else if (routesSrc[i] === '}') {
+          depth--;
+          if (depth === 0) { fnEnd = i; break; }
+        }
+      }
+      expect(fnEnd).toBeGreaterThan(fnStart);
+      const fnBody = routesSrc.slice(fnStart, fnEnd + 1);
+
+      // The body must NOT reference the intentional-stop flag (it would
+      // otherwise preserve sibling rows, breaking the full-wipe semantic).
+      expect(fnBody).not.toMatch(/intentionallyStopping/);
+      expect(fnBody).not.toMatch(/isIntentionallyStopping/);
+
+      // And it must call deleteWorkspaceTerminalSessions to wipe rows.
+      expect(fnBody).toMatch(/deleteWorkspaceTerminalSessions/);
     });
 
     it('clears the intentional-stop flag via finally even when a kill throws', async () => {
