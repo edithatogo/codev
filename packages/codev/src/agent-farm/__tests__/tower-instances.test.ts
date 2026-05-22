@@ -865,6 +865,50 @@ describe('tower-instances', () => {
       expect(isIntentionallyStopping('/project/path')).toBe(false);
     });
 
+    // Spec 786 PR iter-2 race-fix (Codex finding): the source-shape test
+    // below checks that handleWorkspaceStopAll doesn't reference
+    // `intentionallyStopping`, but that's only HALF the full-wipe property.
+    // The other half — that architect rows are actually deleted — was broken
+    // by a race: stop-all clears `currentEntry.architects` synchronously
+    // after the kills, but architect exit handlers fire async and try to
+    // recover the architect name FROM that already-cleared map. The lookup
+    // returns null, so `setArchitectByName(name, null)` never ran, and
+    // stale rows survived. Fix: explicitly delete every architect's row
+    // BEFORE the kill loop. This sentinel test pins that ordering.
+    it('handleWorkspaceStopAll explicitly deletes architect rows BEFORE the kill loop (PR iter-2 race-fix)', async () => {
+      const routesSrc = fs.readFileSync(
+        path.resolve(__dirname, '../servers/tower-routes.ts'),
+        'utf8',
+      );
+
+      const fnStart = routesSrc.indexOf('async function handleWorkspaceStopAll');
+      expect(fnStart).toBeGreaterThan(-1);
+      let depth = 0;
+      let i = routesSrc.indexOf('{', fnStart);
+      let fnEnd = -1;
+      for (; i < routesSrc.length; i++) {
+        if (routesSrc[i] === '{') depth++;
+        else if (routesSrc[i] === '}') {
+          depth--;
+          if (depth === 0) { fnEnd = i; break; }
+        }
+      }
+      const fnBody = routesSrc.slice(fnStart, fnEnd + 1);
+
+      // The function MUST iterate architect names and call
+      // `setArchitectByName(name, null)` for each.
+      expect(fnBody).toMatch(/for \(const name of entry\.architects\.keys\(\)\)/);
+      expect(fnBody).toMatch(/setArchitectByName\(name,\s*null\)/);
+
+      // The explicit-delete loop MUST come BEFORE the kill loops (otherwise
+      // the architect name lookup race re-emerges via a different path).
+      const deleteIdx = fnBody.indexOf('setArchitectByName(name, null)');
+      const killArchIdx = fnBody.indexOf('killTerminalWithShellper(manager, terminalId)');
+      expect(deleteIdx).toBeGreaterThan(-1);
+      expect(killArchIdx).toBeGreaterThan(-1);
+      expect(deleteIdx).toBeLessThan(killArchIdx);
+    });
+
     it('handleWorkspaceStopAll remains a full wipe (does NOT set the intentional-stop flag)', async () => {
       // Spec 786 Phase 3: `handleWorkspaceStopAll` (the explicit "stop-all"
       // route) must remain a full wipe — sibling architect rows are deleted

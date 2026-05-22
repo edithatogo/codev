@@ -28,7 +28,7 @@ const execAsync = promisify(exec);
 import type { SessionManager } from '../../terminal/session-manager.js';
 import type { PtySessionInfo } from '../../terminal/pty-session.js';
 import type { BuilderSpawnedPayload, DashboardState, ArchitectState } from '@cluesmith/codev-types';
-import { getBuilders } from '../state.js';
+import { getBuilders, setArchitectByName } from '../state.js';
 import { DEFAULT_COLS, defaultSessionOptions } from '../../terminal/index.js';
 import type { SSEClient } from './tower-types.js';
 import { parseJsonBody, isRequestAllowed } from '../utils/server-utils.js';
@@ -2157,6 +2157,28 @@ async function handleWorkspaceStopAll(
 ): Promise<void> {
   const entry = getWorkspaceTerminalsEntry(workspacePath);
   const manager = getTerminalManager();
+
+  // Spec 786 PR iter-2 race-fix (Codex): explicitly delete every architect's
+  // `state.db.architect` row BEFORE killing or clearing the registry. The
+  // cascaded architect exit handlers in tower-instances.ts (lines 452-...,
+  // 501-..., etc.) and tower-terminals.ts work by scanning
+  // `currentEntry.architects` to recover the architect name from a dead
+  // terminal id. But stop-all clears that registry synchronously after the
+  // kills, before node-pty's async 'exit' events fire — so by the time the
+  // exit handlers look up the name, it's already gone, and they silently
+  // skip the row deletion. Result: stale `state.db.architect` rows survive
+  // what's supposed to be a full wipe, and `launchInstance` reconciliation
+  // re-spawns them on the next workspace start.
+  //
+  // The intentional-stop flag isn't the right tool here either — stop-all
+  // explicitly wants the rows gone. Pre-emptive deletion makes it
+  // explicit and order-independent: even if the exit handler somehow runs
+  // first, `setArchitectByName(name, null)` is idempotent.
+  for (const name of entry.architects.keys()) {
+    try {
+      setArchitectByName(name, null);
+    } catch { /* best-effort cleanup */ }
+  }
 
   // Kill all terminals (disable shellper auto-restart if applicable).
   // Spec 755: iterate all named architects, not just the singleton.
