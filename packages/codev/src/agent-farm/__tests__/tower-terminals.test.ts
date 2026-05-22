@@ -597,5 +597,169 @@ describe('tower-terminals', () => {
 
       vi.restoreAllMocks();
     });
+
+    // =========================================================================
+    // Spec 786 Phase 2 — Identity preservation on shellper auto-restart
+    // =========================================================================
+    //
+    // The reconciliation path builds `restartOptions.env` that shellper uses
+    // when it auto-restarts a dead process. Prior to Spec 786, the env was
+    // `{ ...process.env }` minus CLAUDECODE — without `CODEV_ARCHITECT_NAME`
+    // re-injection. That meant a restarted sibling's claude process inherited
+    // Tower's env (default 'main' or unset), and builders spawned afterward
+    // lost affinity to the sibling. Phase 2 injects
+    // `CODEV_ARCHITECT_NAME: dbSession.role_id || 'main'` into the restart env.
+
+    describe('Spec 786 Phase 2 — CODEV_ARCHITECT_NAME re-injection', () => {
+      beforeEach(() => {
+        mockDbRun.mockReset();
+        mockDbAll.mockReset();
+        mockDbPrepare.mockReturnValue({ run: mockDbRun, all: mockDbAll });
+      });
+
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+
+      it('injects CODEV_ARCHITECT_NAME=<role_id> into restartOptions.env for a sibling architect', async () => {
+        let capturedRestartOptions: any = null;
+        const mockReconnectSession = vi.fn(async (_id, _socket, _pid, _start, restartOptions) => {
+          capturedRestartOptions = restartOptions;
+          return null; // stale — phase 2 cares only about restartOptions construction
+        });
+
+        const deps = makeDeps({ shellperManager: { reconnectSession: mockReconnectSession } as any });
+        initTerminals(deps);
+
+        mockDbAll.mockReturnValue([{
+          id: 'arch-ob-refine',
+          workspace_path: '/real/project',
+          type: 'architect',
+          role_id: 'ob-refine',
+          pid: 5000,
+          shellper_socket: '/tmp/shellper-ob-refine.sock',
+          shellper_pid: 6000,
+          shellper_start_time: Date.now(),
+          created_at: new Date().toISOString(),
+        }]);
+
+        vi.spyOn(fs, 'existsSync').mockImplementation((p: fs.PathLike) => {
+          if (String(p) === '/real/project') return true;
+          // No .codev/config.json — buildArchitectArgs will see no role and
+          // return empty harnessEnv (early return when loadRolePrompt is null).
+          return false;
+        });
+
+        const { reconcileTerminalSessions } = await import('../servers/tower-terminals.js');
+        await reconcileTerminalSessions();
+
+        expect(capturedRestartOptions).not.toBeNull();
+        expect(capturedRestartOptions.env.CODEV_ARCHITECT_NAME).toBe('ob-refine');
+      });
+
+      it('falls back to CODEV_ARCHITECT_NAME=main when role_id is null (legacy rows)', async () => {
+        let capturedRestartOptions: any = null;
+        const mockReconnectSession = vi.fn(async (_id, _socket, _pid, _start, restartOptions) => {
+          capturedRestartOptions = restartOptions;
+          return null;
+        });
+
+        const deps = makeDeps({ shellperManager: { reconnectSession: mockReconnectSession } as any });
+        initTerminals(deps);
+
+        mockDbAll.mockReturnValue([{
+          id: 'arch-legacy',
+          workspace_path: '/real/project',
+          type: 'architect',
+          role_id: null, // pre-v13 backfill — should fall back to 'main'
+          pid: 5000,
+          shellper_socket: '/tmp/shellper-legacy.sock',
+          shellper_pid: 6000,
+          shellper_start_time: Date.now(),
+          created_at: new Date().toISOString(),
+        }]);
+
+        vi.spyOn(fs, 'existsSync').mockImplementation((p: fs.PathLike) => {
+          if (String(p) === '/real/project') return true;
+          return false;
+        });
+
+        const { reconcileTerminalSessions } = await import('../servers/tower-terminals.js');
+        await reconcileTerminalSessions();
+
+        expect(capturedRestartOptions).not.toBeNull();
+        expect(capturedRestartOptions.env.CODEV_ARCHITECT_NAME).toBe('main');
+      });
+
+      it('keeps main`s restart env unchanged in behaviour (role_id=main → CODEV_ARCHITECT_NAME=main)', async () => {
+        let capturedRestartOptions: any = null;
+        const mockReconnectSession = vi.fn(async (_id, _socket, _pid, _start, restartOptions) => {
+          capturedRestartOptions = restartOptions;
+          return null;
+        });
+
+        const deps = makeDeps({ shellperManager: { reconnectSession: mockReconnectSession } as any });
+        initTerminals(deps);
+
+        mockDbAll.mockReturnValue([{
+          id: 'arch-main',
+          workspace_path: '/real/project',
+          type: 'architect',
+          role_id: 'main',
+          pid: 5000,
+          shellper_socket: '/tmp/shellper-main.sock',
+          shellper_pid: 6000,
+          shellper_start_time: Date.now(),
+          created_at: new Date().toISOString(),
+        }]);
+
+        vi.spyOn(fs, 'existsSync').mockImplementation((p: fs.PathLike) => {
+          if (String(p) === '/real/project') return true;
+          return false;
+        });
+
+        const { reconcileTerminalSessions } = await import('../servers/tower-terminals.js');
+        await reconcileTerminalSessions();
+
+        expect(capturedRestartOptions).not.toBeNull();
+        expect(capturedRestartOptions.env.CODEV_ARCHITECT_NAME).toBe('main');
+      });
+
+      it('does not set CODEV_ARCHITECT_NAME for non-architect sessions (builders/shells)', async () => {
+        let capturedRestartOptions: any = null;
+        const mockReconnectSession = vi.fn(async (_id, _socket, _pid, _start, restartOptions) => {
+          capturedRestartOptions = restartOptions;
+          return null;
+        });
+
+        const deps = makeDeps({ shellperManager: { reconnectSession: mockReconnectSession } as any });
+        initTerminals(deps);
+
+        mockDbAll.mockReturnValue([{
+          id: 'builder-1',
+          workspace_path: '/real/project',
+          type: 'builder',
+          role_id: 'builder-1',
+          pid: 5000,
+          shellper_socket: '/tmp/shellper-b1.sock',
+          shellper_pid: 6000,
+          shellper_start_time: Date.now(),
+          created_at: new Date().toISOString(),
+        }]);
+
+        vi.spyOn(fs, 'existsSync').mockImplementation((p: fs.PathLike) => {
+          if (String(p) === '/real/project') return true;
+          return false;
+        });
+
+        const { reconcileTerminalSessions } = await import('../servers/tower-terminals.js');
+        await reconcileTerminalSessions();
+
+        // Builders take the non-architect branch — restartOptions is undefined,
+        // so this is a no-op for env-injection purposes. (Builders restart via
+        // their own mechanism handled by spawn-worktree.)
+        expect(capturedRestartOptions).toBeUndefined();
+      });
+    });
   });
 });

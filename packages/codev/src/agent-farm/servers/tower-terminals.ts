@@ -558,6 +558,13 @@ async function _reconcileTerminalSessionsInner(): Promise<void> {
       const cmdParts = architectCmd.split(/\s+/);
       const cleanEnv = { ...process.env } as Record<string, string>;
       delete cleanEnv['CLAUDECODE'];
+      // Spec 786 Phase 2: preserve architect identity across shellper auto-
+      // restart. Without this, the new claude process would inherit Tower's
+      // CODEV_ARCHITECT_NAME (or none), and builders spawned by a restarted
+      // sibling would lose affinity to the sibling. The `|| 'main'` fallback
+      // covers legacy rows where role_id is null (v13 backfill should have
+      // populated them; this is belt-and-suspenders).
+      cleanEnv['CODEV_ARCHITECT_NAME'] = dbSession.role_id || 'main';
       try {
         const { args: architectArgs, env: harnessEnv } = buildArchitectArgs(cmdParts.slice(1), workspacePath);
         restartOptions = {
@@ -769,6 +776,9 @@ export async function getTerminalsForWorkspace(
           const cmdParts = architectCmd.split(/\s+/);
           const cleanEnv = { ...process.env } as Record<string, string>;
           delete cleanEnv['CLAUDECODE'];
+          // Spec 786 Phase 2: preserve architect identity across shellper auto-
+          // restart (see matching block in reconcileTerminalSessionsInner above).
+          cleanEnv['CODEV_ARCHITECT_NAME'] = dbSession.role_id || 'main';
           try {
             const { args: architectArgs, env: harnessEnv } = buildArchitectArgs(cmdParts.slice(1), dbSession.workspace_path);
             restartOptions = {
