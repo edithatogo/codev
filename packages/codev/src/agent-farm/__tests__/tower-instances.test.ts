@@ -797,6 +797,74 @@ describe('tower-instances', () => {
       expect(isIntentionallyStopping('/project/path')).toBe(false);
     });
 
+    // Spec 786 PR iter-2 race-fix regression test: the architect's
+    // integration-level CMAP caught a race where `stopInstance` cleared the
+    // intentional-stop flag in `finally` BEFORE the cascaded exit handlers
+    // fired. The handler then read `isIntentionallyStopping === false` and
+    // wiped the persisted architect row. This test exercises the timing
+    // explicitly: an EventEmitter-backed mock session that emits 'exit'
+    // ASYNCHRONOUSLY (via setTimeout) after kill, and asserts the flag is
+    // still set when the exit handler observes it.
+    //
+    // If the race regresses, this test will see the flag as `false` at the
+    // moment the exit handler fires — exactly the production bug.
+    it('Spec 786 PR iter-2 race-fix: flag is still set when async exit event fires', async () => {
+      const { EventEmitter } = await import('node:events');
+      const workspaceTerminals = new Map();
+      workspaceTerminals.set('/project/path', {
+        architects: new Map([['main', 'arch-1'], ['ob-refine', 'arch-2']]),
+        builders: new Map(),
+        shells: new Map(),
+      });
+
+      // The exit handler the kill cascade would invoke. It reads the flag at
+      // the moment of firing — exactly like the real cascaded handlers do.
+      const flagSnapshotAtExitTime: boolean[] = [];
+
+      const sessions = new Map<string, EventEmitter & { pid: number; shellperBacked: boolean }>();
+      for (const id of ['arch-1', 'arch-2']) {
+        const s = new EventEmitter() as EventEmitter & { pid: number; shellperBacked: boolean };
+        s.pid = id === 'arch-1' ? 42 : 43;
+        s.shellperBacked = false;
+        sessions.set(id, s);
+      }
+
+      const { isIntentionallyStopping } = await import('../servers/tower-instances.js');
+
+      const mockManager = {
+        getSession: vi.fn().mockImplementation((id: string) => sessions.get(id)),
+        killSession: vi.fn().mockImplementation((id: string) => {
+          const s = sessions.get(id);
+          if (!s) return false;
+          // Emit 'exit' on the NEXT tick — mirrors node-pty's async 'exit'
+          // semantics. The exit handler reads the flag when this fires.
+          setTimeout(() => {
+            flagSnapshotAtExitTime.push(isIntentionallyStopping('/project/path'));
+            s.emit('exit', 0, null);
+          }, 1);
+          return true;
+        }),
+      };
+
+      const deps = makeDeps({
+        workspaceTerminals,
+        getTerminalManager: vi.fn().mockReturnValue(mockManager) as any,
+      });
+      initInstances(deps);
+
+      await stopInstance('/project/path');
+
+      // The exit handlers MUST have observed the flag as `true` (every time)
+      // — proving the race fix awaited their firing before clearing the flag.
+      expect(flagSnapshotAtExitTime).toHaveLength(2);
+      for (const snapshot of flagSnapshotAtExitTime) {
+        expect(snapshot).toBe(true);
+      }
+
+      // And after stopInstance returns, the flag is cleared — sanity check.
+      expect(isIntentionallyStopping('/project/path')).toBe(false);
+    });
+
     it('handleWorkspaceStopAll remains a full wipe (does NOT set the intentional-stop flag)', async () => {
       // Spec 786 Phase 3: `handleWorkspaceStopAll` (the explicit "stop-all"
       // route) must remain a full wipe — sibling architect rows are deleted

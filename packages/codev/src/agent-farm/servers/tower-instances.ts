@@ -102,6 +102,43 @@ export function isIntentionallyStopping(workspacePath: string): boolean {
   return intentionallyStopping.has(workspacePath);
 }
 
+/**
+ * Spec 786 Phase 3 / PR iter-2 race-fix: await a terminal's `'exit'` event
+ * with a timeout safety so callers (`stopInstance`, `removeArchitect`) can
+ * ensure the cascaded exit handler has finished BEFORE the
+ * `intentionallyStopping` flag is cleared.
+ *
+ * Why this exists: `killTerminalWithShellper` returns after sending SIGTERM,
+ * not after the process is reaped. node-pty's 'exit' event fires later, on
+ * its own tick. Without this await, the `finally` block in `stopInstance`
+ * clears the flag before the exit handler runs — the handler then reads
+ * `isIntentionallyStopping === false` and incorrectly deletes the persisted
+ * architect row. Unit tests don't catch it because they mock timing.
+ *
+ * The timeout (5s) is belt-and-suspenders: if 'exit' never fires (e.g.
+ * because the session was already gone), the promise still resolves so we
+ * don't block the stop indefinitely.
+ */
+function waitForTerminalExit(manager: TerminalManager, terminalId: string, timeoutMs = 5000): Promise<void> {
+  const session = manager.getSession(terminalId);
+  // Defensive: if the session is gone or doesn't look like an EventEmitter
+  // (e.g. a test stub), there's nothing to wait for — resolve immediately so
+  // callers aren't blocked.
+  if (!session || typeof (session as { once?: unknown }).once !== 'function') {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    session.once('exit', finish);
+    setTimeout(finish, timeoutMs);
+  });
+}
+
 // ============================================================================
 // Public lifecycle
 // ============================================================================
@@ -661,11 +698,23 @@ export async function stopInstance(workspacePath: string): Promise<{ success: bo
   if (resolvedPath !== workspacePath) intentionallyStopping.add(workspacePath);
   try {
     if (entry) {
+      // Spec 786 Phase 3 / PR iter-2 race-fix: register exit-promises for
+      // every terminal BEFORE we kill anything. `killTerminalWithShellper`
+      // sends SIGTERM and returns; node-pty's 'exit' event fires later, on
+      // its own tick. If we cleared the flag in `finally` before 'exit'
+      // fired, the cascaded architect exit handler would see
+      // `isIntentionallyStopping === false` and incorrectly delete the
+      // persisted `state.db.architect` row — defeating the entire Phase 3
+      // persistence story. We await all 'exit' events (with a 5s safety
+      // timeout per terminal) before falling through to the finally.
+      const exitPromises: Promise<void>[] = [];
+
       // Kill all architects (disable shellper auto-restart if applicable)
       // Spec 755: iterate the named-architect Map instead of the old scalar.
       for (const terminalId of entry.architects.values()) {
         const session = manager.getSession(terminalId);
         if (session) {
+          exitPromises.push(waitForTerminalExit(manager, terminalId));
           await killTerminalWithShellper(manager, terminalId);
           stopped.push(session.pid);
         }
@@ -675,6 +724,7 @@ export async function stopInstance(workspacePath: string): Promise<{ success: bo
       for (const terminalId of entry.shells.values()) {
         const session = manager.getSession(terminalId);
         if (session) {
+          exitPromises.push(waitForTerminalExit(manager, terminalId));
           await killTerminalWithShellper(manager, terminalId);
           stopped.push(session.pid);
         }
@@ -684,9 +734,17 @@ export async function stopInstance(workspacePath: string): Promise<{ success: bo
       for (const terminalId of entry.builders.values()) {
         const session = manager.getSession(terminalId);
         if (session) {
+          exitPromises.push(waitForTerminalExit(manager, terminalId));
           await killTerminalWithShellper(manager, terminalId);
           stopped.push(session.pid);
         }
+      }
+
+      // Await every 'exit' event before clearing the intentional-stop flag.
+      // Each promise has its own 5s safety timeout so a stuck process never
+      // blocks the stop indefinitely.
+      if (exitPromises.length > 0) {
+        await Promise.all(exitPromises);
       }
 
       // Clear workspace from registry
@@ -1017,6 +1075,16 @@ export async function removeArchitect(
   intentionallyStopping.add(resolvedPath);
   if (resolvedPath !== workspacePath) intentionallyStopping.add(workspacePath);
   try {
+    // Spec 786 Phase 4 / PR iter-2 race-fix: register the exit-promise
+    // BEFORE the kill so the listener is attached before node-pty can emit
+    // 'exit'. Without awaiting it, the `finally` clears the flag too early
+    // and the exit handler racing to re-delete the row sees the flag as
+    // false. (In remove-architect's case, the double-delete would be
+    // harmless — `setArchitectByName` is idempotent — but the same pattern
+    // bites `stopInstance` where the row should NOT be deleted at all. Keep
+    // both paths symmetric so a future contributor doesn't accidentally
+    // diverge them.)
+    const exitPromise = waitForTerminalExit(manager, terminalId);
     await killTerminalWithShellper(manager, terminalId);
     entry.architects.delete(name);
 
@@ -1028,6 +1096,9 @@ export async function removeArchitect(
     try {
       _deps.deleteTerminalSession(terminalId);
     } catch { /* best-effort cleanup */ }
+
+    // Wait for the actual 'exit' event before clearing the flag.
+    await exitPromise;
   } finally {
     intentionallyStopping.delete(resolvedPath);
     if (resolvedPath !== workspacePath) intentionallyStopping.delete(workspacePath);
