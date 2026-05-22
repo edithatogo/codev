@@ -261,12 +261,17 @@ export async function activate(context: vscode.ExtensionContext) {
 	// cached, instead of waiting for the next onDidChange tick.
 	updateActivityBadge();
 	const teamProvider = new TeamProvider(connectionManager);
+	// Spec 786 Phase 6: hold the WorkspaceProvider so commands like
+	// `codev.removeArchitect` can call `.refresh()` after mutating Tower
+	// state (architects added/removed don't otherwise fire an event the
+	// sidebar listens for).
+	const workspaceProvider = new WorkspaceProvider(connectionManager, terminalManager!);
 	context.subscriptions.push(
 		buildersView,
 		pullRequestsView,
 		backlogView,
 		recentlyClosedView,
-		vscode.window.registerTreeDataProvider('codev.workspace', new WorkspaceProvider(connectionManager, terminalManager!)),
+		vscode.window.registerTreeDataProvider('codev.workspace', workspaceProvider),
 		vscode.window.registerTreeDataProvider('codev.team', teamProvider),
 		vscode.window.registerTreeDataProvider('codev.status', new StatusProvider(connectionManager)),
 	);
@@ -461,6 +466,11 @@ export async function activate(context: vscode.ExtensionContext) {
 				const result = await client.removeArchitect(workspacePath, name);
 				if (result.ok) {
 					vscode.window.showInformationMessage(`Codev: Removed architect '${name}'.`);
+					// Spec 786 Phase 6: refresh the sidebar so the removed
+					// sibling disappears from the Architects tree immediately.
+					// Without this, the expanded section would stay stale
+					// until another SSE event happened to fire.
+					workspaceProvider.refresh();
 				} else {
 					vscode.window.showErrorMessage(`Codev: ${result.error ?? `Failed to remove architect '${name}'.`}`);
 				}

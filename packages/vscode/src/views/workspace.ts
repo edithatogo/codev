@@ -46,6 +46,17 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<vscode.TreeIte
     });
   }
 
+  /**
+   * Spec 786 Phase 6: imperative refresh entry point so commands like
+   * `codev.removeArchitect` (and any future `codev.addArchitect` UI) can
+   * force the sidebar to re-render after they mutate Tower state. Without
+   * this, the expanded "Architects" section would stay stale until another
+   * SSE event happened to fire.
+   */
+  refresh(): void {
+    this.changeEmitter.fire();
+  }
+
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
     return element;
   }
