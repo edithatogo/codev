@@ -21,16 +21,16 @@ plan_phases:
     title: >-
       Surface enumeration (v1 collapse removal, per-architect /status emission, loadState collection-aware, afx status
       update)
-    status: in_progress
+    status: complete
   - id: phase_6_vscode_multi
     title: >-
       VSCode multi-architect surface (expandable Architects tree, per-name terminal slots, parameterized open command,
       right-click remove)
-    status: pending
+    status: in_progress
   - id: phase_7_docs_and_verify
     title: Documentation updates (agent-farm.md, arch.md, --help, CHANGELOG) + manual verify scenario scaffolding
     status: pending
-current_plan_phase: phase_5_surface_parity
+current_plan_phase: phase_6_vscode_multi
 gates:
   spec-approval:
     status: approved
@@ -45,7 +45,7 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history:
   - iteration: 1
     plan_phase: phase_2_identity_restart
@@ -112,4 +112,4 @@ history:
         file: >-
           /Users/mwk/Development/cluesmith/codev/.builders/spir-786/codev/projects/786-multi-architect-feature-is-und/786-phase_5_surface_parity-iter1-claude.txt
 started_at: '2026-05-20T19:52:41.566Z'
-updated_at: '2026-05-22T18:32:54.047Z'
+updated_at: '2026-05-22T18:32:55.978Z'
