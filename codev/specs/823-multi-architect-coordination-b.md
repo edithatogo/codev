@@ -24,7 +24,7 @@ But four coordination gaps remain that an external adopter (Shannon, the only co
 1. **Builder attribution is invisible at the dashboard.** A user looking at the Work view sees a flat list of builders. They cannot tell which architect spawned which builder — even though that information is the basis of the routing primitive. With one architect, the question is meaningless; with two or more, it's the single most-asked question in a multi-architect cohort.
 2. **Messaging primitives are undocumented.** Code supports `afx send architect:<name>`, builder→architect routing via affinity, architect→sibling-architect messaging, and `<builder-id>` addressing — but `CLAUDE.md` / `AGENTS.md` / `codev/resources/commands/agent-farm.md` don't surface any of them. Users discover the primitives empirically (or don't), and the discoverability cost compounds across each new external adopter.
 3. **Builders have no shared, persistent situational-awareness surface.** A cohort of builders working in parallel cannot read each other's state. A builder finishing phase 3 of a refactor cannot signal "I just renamed `X` — anyone touching it should rebase" to a sibling builder. Architects cannot quickly skim "what did builder 0793 do this morning?" without `afx open`ing the terminal and scrolling. There is no per-builder narrative log that's cheap to write and cheap to read.
-4. **The VSCode Architects tree is silently stale on add.** When the user runs `afx workspace add-architect ob-refine` from a shell while VSCode is open, the new architect appears in the dashboard's tab strip (dashboard polls), but the VSCode sidebar's Architects tree does NOT refresh until the user manually clicks the sidebar's Refresh button. The remove-architect path refreshes correctly (because `codev.removeArchitect` self-triggers the refresh from within VSCode), but add-architect via the CLI is invisible to VSCode — Tower never emits an SSE event for architect lifecycle changes.
+4. **The VSCode Architects tree is silently stale on add.** When the user runs `afx workspace add-architect --name ob-refine` from a shell while VSCode is open, the new architect appears in the dashboard's tab strip (dashboard polls), but the VSCode sidebar's Architects tree does NOT refresh until the user manually clicks the sidebar's Refresh button. The remove-architect path refreshes correctly (because `codev.removeArchitect` self-triggers the refresh from within VSCode), but add-architect via the CLI is invisible to VSCode — Tower never emits an SSE event for architect lifecycle changes.
 
 All four are coordination problems: making the *who-spawned-whom* relationship visible, making the *how to message them* surface honest, giving the cohort a *shared narrative log*, and keeping the *editor surface in sync with the running state*. They cohere as one feature pass.
 
@@ -44,18 +44,22 @@ All four are coordination problems: making the *who-spawned-whom* relationship v
 
 **Proximate cause**: `discoverBuilders()` in `overview.ts:545-700` reads `status.yaml` from the builder's worktree, which does not carry `spawnedByArchitect`. The existing DB enrichment block at `overview.ts:781-797` reads `issue_number` from `state.db.builders` but does not read `spawned_by_architect`. Once the field is added to `BuilderOverview` and the SQL `SELECT` is extended, the field flows all the way through to `OverviewBuilder` on the dashboard side (the two types are kept in sync — see `packages/types/src/api.ts:100-138` vs `packages/codev/src/agent-farm/servers/overview.ts:35-74`).
 
+**SQL `WHERE` clause caveat (iter-1 Gemini)**: The current enrichment query at `overview.ts:786` is `SELECT worktree, issue_number FROM builders WHERE issue_number IS NOT NULL`. This `WHERE` clause excludes soft-mode / task-mode builders (which spawn with `issue_number = NULL` in `state.db.builders`). If we add `spawned_by_architect` to the `SELECT` but keep the `WHERE`, those builders' attribution will silently fail to render even when they were spawned by a sibling architect. The implementation must drop the `WHERE issue_number IS NOT NULL` clause (or replace it with `WHERE issue_number IS NOT NULL OR spawned_by_architect IS NOT NULL`) and conditionally apply each enrichment field based on whether it's populated for the row. Plan phase pins the exact form.
+
 ### Item 2 — messaging documentation (verified)
 
 | Primitive | Code support | Documented today |
 |---|---|---|
 | `afx send <builder-id> "msg"` (architect → builder) | ✅ | ✅ (`agent-farm.md`) |
 | `afx send architect "msg"` (architect → main, or builder → spawning architect via affinity) | ✅ (post-#774) | ⚠️ Partial — `agent-farm.md` shows the form but doesn't explain the builder-side affinity-routing behavior |
-| `afx send architect:<name> "msg"` (explicit architect addressing) | ✅ | ❌ NOT documented |
+| `afx send architect:<name> "msg"` (explicit architect addressing — see spoofing-check note below) | ✅ | ❌ NOT documented |
 | `afx send <workspace>:architect "msg"` (cross-workspace) | ✅ | ✅ (`agent-farm.md`) |
 | Architect → sibling architect messaging (sender = architect bypasses the spoofing check) | ✅ (per #786 spec test scenario #8) | ❌ NOT documented |
 | `afx status` lists architects alongside builders | ✅ post-#786 (per #786 spec MUST: "afx status enumerates ALL registered architects") | ❌ NOT documented in the messaging context |
 
 **The code primitives are complete after #786 lands.** This item is purely a documentation surfacing pass — no new behavior, no new code paths, just making the existing affordances discoverable.
+
+**Spoofing-check note (verified against `tower-messages.ts:196-230`)**: When a builder is the sender, `architect:<name>` is allowed ONLY when `<name>` matches the builder's `spawnedByArchitect`. Mismatches are rejected by the address-spoofing check at `resolveArchitectByName` (`tower-messages.ts:213-218`). Non-builder senders (architects, including `main` sending to `architect:<sibling>`) bypass the spoofing check. So the documentation must distinguish: from **architects**, `architect:<name>` is an open address grammar (sibling-architect messaging); from **builders**, it is constrained to the builder's own spawning architect (an explicit form of the affinity routing, not an override).
 
 ### Item 3 — per-builder thread state (greenfield)
 
@@ -78,7 +82,7 @@ All four are coordination problems: making the *who-spawned-whom* relationship v
 | VSCode `WorkspaceProvider` subscribes to such an event | ❌ does not subscribe |
 | VSCode `WorkspaceProvider` refreshes correctly on `codev.removeArchitect` | ✅ self-triggers refresh (per #786) |
 | Dashboard add-refresh | ✅ polling already picks it up |
-| Documented as a known limitation in `codev/projects/786-.../verify-scenarios.md` Scenario 11 | ✅ |
+| Documented as a known limitation in `codev/projects/786-.../verify-scenarios.md` Scenario 11 | ✅ (on the #786 branch — not present on this builder's branch until #786 merges) |
 
 **This deliverable closes the gap noted at #786 PR-iter-3 (Codex finding Co2)** — architect's followup decision was to fold it into a follow-up SPIR rather than expand #786's scope.
 
@@ -87,9 +91,9 @@ All four are coordination problems: making the *who-spawned-whom* relationship v
 After #823 ships:
 
 1. A dashboard user looking at the Work view with two or more architects in the workspace can immediately tell which architect spawned each builder. The visual treatment is **subtle** (a small inline tag adjacent to the builder ID/title, not a column) so the N=1 dashboard is visually identical to today.
-2. A user reading `CLAUDE.md`, `AGENTS.md`, or `codev/resources/commands/agent-farm.md` discovers the four addressing forms (`<builder-id>`, `architect`, `architect:<name>`, `<workspace>:architect`) and the architect↔sibling-architect messaging behavior, with concrete examples for each.
+2. A user reading `CLAUDE.md`, `AGENTS.md`, or `codev/resources/commands/agent-farm.md` discovers the four addressing forms (`<builder-id>`, `architect`, `architect:<name>`, `<workspace>:architect`), the architect↔sibling-architect messaging behavior, AND the builder-side spoofing-check constraint (builders may only address their own spawning architect via `architect:<name>`), with concrete examples for each.
 3. Every builder maintains `codev/state/<builder-id>_thread.md` as a free-text log of phase transitions, decisions, blockers, and anything else worth recording. Architects and sibling builders can read each other's threads via plain file I/O (`cat`, `Read` tool, file browser, `ls codev/state/`). The thread is **markdown**, **free-form**, and **owned by the builder LLM** — no structured schema, no porch hooks.
-4. Running `afx workspace add-architect <name>` from a shell while VSCode is open causes the VSCode Architects tree to refresh within ~1s (the SSE round-trip), with the new architect appearing as a child of the tree without manual user action. Same for remove (already works, must continue working).
+4. Running `afx workspace add-architect --name <name>` from a shell while VSCode is open causes the VSCode Architects tree to refresh within ~1s (the SSE round-trip), with the new architect appearing as a child of the tree without manual user action. Same for remove (already works, must continue working).
 
 ## Stakeholders
 
@@ -211,10 +215,11 @@ None as of draft time. The issue body is unusually well-scoped — most of what 
   - (b) `WorkView` computes `architectCount` once and passes it to each `BuilderCard` as a prop.
   - **Recommendation**: (b) — single computation, cleaner prop interface, avoids context plumbing. Plan phase confirms.
 - **OQ-B — Item 1: what does the "spawned by" tag look like visually?** The issue says "small inline tag." Options:
-  - (a) A small pill next to the builder ID (`#0042 · ob-refine`).
-  - (b) A subscript under the builder ID.
-  - (c) A new column at the right of the table, hidden when `architects.length === 1`.
-  - **Recommendation**: (a) — minimum DOM change, no column-shift on N=1↔N>1 transition. Plan phase pins the CSS class and HTML structure; verify phase exercises with Playwright at N=1 and N=2.
+  - (a) A small pill next to the builder ID with just the architect name (`#0042 · ob-refine`) — the `·` separator is the only visual cue that the second token is an attribution; no "spawned by" prefix.
+  - (b) A small pill next to the builder ID with an explicit prefix (`#0042 [spawned by ob-refine]`) — more discoverable for users seeing it for the first time, but visually heavier.
+  - (c) A subscript under the builder ID.
+  - (d) A new column at the right of the table, hidden when `architects.length === 1`.
+  - **Recommendation**: (a) — minimum DOM change, no column-shift on N=1↔N>1 transition. The `·` separator is sufficiently unambiguous in context (a multi-architect workspace's user knows what they're looking at). Hover-tooltip with full "spawned by `<name>`" text is a cheap nice-to-have (see COULD criterion below). Per iter-1 Claude, the spec's visual intent is now spelled out: **just the separator + the architect name, no prefix label**. Plan phase pins the CSS class and HTML structure; verify phase exercises with Playwright at N=1, N=2, N=3.
 - **OQ-C — Item 3: which protocol prompts get the thread-instruction?** Two scopes:
   - (a) Only the SPIR protocol prompts (`codev/protocols/spir/protocol.md` or its phase prompts).
   - (b) All protocols (SPIR, ASPIR, AIR, BUGFIX, PIR, TICK, EXPERIMENT, MAINTAIN, RESEARCH).
@@ -229,9 +234,10 @@ None as of draft time. The issue body is unusually well-scoped — most of what 
   - (c) The instruction in `codev/roles/builder.md` says "your builder id is the basename of your current working directory" — builder runs `basename $(pwd)` once.
   - **Recommendation**: (c) — zero porch ceremony, builder reads cwd. Plan phase verifies the worktree path is reliable.
 - **OQ-F — Item 4: exact SSE event name and payload.** Options:
-  - (a) `architects-updated` with payload `{ architects: ArchitectState[] }` (full collection on every change).
-  - (b) `architect-added` / `architect-removed` with payload `{ name: string }` (delta per event).
-  - **Recommendation**: (a) — matches `worktree-config-updated`'s "fire on mutation, send full state" shape. Subscribers re-fetch on event, which is cheap. Plan phase confirms by reading `worktree-config-updated`'s implementation.
+  - (a) `architects-updated` with payload `{ workspace: string }` (workspace path, subscriber re-fetches `/state` to get the new architect list).
+  - (b) `architects-updated` with payload `{ workspace: string, architects: ArchitectState[] }` (workspace path + full collection, subscriber can skip the re-fetch).
+  - (c) `architect-added` / `architect-removed` with payload `{ workspace: string, name: string }` (delta per event).
+  - **Recommendation**: (a) — matches `worktree-config-updated`'s shape exactly (per `packages/codev/src/agent-farm/servers/worktree-config-watcher.ts:60-65`, which emits `{ workspace: workspacePath }` body and lets subscribers re-fetch). **The payload MUST include `workspace` to support multi-workspace Tower** (Tower can serve multiple workspaces; subscribers need to know which workspace's architect list changed before re-fetching). Plan phase confirms by reading `worktree-config-watcher.ts`'s exact emit signature.
 - **OQ-G — Item 4: which Tower-side call sites emit the event?** Three known mutation points:
   - `addArchitect` in `tower-instances.ts` (the `workspace add-architect` path).
   - `removeArchitect` in `tower-instances.ts` (added by #786 phase 4).
@@ -242,6 +248,7 @@ None as of draft time. The issue body is unusually well-scoped — most of what 
 
 - **NQ-A — Item 3: should `codev/state/` be gitignored?** Thread files are per-builder narrative state. They live in the builder's worktree. After PR merge, they're either committed (becoming part of the review record) or discarded (lost on cleanup).
   - **Recommendation**: leave gitignore as-is (don't add `codev/state/`). Builders can commit threads if useful in the PR; otherwise they get cleaned up with the worktree. Plan phase confirms by checking what other transient builder state does today.
+- **NQ-C — Item 3: thread-file accumulation on `main` over time (per iter-1 Claude).** If builders commit their thread files at PR time, then after 50 features `main` carries 50 thread files from builders whose worktrees no longer exist. The thread files are part of the historical review record (parallel to `codev/reviews/`), so accumulation is intentional — they're a per-builder narrative log alongside the formal review doc. **Lifecycle decision**: leave accumulation as-is; pruning (if ever needed) is a MAINTAIN-protocol concern, not #823's scope. The MAINTAIN protocol already prunes `codev/reviews/` selectively; the same discipline applies to `codev/state/` if it grows beyond reason. Plan phase does NOT introduce an auto-cleanup mechanism.
 - **NQ-B — Item 4: should the dashboard explicitly subscribe to the new SSE event for instant updates, beyond polling?** Probably no — polling already picks it up within ~3s and the issue body explicitly defers dashboard verification to "polling will pick it up naturally." But the option exists if user-perceived staleness is a concern.
 
 ## Performance Requirements
@@ -264,7 +271,7 @@ None as of draft time. The issue body is unusually well-scoped — most of what 
 
 #### Item 1 — Dashboard builder attribution
 - [ ] `OverviewBuilder` (`packages/types/src/api.ts`) and `BuilderOverview` (`packages/codev/src/agent-farm/servers/overview.ts`) both gain a `spawnedByArchitect: string | null` field.
-- [ ] The overview SQL enrichment block at `overview.ts:781-797` SELECTs `spawned_by_architect` alongside `issue_number`, and the resulting field is populated on each `BuilderOverview` whose worktree row exists in `state.db.builders`.
+- [ ] The overview SQL enrichment block at `overview.ts:781-797` SELECTs `spawned_by_architect` alongside `issue_number`, drops the `WHERE issue_number IS NOT NULL` clause (per iter-1 Gemini — so soft-mode / task-mode builders also enrich), and conditionally applies each enrichment field based on whether the row's column is non-null. The resulting `spawnedByArchitect` field is populated on each `BuilderOverview` whose worktree row exists in `state.db.builders`, regardless of issue-number presence.
 - [ ] `BuilderCard.tsx` conditionally renders a small inline tag (CSS class TBD by plan phase, per OQ-B recommendation `#0042 · ob-refine` style) when `architectCount > 1` AND `builder.spawnedByArchitect !== null`.
 - [ ] When `architectCount === 1` (the N=1 baseline), `BuilderCard` renders identically to its pre-823 output — no extra DOM, no extra CSS class, no extra spacing.
 - [ ] `WorkView` computes `architectCount = state.architects.length` once and passes it to each `BuilderCard` as a prop (per OQ-A recommendation).
@@ -277,16 +284,18 @@ None as of draft time. The issue body is unusually well-scoped — most of what 
 - [ ] `CLAUDE.md` gains a new section (location TBD by plan, candidate: after the existing "Agent Responsiveness" section or near the existing `afx send` references at line ~497) documenting the four addressing forms:
   - `afx send <builder-id> "msg"` — architect (or any sender) → builder.
   - `afx send architect "msg"` — when sent from a builder, routes to the spawning architect via affinity (per #774). When sent from main / any architect, routes to the default architect named `main`.
-  - `afx send architect:<name> "msg"` — explicit per-architect addressing. Works from architects (sibling-architect messaging) and from builders (override the affinity routing).
+  - `afx send architect:<name> "msg"` — explicit per-architect addressing. From **architects** (including `main`), addresses any architect by name — this is the sibling-architect messaging form. From **builders**, allowed ONLY when `<name>` matches the builder's `spawnedByArchitect`; mismatches are rejected by the spoofing check at `tower-messages.ts:213-218`. This is an explicit form of the affinity routing, not an override.
   - `afx send <workspace>:architect "msg"` — cross-workspace addressing (existing).
 - [ ] `CLAUDE.md` documents that architect → sibling-architect messaging works today via `architect:<name>` (per #786 spec scenario #8 — sender = architect bypasses the spoofing check). Provide an example: `main` running `afx send architect:ob-refine "PR-iter-2 feedback ready"`.
+- [ ] `CLAUDE.md` explicitly notes the builder-side spoofing-check constraint (with a concrete example: builder `spir-823` running `afx send architect:ob-refine "..."` is rejected unless its `spawnedByArchitect == 'ob-refine'`).
 - [ ] `CLAUDE.md` documents that `afx status` lists architects alongside builders (post-#786).
 - [ ] `AGENTS.md` receives the identical content in the same commit. (Both files are kept synchronized per the existing convention.)
 - [ ] `codev/resources/commands/agent-farm.md` `afx send` section is extended with the same four forms and the sibling-architect example. The `architect:<name>` form is added to the "Target terminal" argument list at the top of the `afx send` section.
+- [ ] `CLAUDE.md` / `AGENTS.md` / `agent-farm.md` MUST include a one-sentence mention of the per-builder thread file (`codev/state/<builder-id>_thread.md`, item 3) in the messaging-section context, with a pointer to the discovery path (`ls codev/state/`). This is **promoted from SHOULD to MUST per iter-1 Claude** — a user reading the messaging docs is the natural audience for the thread-discovery story; splitting it across two doc sections would lose discoverability.
 - [ ] No new behavior is introduced — this is a documentation surfacing pass only. No code changes outside the three markdown files.
 
 #### Item 3 — Per-builder thread state
-- [ ] `codev/roles/builder.md` (the builder role definition referenced by all protocol-driven spawns) gains a new section titled "Thread file" instructing every builder to maintain `codev/state/<builder-id>_thread.md` as a free-text markdown log. The instruction names: the path (`codev/state/<builder-id>_thread.md`), the resolution rule (`<builder-id>` = the basename of the builder's worktree path, e.g. `spir-823` for this builder), the intent (record phase transitions, decisions, blockers, anything worth recording for collective situational awareness), the freedom (no schema, no required sections), and the discovery story (sibling builders and architects can read it via plain file I/O).
+- [ ] `codev/roles/builder.md` (the builder role definition referenced by all protocol-driven spawns) gains a new section titled "Thread file" instructing every builder to maintain `codev/state/<builder-id>_thread.md` as a free-text markdown log. The instruction names: the path (`codev/state/<builder-id>_thread.md`), the resolution rule (`<builder-id>` = the basename of the builder's worktree path, e.g. `spir-823` for this builder — runnable as `basename "$(pwd)"`), the intent (record phase transitions, decisions, blockers, anything worth recording for collective situational awareness), the freedom (no schema, no required sections), the discovery story (sibling builders and architects can read it via plain file I/O), AND the cross-builder traversal pattern: sibling builders share the parent `.builders/` directory, so builder A reads builder B's thread at `../<sibling-id>/codev/state/<sibling-id>_thread.md` from A's worktree (per iter-1 Claude — the path is correct today but should be spelled out in the instruction rather than left to the LLM to figure out).
 - [ ] The instruction explicitly says: "Create the file the first time you write to it" (lazily, per OQ-D recommendation). No up-front creation required.
 - [ ] The instruction explicitly says: "Trust your own judgement about what to write and when. There is no template."
 - [ ] The instruction explicitly says: "This is for the cohort's situational awareness, not porch's tracking. Porch does not read this file."
@@ -296,22 +305,22 @@ None as of draft time. The issue body is unusually well-scoped — most of what 
 - [ ] Verify-phase manual exercise: spawn a fresh builder (any protocol) and confirm it creates and writes to `codev/state/<builder-id>_thread.md` at phase boundaries without being explicitly told to in the spawn prompt.
 
 #### Item 4 — VSCode Architects tree auto-refresh on add
-- [ ] Tower emits a new SSE event named `architects-updated` (or equivalent — pinned by plan per OQ-F) on every successful `addArchitect` and `removeArchitect` call. Event payload is the full `architects: ArchitectState[]` collection (per OQ-F recommendation, matching `worktree-config-updated`'s shape).
+- [ ] Tower emits a new SSE event named `architects-updated` (or equivalent — pinned by plan per OQ-F) on every successful `addArchitect` and `removeArchitect` call. Event payload includes `{ workspace: <workspacePath> }` at minimum (matching `worktree-config-updated`'s shape per `worktree-config-watcher.ts:60-65`); subscribers re-fetch `/state` for the workspace to get the new architect list. The workspace field is **required** to support multi-workspace Tower deployments where subscribers need to disambiguate which workspace mutated.
 - [ ] The event is NOT emitted from `launchInstance` (per OQ-G recommendation) — subscribers re-fetch on activate.
 - [ ] `WorkspaceProvider` in `packages/vscode/src/views/workspace.ts` (or the appropriate subscriber location pinned by plan) subscribes to the new event and fires its `changeEmitter` (the same trigger used today by `codev.removeArchitect`).
 - [ ] The dashboard does NOT subscribe to the new event explicitly. Its polling continues to pick up architect changes within its existing poll interval. Plan phase confirms by checking `/state` polling cadence (existing behavior, no change).
-- [ ] Verify-phase manual exercise: with VSCode open against the workspace, run `afx workspace add-architect <name>` from a shell. Within ~1s, the VSCode Architects tree shows the new architect WITHOUT manual user action.
-- [ ] Verify-phase regression: same exercise with remove — `afx workspace remove-architect <name>` causes the tree to refresh (already works post-#786 via `codev.removeArchitect` self-refresh, and now ALSO via the new SSE event if remove is invoked from a non-VSCode surface like the CLI).
-- [ ] Update `codev/projects/786-multi-architect-feature-is-und/verify-scenarios.md` Scenario 11 to reflect the closed gap (or note that #823 closes it). Plan phase confirms the cross-reference shape.
+- [ ] Verify-phase manual exercise: with VSCode open against the workspace, run `afx workspace add-architect --name <name>` from a shell. Within ~1s, the VSCode Architects tree shows the new architect WITHOUT manual user action.
+- [ ] Verify-phase regression: same exercise with remove — `afx workspace remove-architect <name>` (positional per #786) causes the tree to refresh (already works post-#786 via `codev.removeArchitect` self-refresh, and now ALSO via the new SSE event if remove is invoked from a non-VSCode surface like the CLI).
+- [ ] Update the #786 verify-scenarios artifact (`codev/projects/786-multi-architect-feature-is-und/verify-scenarios.md` once #786 merges, or whichever artifact path the merged #786 lands at) to reflect that Scenario 11's known-limitation gap is closed by #823. The artifact does not exist on this branch yet (#786 PR #822 is open at draft time); the rebase / post-#786-merge step adds this edit. Plan phase confirms the cross-reference shape after #786 lands.
 
 ### Functional (SHOULD)
 
 - [ ] Item 1: The attribution tag includes a click target (e.g. tab-switch to the spawning architect's tab). **Deferred** — not in the issue body's scope. Listed only so the plan phase explicitly notes the deferral.
-- [ ] Item 3: Add a one-line mention in `CLAUDE.md` / `AGENTS.md` (item 2's docs) that builders maintain thread files at `codev/state/<builder-id>_thread.md`, so architects looking for the inter-agent messaging doc also discover the per-builder narrative log.
 
 ### Functional (COULD)
 
-- [ ] Item 1: Tooltip on the attribution tag showing the spawning architect's full name + a hint at clicking through to its tab. (Skip unless cheap.)
+- [ ] Item 1: Hover-tooltip on the attribution tag showing the full "spawned by `<name>`" text — improves discoverability for users seeing the `·` separator for the first time without making the visual heavier in normal use. (Cheap — `title` attribute on the span.)
+- [ ] Item 1: Click-through from the attribution tag to the spawning architect's tab. (Skip unless cheap; defer otherwise.)
 
 ### Non-Functional
 
@@ -326,13 +335,14 @@ None as of draft time. The issue body is unusually well-scoped — most of what 
 1. **Item 1, N=1 baseline (regression)**: Dashboard renders with one architect, three builders. No "spawned by" tag visible on any card. DOM identical to pre-823.
 2. **Item 1, N=2 happy path**: Dashboard renders with `main` and `ob-refine` architects, four builders (two spawned by each). Each builder card shows the correct "spawned by" tag.
 3. **Item 1, N=2 legacy builder**: Dashboard renders with N=2 architects; one builder has `spawnedByArchitect === null` (legacy row from before #755). That builder's card renders no tag; the others render their tags.
+3b. **Item 1, N=2 soft-mode builder (per iter-1 Gemini)**: Dashboard renders with N=2 architects; one builder is soft-mode (e.g. `task-foo`) with `issue_number = NULL` but `spawned_by_architect = 'ob-refine'`. After dropping the `WHERE issue_number IS NOT NULL` clause, this builder MUST appear in the SQL enrichment result and render its attribution tag. This scenario validates that the SQL fix doesn't drop soft-mode rows.
 4. **Item 1, transition**: Start at N=1 (no tags). User runs `afx workspace add-architect`. After dashboard polls (≤3s) and re-renders, attribution tags appear on existing builders' cards (those with non-null `spawnedByArchitect`).
 5. **Item 2, doc discoverability**: `grep` for `architect:<name>` in `CLAUDE.md`, `AGENTS.md`, and `codev/resources/commands/agent-farm.md` all return ≥1 hit each. Same for `architect → sibling architect`.
 6. **Item 3, builder writes thread**: Spawn a fresh SPIR builder. After spec drafting commits, verify `codev/state/<builder-id>_thread.md` exists and contains ≥1 meaningful entry written by the builder.
 7. **Item 3, architect reads thread**: From the architect's terminal in a separate workspace activity, `cat codev/state/spir-823_thread.md` shows the builder's narrative log. Same via the Read tool in a Claude Code session.
 8. **Item 3, sibling builder reads thread**: From builder A's worktree, `cat ../<sibling>/codev/state/<sibling-id>_thread.md` shows the sibling's narrative log. (Path navigation is via the parent workspace, since each builder is in its own worktree.)
-9. **Item 4, add-via-CLI refresh**: VSCode open against the workspace, Architects tree expanded. Run `afx workspace add-architect ob-refine` from an external shell. Within ~1s, the tree displays `ob-refine` as a child entry without the user clicking refresh.
-10. **Item 4, remove-via-CLI refresh**: Same setup. Run `afx workspace remove-architect ob-refine`. Tree updates to remove the entry within ~1s.
+9. **Item 4, add-via-CLI refresh**: VSCode open against the workspace, Architects tree expanded. Run `afx workspace add-architect --name ob-refine` from an external shell. Within ~1s, the tree displays `ob-refine` as a child entry without the user clicking refresh.
+10. **Item 4, remove-via-CLI refresh**: Same setup. Run `afx workspace remove-architect ob-refine` (positional per #786). Tree updates to remove the entry within ~1s.
 11. **Item 4, remove-via-VSCode (regression)**: Right-click `ob-refine` in VSCode tree → Remove. Tree refreshes (existing behavior via `codev.removeArchitect` self-trigger).
 12. **End-to-end multi-architect coordination**: Spawn two architects (`main`, `ob-refine`). Spawn a builder from each. Each builder writes to its thread file. The dashboard shows both builders with correct attribution. The architect runs `afx send architect:ob-refine "check the auth migration"` and the message lands on the sibling. The VSCode tree shows both architects.
 
@@ -362,10 +372,10 @@ None as of draft time. The issue body is unusually well-scoped — most of what 
     - Sanity check: `codev-skeleton/roles/builder.md` if it exists separately (so external projects pick it up via `codev update`).
   - **Item 4**:
     - `packages/codev/src/agent-farm/servers/tower-instances.ts` — emit the new event from `addArchitect` and `removeArchitect`.
-    - `packages/codev/src/agent-farm/servers/tower-routes.ts` — SSE event-stream handler (likely the same handler that emits `worktree-config-updated`).
-    - `packages/vscode/src/views/workspace.ts` — subscribe to the new event, fire `changeEmitter`.
-    - `packages/vscode/src/tower-client.ts` (or wherever the VSCode SSE subscription client lives) — extend its event handler set.
-    - `codev/projects/786-multi-architect-feature-is-und/verify-scenarios.md` — note Scenario 11 closure.
+    - `packages/codev/src/agent-farm/servers/tower-routes.ts` (or the equivalent SSE event-stream broadcast site, likely the same broadcast helper used by `worktree-config-watcher.ts` — plan phase confirms the seam).
+    - `packages/vscode/src/views/workspace.ts` — subscribe to the new event, fire `changeEmitter`. The actual SSE subscription mechanism is `connectionManager.onSSEEvent()` (per iter-1 Claude verification), not a direct tower-client call.
+    - `packages/core/src/tower-client.ts` (per iter-1 Claude correction — original spec mis-located this at `packages/vscode/src/tower-client.ts`) — extend its event handler set if a new event type needs registration. The VSCode extension consumes the client via `packages/vscode/src/connection-manager.ts`'s SSE subscription.
+    - #786 verify-scenarios artifact — note Scenario 11 closure (after #786 merges and the artifact path lands).
   - **Libraries/Frameworks**: None new.
 
 ## References
@@ -390,18 +400,33 @@ None as of draft time. The issue body is unusually well-scoped — most of what 
 | VSCode-side `WorkspaceProvider.refresh()` fires too eagerly and causes UI churn | Low | Low | The same handler is already invoked by `codev.removeArchitect`; this is just one additional trigger source. Plan phase confirms no debounce/throttle is needed (the rate is bounded by user-driven add/remove actions, ≤1/s in any realistic scenario). |
 | Item 3's worktree-cwd-based `<builder-id>` resolution fails for soft-mode builders (whose worktree names don't match a protocol pattern) | Low | Low | The OQ-E (c) recommendation works for soft-mode builders too — the basename of their worktree IS their id (e.g. `task-foo`). No special handling needed. Plan phase verifies by reading `worktreeNameToRoleId` in `overview.ts`. |
 | Adding the `spawnedByArchitect` field to `OverviewBuilder` ripples into VSCode-side consumers that don't expect it | Very Low | Low | Field is optional (`string \| null`). Existing consumers ignore unknown fields by TypeScript convention. Plan phase greps `OverviewBuilder` consumers to confirm. |
+| SSE connection drops between `addArchitect` Tower-side and VSCode receipt; tree silently misses the update (per iter-1 Claude) | Low | Low | The VSCode `connectionManager.onSSEEvent()` subscription re-establishes on disconnect (existing behaviour for `worktree-config-updated` reconnect). On re-establish, `WorkspaceProvider` should `refresh()` defensively to pick up any architect changes missed during the gap. Plan phase confirms reconnect behaviour and adds a defensive refresh on reconnect if missing. |
+| The `WHERE issue_number IS NOT NULL` SQL change ripples into existing `issueId` enrichment behaviour | Low | Low | The change drops the filter, not the field application. `builder.issueId` is set conditionally on `row.issue_number != null`. Existing N=1-architect dashboards continue showing issue IDs identically. Plan phase asserts this with a regression test. |
 
 ## Expert Consultation
 
-**Date**: 2026-05-22 (iter-1, pending)
-**Models Consulted**: TBD (porch CMAP runs Gemini, Codex, Claude)
+**Date**: 2026-05-22 (iter-1)
+**Models Consulted**: Gemini, Codex, Claude (via porch CMAP)
+**Verdicts**: REQUEST_CHANGES (Gemini), REQUEST_CHANGES (Codex), APPROVE (Claude)
 
-**Sections to be updated** based on iter-1 feedback (filled in after consultation completes).
+**Sections updated** based on iter-1 feedback:
+
+- **Current State / Item 1** (per Gemini): Added SQL `WHERE` clause caveat — current enrichment query at `overview.ts:786` filters with `WHERE issue_number IS NOT NULL`, which would exclude soft-mode / task-mode builders whose `issue_number` is NULL. Spec now MUSTs dropping the `WHERE` clause and conditionally applying each enrichment field. Added Test Scenario 3b covering this edge case.
+- **Current State / Item 2 + Functional MUST / Item 2** (per Codex): Added spoofing-check note. `architect:<name>` from a builder is rejected when `<name>` doesn't match the builder's `spawnedByArchitect` — it is NOT a way to override affinity routing. Documentation must distinguish architect-sender behaviour (open address grammar) from builder-sender behaviour (constrained to own spawning architect).
+- **CLI examples throughout** (per Codex): Fixed `afx workspace add-architect ob-refine` → `afx workspace add-architect --name ob-refine` (verified against `packages/codev/src/agent-farm/cli.ts:110`). `remove-architect` is positional per #786 — left as-is.
+- **Item 4 verify-scenarios reference** (per Codex): Relaxed pin on `codev/projects/786-multi-architect-feature-is-und/verify-scenarios.md` — that file doesn't exist on this branch yet (#786 PR #822 is open at draft time). Spec now says "after #786 merges and the artifact path lands."
+- **OQ-F + Functional MUST / Item 4** (per Codex): Required `workspace` field in the SSE event payload, matching `worktree-config-updated`'s `{ workspace: workspacePath }` shape verified at `worktree-config-watcher.ts:60-65`. Necessary for multi-workspace Tower deployments where subscribers need to disambiguate which workspace mutated.
+- **Dependencies / Item 4** (per Claude): Corrected tower-client path from `packages/vscode/src/tower-client.ts` (mis-located) to `packages/core/src/tower-client.ts`. Clarified that the actual VSCode SSE subscription mechanism is `connectionManager.onSSEEvent()` in `workspace.ts`, not a direct tower-client call.
+- **Functional MUST / Item 3 + builder.md instruction** (per Claude): Added explicit cross-builder traversal pattern (`../<sibling-id>/codev/state/<sibling-id>_thread.md`) to the `codev/roles/builder.md` instruction — sibling builders share the parent `.builders/` directory, so the path is reachable, but the instruction now spells it out instead of leaving the LLM to figure it out.
+- **OQ-B** (per Claude): Spelled out the visual intent — just the `·` separator + architect name, NO "spawned by" prefix label. Hover-tooltip with the full text is in the COULD list as a cheap nice-to-have.
+- **Functional MUST / Item 2 — promoted from SHOULD to MUST** (per Claude): The one-sentence mention of `codev/state/<builder-id>_thread.md` in the messaging docs is now a MUST. Item 2 is the natural discovery surface for the thread file; splitting would lose discoverability.
+- **NQ-C (new)** (per Claude): Acknowledged thread-file accumulation on `main` over time. Decision: leave accumulation as-is; pruning is a MAINTAIN-protocol concern, NOT #823's scope. No auto-cleanup mechanism introduced.
+- **Risks table** (per Claude): Added SSE-reconnect edge case — defensive `refresh()` on reconnect if not already in place. Added SQL-change ripple risk (low, but called out).
 
 ## Approval
 
 - [ ] Architect Review (spec-approval gate)
-- [ ] Expert AI Consultation iter-1 complete
+- [x] Expert AI Consultation iter-1 complete (Gemini REQUEST_CHANGES + Codex REQUEST_CHANGES addressed; Claude APPROVE)
 
 ## Notes
 
