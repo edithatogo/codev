@@ -233,11 +233,16 @@ Projects currently in development (conceived through committed), sorted by prior
 
 ```yaml
 releases:
+  - version: "v3.1.1"
+    name: "Jacobean"
+    status: released
+    target_date: "2026-05-23"
+    notes: "First Jacobean release. Bundles multi-architect routing fix (#774), the #786 multi-architect lifecycle/persistence/UX feature pass (remove-architect, graceful-stop persistence, identity preservation, surface enumeration, VSCode Architects tree, race fix), the #823 multi-architect coordination follow-up (dashboard attribution, inter-agent messaging docs, builder thread file, VSCode add-refresh SSE), and Amr's two substantial VSCode extension rounds (file trees, View Diff, accordion, image paste, count badges, waiting-on-input, dev URLs, config.local.json). Skipped v3.0.8 (locally built, never published) and v3.1.0 (orphan dep-only packages briefly published; @cluesmith/codev never reached 3.1.0)."
   - version: "v3.0.8"
     name: "Ionic"
-    status: released
+    status: superseded
     target_date: "2026-05-19"
-    notes: "Bugfix patch — multi-architect routing fix (#774, the headline v3.0.5 feature was non-functional end-to-end since shipping: detectCurrentBuilderId opened the empty worktree-local state.db instead of the workspace's, falling back to a non-canonical sender ID and breaking affinity routing); plus VSCode extension round (#771: per-builder file trees, View Diff, accordion mode, image paste, Backlog dedup)."
+    notes: "Built locally and tested end-to-end (verify-phase scenarios passed), never published to npm. Content superseded by v3.1.1 which bundled additional work that landed before publish. Tag v3.0.8 was created and pushed to GitHub but is intentionally orphan w.r.t. npm — kept as a historical breadcrumb of the multi-architect routing fix (#774) and the v3.0.6 VSCode round."
   - version: "v3.0.7"
     name: "Ionic"
     status: released
