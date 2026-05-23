@@ -256,9 +256,14 @@ describe('tower-terminals', () => {
   // =========================================================================
 
   describe('deleteWorkspaceTerminalSessions', () => {
-    it('deletes by normalized path', () => {
+    it('deletes by normalized path, preserving architect rows (Bugfix #826)', () => {
       deleteWorkspaceTerminalSessions('/project');
-      expect(mockDbPrepare).toHaveBeenCalledWith('DELETE FROM terminal_sessions WHERE workspace_path = ?');
+      // Architect rows must be preserved on workspace stop so the
+      // workspace_path signal that getArchitectsForWorkspace joins on stays
+      // alive across `afx workspace stop` + `afx workspace start`.
+      expect(mockDbPrepare).toHaveBeenCalledWith(
+        "DELETE FROM terminal_sessions WHERE workspace_path = ? AND type != 'architect'"
+      );
     });
 
     it('handles DB errors gracefully', () => {

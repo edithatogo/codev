@@ -26,6 +26,16 @@ Plan:
 
 Because `deleteWorkspaceTerminalSessions` wipes all terminal_sessions rows for a workspace on `afx workspace stop`, the matching workspace_path signal is also wiped. That means after a `stop + start` cycle, persisted sibling architects in `state.db.architect` will *not* be re-spawned — a partial regression of Spec 786's stop+start sibling persistence story. This is the trade-off the issue's "Option B" explicitly accepts vs. Option A (proper schema migration). v3.1.2 prioritizes stopping the cross-workspace leak; Option A is the proper long-term fix.
 
+## Architect call: Option B+ (iter-2)
+
+Architect's independent CMAP had Codex flag the regression. Architect chose Option B+: preserve architect rows on stop so Spec 786's stop+start story still works.
+
+Additional changes (iter-2):
+- `deleteWorkspaceTerminalSessions(path, { includeArchitects? = false })` — default preserves architect rows on stop. Full-wipe callers (`handleWorkspaceStopAll`) opt in.
+- All four architect exit handlers in `tower-instances.ts` now skip `deleteTerminalSession(session.id)` (in addition to the existing skip of `setArchitectByName(name, null)`) when intentionally stopping. Architect rows survive in BOTH `state.db.architect` and `global.db.terminal_sessions` across an `afx workspace stop`.
+- `saveTerminalSession` enforces a `(workspace_path, role_id)` uniqueness invariant for `type='architect'` rows: pre-deletes any existing architect row before inserting. Prevents stale-row accumulation across multiple stop+start cycles (since the new PTY gets a fresh terminal id each time).
+- 3 new behavioral integration-contract tests in `state.test.ts` exercise the full lifecycle: stop preserves architect rows in both tables, cross-workspace isolation holds, and repeated stop+start cycles don't accumulate stale rows.
+
 ## Test run notes
 
 - `state.test.ts` — 27/27 pass (including 5 new tests for `getArchitectsForWorkspace`).

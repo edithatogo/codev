@@ -620,4 +620,190 @@ describe('State Management', () => {
       expect(result).toEqual([]);
     });
   });
+
+  // ===========================================================================
+  // Bugfix #826 — stop+start lifecycle integration contract
+  // ===========================================================================
+  //
+  // Codex's independent CMAP flagged that a literal Option B (filter-only) fix
+  // regresses Spec 786's stop+start sibling persistence: terminal_sessions is
+  // wiped on workspace stop, so on next launch the workspace_path signal that
+  // getArchitectsForWorkspace joins on is gone and siblings aren't restored.
+  //
+  // The full fix (Option B+) preserves architect rows in BOTH tables on
+  // intentional stop. This test exercises that lifecycle end-to-end using real
+  // SQLite to lock in the integration contract that purely-unit tests
+  // (vi.fn-based mocks) miss.
+
+  describe('Bugfix #826: stop+start lifecycle integration contract', () => {
+    function deleteWorkspaceNonArchitectRows(workspacePath: string): void {
+      // Mirrors the new deleteWorkspaceTerminalSessions(workspacePath) default
+      // (no opt-in to wipe architects). See tower-terminals.ts.
+      if (!testGlobalDb) state.getArchitectsForWorkspace('/tmp/__init__');
+      testGlobalDb!
+        .prepare(
+          "DELETE FROM terminal_sessions WHERE workspace_path = ? AND type != 'architect'"
+        )
+        .run(workspacePath);
+    }
+
+    function saveArchitectTerminalSession(
+      terminalId: string,
+      workspacePath: string,
+      roleId: string,
+    ): void {
+      // Mirrors saveTerminalSession's architect-uniqueness invariant: a
+      // pre-delete by (workspace_path, role_id) before insert, so stale rows
+      // from prior stop+start cycles don't accumulate.
+      if (!testGlobalDb) state.getArchitectsForWorkspace('/tmp/__init__');
+      testGlobalDb!
+        .prepare(
+          "DELETE FROM terminal_sessions WHERE workspace_path = ? AND type = 'architect' AND role_id = ?"
+        )
+        .run(workspacePath, roleId);
+      testGlobalDb!
+        .prepare(
+          `INSERT INTO terminal_sessions (id, workspace_path, type, role_id, pid)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+        .run(terminalId, workspacePath, 'architect', roleId, 1234);
+    }
+
+    function saveBuilderTerminalSession(
+      terminalId: string,
+      workspacePath: string,
+      roleId: string,
+    ): void {
+      if (!testGlobalDb) state.getArchitectsForWorkspace('/tmp/__init__');
+      testGlobalDb!
+        .prepare(
+          `INSERT INTO terminal_sessions (id, workspace_path, type, role_id, pid)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+        .run(terminalId, workspacePath, 'builder', roleId, 5678);
+    }
+
+    function countArchitectRows(workspacePath: string, roleId: string): number {
+      if (!testGlobalDb) state.getArchitectsForWorkspace('/tmp/__init__');
+      const result = testGlobalDb!
+        .prepare(
+          "SELECT COUNT(*) AS n FROM terminal_sessions WHERE workspace_path = ? AND type = 'architect' AND role_id = ?"
+        )
+        .get(workspacePath, roleId) as { n: number };
+      return result.n;
+    }
+
+    function countAllRows(workspacePath: string): { architect: number; builder: number; shell: number } {
+      if (!testGlobalDb) state.getArchitectsForWorkspace('/tmp/__init__');
+      const a = testGlobalDb!
+        .prepare("SELECT COUNT(*) AS n FROM terminal_sessions WHERE workspace_path = ? AND type = 'architect'")
+        .get(workspacePath) as { n: number };
+      const b = testGlobalDb!
+        .prepare("SELECT COUNT(*) AS n FROM terminal_sessions WHERE workspace_path = ? AND type = 'builder'")
+        .get(workspacePath) as { n: number };
+      const s = testGlobalDb!
+        .prepare("SELECT COUNT(*) AS n FROM terminal_sessions WHERE workspace_path = ? AND type = 'shell'")
+        .get(workspacePath) as { n: number };
+      return { architect: a.n, builder: b.n, shell: s.n };
+    }
+
+    it('preserves architect rows in BOTH state.db and terminal_sessions across stop+start', () => {
+      const WS = '/workspace/shannon';
+
+      // ===== Initial launch =====
+      // main + ob-refine architects, plus a builder PTY.
+      state.setArchitect({ cmd: 'claude', startedAt: '2026-05-23T10:00:00Z' });
+      state.setArchitectByName('ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:05:00Z',
+      });
+      saveArchitectTerminalSession('arch-main-v1', WS, 'main');
+      saveArchitectTerminalSession('arch-sibling-v1', WS, 'ob-refine');
+      saveBuilderTerminalSession('builder-1', WS, 'b001');
+
+      // Sanity: both architects + builder present.
+      expect(countAllRows(WS)).toEqual({ architect: 2, builder: 1, shell: 0 });
+      expect(state.getArchitectsForWorkspace(WS).map(a => a.name).sort()).toEqual(['main', 'ob-refine']);
+
+      // ===== Intentional stop =====
+      // The architect exit handlers skip both deleteTerminalSession AND
+      // setArchitectByName(null) when intentionally stopping (Bugfix #826).
+      // The bulk wipe also skips architect rows. Builder rows go.
+      deleteWorkspaceNonArchitectRows(WS);
+
+      // Architect rows in BOTH tables MUST survive.
+      expect(state.getArchitects().map(a => a.name).sort()).toEqual(['main', 'ob-refine']);
+      expect(countAllRows(WS)).toEqual({ architect: 2, builder: 0, shell: 0 });
+
+      // The workspace_path signal for getArchitectsForWorkspace is alive.
+      expect(state.getArchitectsForWorkspace(WS).map(a => a.name).sort()).toEqual(['main', 'ob-refine']);
+
+      // ===== Restart: fresh main spawn, reconcile re-spawns sibling =====
+      // launchInstance creates a NEW 'main' PTY (new terminal id). The new
+      // saveTerminalSession pre-deletes the stale 'main' row before inserting
+      // — so no stale row accumulates.
+      saveArchitectTerminalSession('arch-main-v2', WS, 'main');
+      expect(countArchitectRows(WS, 'main')).toBe(1);
+
+      // The reconcile loop reads getArchitectsForWorkspace(WS) and re-spawns
+      // ob-refine. Simulate that addArchitect call's saveTerminalSession.
+      saveArchitectTerminalSession('arch-sibling-v2', WS, 'ob-refine');
+      expect(countArchitectRows(WS, 'ob-refine')).toBe(1);
+
+      // Final state: clean — one row per architect per workspace.
+      expect(countAllRows(WS)).toEqual({ architect: 2, builder: 0, shell: 0 });
+    });
+
+    it('does NOT leak architects across workspaces during the same lifecycle (the #826 root cause)', () => {
+      const SHANNON = '/workspace/shannon';
+      const MANAZIL = '/workspace/manazil';
+
+      // Shannon registers a sibling.
+      state.setArchitectByName('ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:00:00Z',
+      });
+      saveArchitectTerminalSession('arch-shannon-sibling', SHANNON, 'ob-refine');
+
+      // User opens manazil — launchInstance(MANAZIL) runs the reconcile loop.
+      // The bug was: getArchitects() returned ob-refine from the global table
+      // and addArchitect(MANAZIL, 'ob-refine') re-spawned it into manazil.
+      const manazilArchitects = state.getArchitectsForWorkspace(MANAZIL);
+      expect(manazilArchitects).toEqual([]);
+
+      // Shannon still sees its own sibling.
+      const shannonArchitects = state.getArchitectsForWorkspace(SHANNON);
+      expect(shannonArchitects.map(a => a.name)).toEqual(['ob-refine']);
+    });
+
+    it('handles multiple stop+start cycles without accumulating stale rows', () => {
+      const WS = '/workspace/W';
+      state.setArchitect({ cmd: 'claude', startedAt: '2026-05-23T10:00:00Z' });
+      state.setArchitectByName('ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:05:00Z',
+      });
+
+      for (let cycle = 1; cycle <= 3; cycle++) {
+        // Launch: fresh PTYs.
+        saveArchitectTerminalSession(`arch-main-c${cycle}`, WS, 'main');
+        saveArchitectTerminalSession(`arch-sibling-c${cycle}`, WS, 'ob-refine');
+        saveBuilderTerminalSession(`builder-c${cycle}`, WS, `b${cycle}`);
+
+        // Stop (preserve architect rows).
+        deleteWorkspaceNonArchitectRows(WS);
+
+        // After every cycle: exactly one row per architect.
+        expect(countArchitectRows(WS, 'main')).toBe(1);
+        expect(countArchitectRows(WS, 'ob-refine')).toBe(1);
+        expect(countAllRows(WS).builder).toBe(0);
+
+        // And the workspace_path signal is intact.
+        expect(state.getArchitectsForWorkspace(WS).map(a => a.name).sort()).toEqual(['main', 'ob-refine']);
+      }
+    });
+  });
 });

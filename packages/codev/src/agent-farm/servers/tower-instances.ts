@@ -532,14 +532,18 @@ export async function launchInstance(workspacePath: string): Promise<{ success: 
                     break;
                   }
                 }
-                _deps!.deleteTerminalSession(session.id);
-                // Spec 786 Phase 3 / OQ-B: delete the persisted architect row
-                // on permanent exit so state.db mirrors reality. Skip on
-                // intentional stop so the row survives a graceful stop+start.
-                if (exitedName && !isIntentionallyStopping(resolvedPath)) {
-                  try {
-                    setArchitectByName(exitedName, null);
-                  } catch { /* best-effort cleanup */ }
+                // Bugfix #826: skip both the terminal_sessions row delete and
+                // the state.db.architect row delete when intentionally stopping,
+                // so the architect survives a graceful stop+start in BOTH
+                // tables — keeping the workspace_path signal that
+                // getArchitectsForWorkspace joins on alive across the cycle.
+                if (!isIntentionallyStopping(resolvedPath)) {
+                  _deps!.deleteTerminalSession(session.id);
+                  if (exitedName) {
+                    try {
+                      setArchitectByName(exitedName, null);
+                    } catch { /* best-effort cleanup */ }
+                  }
                 }
                 _deps!.log('INFO', `Architect shellper session exited for ${workspacePath} (code=${exitCode ?? null}, signal=${signal ?? null})`);
               });
@@ -591,13 +595,15 @@ export async function launchInstance(workspacePath: string): Promise<{ success: 
                   break;
                 }
               }
-              _deps!.deleteTerminalSession(session.id);
-              // Spec 786 Phase 3 / OQ-B: delete the persisted architect row
-              // on permanent exit; preserve on intentional stop.
-              if (exitedName && !isIntentionallyStopping(resolvedPath)) {
-                try {
-                  setArchitectByName(exitedName, null);
-                } catch { /* best-effort cleanup */ }
+              // Bugfix #826: preserve both terminal_sessions and state.db.architect
+              // rows on intentional stop (see matching shellper handler above).
+              if (!isIntentionallyStopping(resolvedPath)) {
+                _deps!.deleteTerminalSession(session.id);
+                if (exitedName) {
+                  try {
+                    setArchitectByName(exitedName, null);
+                  } catch { /* best-effort cleanup */ }
+                }
               }
               _deps!.log('INFO', `Architect pty exited for ${workspacePath}`);
             });
@@ -946,11 +952,12 @@ export async function addArchitect(
               break;
             }
           }
-          _deps!.deleteTerminalSession(session.id);
-          // Spec 755: remove the architect row from local state.db too.
-          // Spec 786 Phase 3: skip the row deletion when the workspace is
-          // mid-intentional-stop so the sibling survives `afx workspace stop`.
+          // Bugfix #826: preserve BOTH terminal_sessions and state.db.architect
+          // rows on intentional stop so the sibling survives `afx workspace
+          // stop` AND the workspace_path signal that getArchitectsForWorkspace
+          // joins on is alive after restart.
           if (!isIntentionallyStopping(resolvedPath)) {
+            _deps!.deleteTerminalSession(session.id);
             try {
               setArchitectByName(name, null);
             } catch { /* best-effort cleanup */ }
@@ -1000,10 +1007,10 @@ export async function addArchitect(
               break;
             }
           }
-          _deps!.deleteTerminalSession(session.id);
-          // Spec 786 Phase 3: skip the row deletion when the workspace is
-          // mid-intentional-stop so the sibling survives `afx workspace stop`.
+          // Bugfix #826: preserve BOTH terminal_sessions and state.db.architect
+          // rows on intentional stop (see matching shellper handler above).
           if (!isIntentionallyStopping(resolvedPath)) {
+            _deps!.deleteTerminalSession(session.id);
             try {
               setArchitectByName(name, null);
             } catch { /* best-effort cleanup */ }

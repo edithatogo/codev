@@ -207,6 +207,19 @@ export function saveTerminalSession(
     }
 
     const db = getGlobalDb();
+
+    // Bugfix #826: architect rows are preserved across `afx workspace stop`
+    // (deleteWorkspaceTerminalSessions skips type='architect'). On the next
+    // launch, a fresh terminal_id is assigned for the new PTY — without this
+    // pre-delete, INSERT OR REPLACE keyed on id would leave the stale row in
+    // place, accumulating one stale architect row per stop+start cycle. Enforce
+    // a workspace_path + role_id uniqueness invariant for architects here.
+    if (type === 'architect' && roleId) {
+      db.prepare(
+        "DELETE FROM terminal_sessions WHERE workspace_path = ? AND type = 'architect' AND role_id = ?"
+      ).run(normalizedPath, roleId);
+    }
+
     db.prepare(`
       INSERT OR REPLACE INTO terminal_sessions (id, workspace_path, type, role_id, pid, shellper_socket, shellper_pid, shellper_start_time, label, cwd)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -314,18 +327,40 @@ export function removeTerminalFromRegistry(terminalId: string): void {
 }
 
 /**
- * Delete all terminal sessions for a workspace from SQLite.
+ * Delete terminal sessions for a workspace from SQLite.
  * Normalizes path to ensure consistent cleanup regardless of how path was provided.
+ *
+ * Bugfix #826: by default, architect rows are PRESERVED — symmetric with how
+ * the `intentionallyStopping` flag preserves the corresponding
+ * `state.db.architect` rows during `afx workspace stop`. Together they keep
+ * the workspace_path signal that `getArchitectsForWorkspace` joins on alive
+ * across `afx workspace stop` + `afx workspace start`, so Spec 786's stop+start
+ * sibling restoration story still works after this hotfix.
+ *
+ * Architect rows that genuinely need cleanup (a single architect's PTY exiting
+ * outside an intentional stop) are removed by the architect's exit handler
+ * via `deleteTerminalSession(id)` — not by this bulk function.
+ *
+ * The `includeArchitects: true` opt-in is for the explicit full-wipe path
+ * (`handleWorkspaceStopAll`), which also deletes state.db.architect rows
+ * pre-emptively (see tower-routes.ts).
  */
-export function deleteWorkspaceTerminalSessions(workspacePath: string): void {
+export function deleteWorkspaceTerminalSessions(
+  workspacePath: string,
+  { includeArchitects = false }: { includeArchitects?: boolean } = {},
+): void {
   try {
     const normalizedPath = normalizeWorkspacePath(workspacePath);
     const db = getGlobalDb();
 
-    // Delete both normalized and raw path to handle any inconsistencies
-    db.prepare('DELETE FROM terminal_sessions WHERE workspace_path = ?').run(normalizedPath);
+    const sql = includeArchitects
+      ? 'DELETE FROM terminal_sessions WHERE workspace_path = ?'
+      : "DELETE FROM terminal_sessions WHERE workspace_path = ? AND type != 'architect'";
+
+    // Delete both normalized and raw path to handle any inconsistencies.
+    db.prepare(sql).run(normalizedPath);
     if (normalizedPath !== workspacePath) {
-      db.prepare('DELETE FROM terminal_sessions WHERE workspace_path = ?').run(workspacePath);
+      db.prepare(sql).run(workspacePath);
     }
   } catch (err) {
     _deps?.log('WARN', `Failed to delete workspace terminal sessions: ${(err as Error).message}`);
