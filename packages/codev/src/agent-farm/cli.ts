@@ -132,6 +132,34 @@ export async function runAgentFarm(args: string[]): Promise<void> {
       }
     });
 
+  // Issue #829: revive builders whose shellper died (e.g. after machine reboot).
+  workspaceCmd
+    .command('recover')
+    .description('Revive builders whose shellper died (e.g. after machine reboot)')
+    .option('--apply', 'Actually respawn builders (default: dry-run preview only)')
+    .option('--max-age <days>', 'Skip projects with status.yaml older than N days', '7')
+    .option('--include-stale', 'Ignore --max-age (revive arbitrarily old projects)')
+    .option('-y, --yes', 'Skip --apply confirmation prompt')
+    .action(async (options: { apply?: boolean; maxAge?: string; includeStale?: boolean; yes?: boolean }) => {
+      const { workspaceRecover } = await import('./commands/workspace-recover.js');
+      try {
+        const parsedMaxAge = options.maxAge ? parseInt(options.maxAge, 10) : undefined;
+        if (parsedMaxAge !== undefined && (Number.isNaN(parsedMaxAge) || parsedMaxAge < 0)) {
+          logger.error(`Invalid --max-age value: ${options.maxAge}`);
+          process.exit(1);
+        }
+        await workspaceRecover({
+          apply: options.apply,
+          maxAge: parsedMaxAge,
+          includeStale: options.includeStale,
+          yes: options.yes,
+        });
+      } catch (error) {
+        logger.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      }
+    });
+
   // Deprecated alias: `afx dash` → `afx workspace`
   const dashCmd = program
     .command('dash')
