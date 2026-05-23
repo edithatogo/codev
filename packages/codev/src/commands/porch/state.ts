@@ -310,11 +310,12 @@ export function findStatusPath(workspaceRoot: string, projectId: string): string
  * multi-PR flows (Spec 653) early phases merge status.yaml to main, so the
  * worktree copy is the fresher one.
  *
- * status.yaml files that fail to parse are skipped silently — callers that
- * care about parse failures can re-attempt readState() on individual paths.
+ * status.yaml files that fail to parse are skipped. Callers can observe these
+ * skips by passing `onParseError`; otherwise failures are silent.
  */
 export function listAllProjects(
   workspaceRoot: string,
+  opts?: { onParseError?: (statusPath: string, err: unknown) => void },
 ): Array<{ statusPath: string; state: ProjectState }> {
   const collected = new Map<string, { statusPath: string; state: ProjectState }>();
 
@@ -330,8 +331,8 @@ export function listAllProjects(
         if (!collected.has(state.id)) {
           collected.set(state.id, { statusPath, state });
         }
-      } catch {
-        // Unparseable / missing-fields — skip silently
+      } catch (err) {
+        opts?.onParseError?.(statusPath, err);
       }
     }
   };

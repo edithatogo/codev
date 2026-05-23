@@ -16,6 +16,7 @@ import {
   resolveWorktreePath,
   formatRelativeAge,
   type EligibilityInputs,
+  type BuilderInfo,
 } from '../commands/workspace-recover.js';
 import { listAllProjects } from '../../commands/porch/state.js';
 import type { ProjectState } from '../../commands/porch/types.js';
@@ -56,7 +57,11 @@ function makeSession(overrides: Partial<DbTerminalSession> = {}): DbTerminalSess
   };
 }
 
-function defaults(): Omit<EligibilityInputs, 'state' | 'session' | 'worktreeExists' | 'ageDays'> {
+function makeBuilderInfo(overrides: Partial<BuilderInfo> = {}): BuilderInfo {
+  return { builderId: 'builder-spir-87', issueArg: '87', cliProtocol: 'spir', ...overrides };
+}
+
+function defaults(): Omit<EligibilityInputs, 'state' | 'builderInfo' | 'sessions' | 'worktreeExists' | 'ageDays'> {
   return {
     maxAgeDays: 7,
     includeStale: false,
@@ -66,10 +71,11 @@ function defaults(): Omit<EligibilityInputs, 'state' | 'session' | 'worktreeExis
 }
 
 describe('evaluateEligibility', () => {
-  it('skips terminal phase (verified)', () => {
+  it('skips terminal phase (verified) — comes before all other checks', () => {
     const result = evaluateEligibility({
       state: makeState({ phase: 'verified' }),
-      session: makeSession(),
+      builderInfo: makeBuilderInfo(),
+      sessions: [makeSession()],
       worktreeExists: true,
       ageDays: 0,
       ...defaults(),
@@ -80,7 +86,8 @@ describe('evaluateEligibility', () => {
   it('skips terminal phase (complete)', () => {
     const result = evaluateEligibility({
       state: makeState({ phase: 'complete' }),
-      session: makeSession(),
+      builderInfo: makeBuilderInfo(),
+      sessions: [makeSession()],
       worktreeExists: true,
       ageDays: 0,
       ...defaults(),
@@ -88,10 +95,23 @@ describe('evaluateEligibility', () => {
     expect(result).toEqual({ eligible: false, reason: 'terminal' });
   });
 
+  it('skips when builderInfo is null (unsupported protocol)', () => {
+    const result = evaluateEligibility({
+      state: makeState({ protocol: 'experiment' }),
+      builderInfo: null,
+      sessions: [makeSession()],
+      worktreeExists: true,
+      ageDays: 0,
+      ...defaults(),
+    });
+    expect(result).toEqual({ eligible: false, reason: 'unsupported_protocol' });
+  });
+
   it('skips when no terminal_sessions row exists', () => {
     const result = evaluateEligibility({
       state: makeState(),
-      session: null,
+      builderInfo: makeBuilderInfo(),
+      sessions: [],
       worktreeExists: true,
       ageDays: 0,
       ...defaults(),
@@ -99,35 +119,106 @@ describe('evaluateEligibility', () => {
     expect(result).toEqual({ eligible: false, reason: 'no_session_row' });
   });
 
-  it('skips when shellper PID is alive', () => {
-    const result = evaluateEligibility({
-      state: makeState(),
-      session: makeSession(),
-      worktreeExists: true,
-      ageDays: 0,
-      ...defaults(),
-      isProcessAlive: () => true,
+  describe('liveness probe (PID-first per Gemini #829 review)', () => {
+    it('skips when shellper PID is alive (socket also present)', () => {
+      const result = evaluateEligibility({
+        state: makeState(),
+        builderInfo: makeBuilderInfo(),
+        sessions: [makeSession({ shellper_pid: 12345, shellper_socket: '/sock' })],
+        worktreeExists: true,
+        ageDays: 0,
+        ...defaults(),
+        isProcessAlive: () => true,
+        socketExists: () => true,
+      });
+      expect(result).toEqual({ eligible: false, reason: 'shellper_alive' });
     });
-    expect(result).toEqual({ eligible: false, reason: 'shellper_alive' });
+
+    it('revives when PID is known dead even though stale socket file remains', () => {
+      // Critical for reboot recovery: sockets live in ~/.codev/run/ which the
+      // OS does not clear on reboot. The dead PID is definitive evidence.
+      const result = evaluateEligibility({
+        state: makeState(),
+        builderInfo: makeBuilderInfo(),
+        sessions: [makeSession({ shellper_pid: 12345, shellper_socket: '/sock' })],
+        worktreeExists: true,
+        ageDays: 0,
+        ...defaults(),
+        isProcessAlive: () => false,
+        socketExists: () => true,
+      });
+      expect(result).toEqual({ eligible: true });
+    });
+
+    it('falls back to socket check when shellper_pid is null (legacy rows)', () => {
+      const result = evaluateEligibility({
+        state: makeState(),
+        builderInfo: makeBuilderInfo(),
+        sessions: [makeSession({ shellper_pid: null, shellper_socket: '/sock' })],
+        worktreeExists: true,
+        ageDays: 0,
+        ...defaults(),
+        isProcessAlive: () => false,
+        socketExists: () => true,
+      });
+      expect(result).toEqual({ eligible: false, reason: 'shellper_alive' });
+    });
+
+    it('revives when shellper_pid is null AND no socket file', () => {
+      const result = evaluateEligibility({
+        state: makeState(),
+        builderInfo: makeBuilderInfo(),
+        sessions: [makeSession({ shellper_pid: null, shellper_socket: '/sock' })],
+        worktreeExists: true,
+        ageDays: 0,
+        ...defaults(),
+        isProcessAlive: () => false,
+        socketExists: () => false,
+      });
+      expect(result).toEqual({ eligible: true });
+    });
   });
 
-  it('skips when socket file still exists (treated as alive)', () => {
-    const result = evaluateEligibility({
-      state: makeState(),
-      session: makeSession(),
-      worktreeExists: true,
-      ageDays: 0,
-      ...defaults(),
-      isProcessAlive: () => false,
-      socketExists: () => true,
+  describe('duplicate row aggregation (Codex #829 review)', () => {
+    it('treats builder as alive if ANY matching row has a live PID', () => {
+      const result = evaluateEligibility({
+        state: makeState(),
+        builderInfo: makeBuilderInfo(),
+        sessions: [
+          makeSession({ id: 'dead-row', shellper_pid: 11111 }),
+          makeSession({ id: 'live-row', shellper_pid: 22222 }),
+        ],
+        worktreeExists: true,
+        ageDays: 0,
+        ...defaults(),
+        // pid 11111 dead, pid 22222 alive
+        isProcessAlive: (pid) => pid === 22222,
+      });
+      expect(result).toEqual({ eligible: false, reason: 'shellper_alive' });
     });
-    expect(result).toEqual({ eligible: false, reason: 'shellper_alive' });
+
+    it('revives only when ALL matching rows look dead', () => {
+      const result = evaluateEligibility({
+        state: makeState(),
+        builderInfo: makeBuilderInfo(),
+        sessions: [
+          makeSession({ id: 'row-a', shellper_pid: 11111 }),
+          makeSession({ id: 'row-b', shellper_pid: 22222 }),
+        ],
+        worktreeExists: true,
+        ageDays: 0,
+        ...defaults(),
+        isProcessAlive: () => false,
+      });
+      expect(result).toEqual({ eligible: true });
+    });
   });
 
   it('skips when worktree is missing', () => {
     const result = evaluateEligibility({
       state: makeState(),
-      session: makeSession(),
+      builderInfo: makeBuilderInfo(),
+      sessions: [makeSession()],
       worktreeExists: false,
       ageDays: 0,
       ...defaults(),
@@ -138,7 +229,8 @@ describe('evaluateEligibility', () => {
   it('skips stale projects when --include-stale not set', () => {
     const result = evaluateEligibility({
       state: makeState(),
-      session: makeSession(),
+      builderInfo: makeBuilderInfo(),
+      sessions: [makeSession()],
       worktreeExists: true,
       ageDays: 30,
       ...defaults(),
@@ -149,7 +241,8 @@ describe('evaluateEligibility', () => {
   it('honors --include-stale on otherwise-stale projects', () => {
     const result = evaluateEligibility({
       state: makeState(),
-      session: makeSession(),
+      builderInfo: makeBuilderInfo(),
+      sessions: [makeSession()],
       worktreeExists: true,
       ageDays: 30,
       ...defaults(),
@@ -161,7 +254,8 @@ describe('evaluateEligibility', () => {
   it('returns eligible when all conditions are met', () => {
     const result = evaluateEligibility({
       state: makeState(),
-      session: makeSession(),
+      builderInfo: makeBuilderInfo(),
+      sessions: [makeSession()],
       worktreeExists: true,
       ageDays: 2,
       ...defaults(),
@@ -169,10 +263,11 @@ describe('evaluateEligibility', () => {
     expect(result).toEqual({ eligible: true });
   });
 
-  it('checks predicates in cheap-first order (terminal beats missing session)', () => {
+  it('checks predicates in cheap-first order (terminal beats unsupported)', () => {
     const result = evaluateEligibility({
-      state: makeState({ phase: 'verified' }),
-      session: null,
+      state: makeState({ phase: 'verified', protocol: 'experiment' }),
+      builderInfo: null,
+      sessions: [],
       worktreeExists: false,
       ageDays: 999,
       ...defaults(),
@@ -186,14 +281,6 @@ describe('deriveBuilderInfo', () => {
     expect(deriveBuilderInfo(makeState({ id: '0087', protocol: 'spir' }))).toEqual({
       builderId: 'builder-spir-87',
       issueArg: '87',
-      cliProtocol: 'spir',
-    });
-  });
-
-  it('aliases protocol: spider → spir for both builderId and CLI invocation', () => {
-    expect(deriveBuilderInfo(makeState({ id: '0092', protocol: 'spider' }))).toEqual({
-      builderId: 'builder-spir-92',
-      issueArg: '92',
       cliProtocol: 'spir',
     });
   });
@@ -228,6 +315,15 @@ describe('deriveBuilderInfo', () => {
       issueArg: '501',
       cliProtocol: 'air',
     });
+  });
+
+  describe('unsupported protocols return null', () => {
+    it.each(['experiment', 'maintain', 'task', 'protocol', 'release', 'spider'])(
+      'returns null for protocol: %s',
+      (protocol) => {
+        expect(deriveBuilderInfo(makeState({ protocol }))).toBeNull();
+      },
+    );
   });
 });
 
@@ -276,9 +372,18 @@ describe('resolveWorktreePath', () => {
     const result = resolveWorktreePath(buildersDir, makeState({ id: 'bugfix-693', protocol: 'bugfix' }));
     expect(result).toBe(wt);
   });
+
+  it('returns null for unsupported protocols without filesystem lookups', () => {
+    // An experiment dir on disk would normally be found if the protocol were
+    // supported — but for unsupported protocols we short-circuit to null.
+    const wt = join(buildersDir, 'experiment-abcd');
+    mkdirSync(join(wt, '.git'), { recursive: true });
+    const result = resolveWorktreePath(buildersDir, makeState({ id: 'abcd', protocol: 'experiment' }));
+    expect(result).toBeNull();
+  });
 });
 
-describe('listAllProjects (precedence)', () => {
+describe('listAllProjects (precedence + diagnostics)', () => {
   let tmp: string;
 
   beforeEach(() => {
@@ -333,7 +438,7 @@ describe('listAllProjects (precedence)', () => {
     expect(listAllProjects(tmp)).toEqual([]);
   });
 
-  it('skips unparseable status.yaml files', () => {
+  it('skips unparseable status.yaml files silently by default', () => {
     const dir = join(tmp, 'codev', 'projects', '0099-broken');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'status.yaml'), 'this is: not\n  valid:\nyaml: [\n', 'utf-8');
@@ -341,6 +446,20 @@ describe('listAllProjects (precedence)', () => {
     const result = listAllProjects(tmp);
     expect(result).toHaveLength(1);
     expect(result[0].state.id).toBe('0087');
+  });
+
+  it('invokes onParseError callback when provided', () => {
+    const dir = join(tmp, 'codev', 'projects', '0099-broken');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'status.yaml'), 'this is: not\n  valid:\nyaml: [\n', 'utf-8');
+    const errors: Array<{ path: string; err: unknown }> = [];
+    const result = listAllProjects(tmp, {
+      onParseError: (path, err) => errors.push({ path, err }),
+    });
+    expect(result).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].path).toBe(join(dir, 'status.yaml'));
+    expect(errors[0].err).toBeInstanceOf(Error);
   });
 });
 

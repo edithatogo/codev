@@ -17,8 +17,15 @@ import type { DbTerminalSession } from '../servers/tower-types.js';
 import { confirm } from '../../lib/cli-prompts.js';
 
 const TERMINAL_PHASES = new Set(['verified', 'complete']);
-const SPIDER_TO_SPIR = 'spir';
 const DEFAULT_MAX_AGE_DAYS = 7;
+
+// Protocols that `afx spawn <id> --resume --protocol <name>` can revive cleanly:
+// issue-driven families with a positional issue arg and a stable worktree layout.
+// `experiment` / `maintain` / `task` / bare protocol-mode builders can't be
+// resumed by ID through spawn.ts and are skipped with `unsupported_protocol`.
+// (Legacy `spider` is also excluded — it was retired long ago, and any stray
+// project still carrying that protocol value should be treated as unsupported.)
+const REVIVABLE_PROTOCOLS = new Set(['spir', 'aspir', 'air', 'pir', 'bugfix']);
 
 export interface WorkspaceRecoverOptions {
   apply?: boolean;
@@ -29,6 +36,7 @@ export interface WorkspaceRecoverOptions {
 
 export type IneligibleReason =
   | 'terminal'
+  | 'unsupported_protocol'
   | 'no_session_row'
   | 'shellper_alive'
   | 'worktree_missing'
@@ -40,7 +48,8 @@ export type EligibilityResult =
 
 export interface EligibilityInputs {
   state: ProjectState;
-  session: DbTerminalSession | null;
+  builderInfo: BuilderInfo | null;
+  sessions: DbTerminalSession[];
   worktreeExists: boolean;
   ageDays: number;
   maxAgeDays: number;
@@ -50,35 +59,55 @@ export interface EligibilityInputs {
 }
 
 /**
+ * Liveness rule per row (Gemini cmap finding):
+ *   - shellper_pid known + alive → ALIVE
+ *   - shellper_pid known + dead  → DEAD (socket is ignored; the OS doesn't clean
+ *                                   ~/.codev/run/ on reboot, so a stale socket
+ *                                   would otherwise falsely mark the row alive
+ *                                   and defeat the primary recovery use case)
+ *   - shellper_pid null + socket file exists → ALIVE (legacy / pre-PID rows)
+ *   - shellper_pid null + no socket → DEAD
+ */
+function isSessionAlive(
+  session: DbTerminalSession,
+  isProcessAlive: (pid: number) => boolean,
+  socketExists: (socket: string) => boolean,
+): boolean {
+  if (session.shellper_pid !== null) {
+    return isProcessAlive(session.shellper_pid);
+  }
+  return session.shellper_socket !== null && socketExists(session.shellper_socket);
+}
+
+/**
  * Pure predicate — no I/O. All filesystem and process probes happen in the
  * caller and are passed in via `isProcessAlive` and `socketExists`. This keeps
  * the predicate trivially unit-testable.
  *
- * Order matters: cheap structural checks (phase, session row) come first;
- * filesystem-touching checks (worktree, socket) later.
+ * Order matters: cheap structural checks come first; filesystem-touching
+ * checks (worktree) later.
  */
 export function evaluateEligibility(inputs: EligibilityInputs): EligibilityResult {
   const {
-    state, session, worktreeExists, ageDays, maxAgeDays, includeStale,
+    state, builderInfo, sessions, worktreeExists, ageDays, maxAgeDays, includeStale,
     isProcessAlive, socketExists,
   } = inputs;
 
   if (TERMINAL_PHASES.has(state.phase)) {
     return { eligible: false, reason: 'terminal' };
   }
-  if (!session) {
+  if (builderInfo === null) {
+    return { eligible: false, reason: 'unsupported_protocol' };
+  }
+  if (sessions.length === 0) {
     return { eligible: false, reason: 'no_session_row' };
   }
-
-  // Either signal of life keeps the builder out of the revive set.
-  // We don't try to open the socket — file existence + PID liveness is enough
-  // and avoids any chance of disturbing a healthy shellper.
-  const pidAlive = session.shellper_pid !== null && isProcessAlive(session.shellper_pid);
-  const socketPresent = session.shellper_socket !== null && socketExists(session.shellper_socket);
-  if (pidAlive || socketPresent) {
+  // If ANY matching session looks alive, treat the builder as alive. Duplicates
+  // can occur when a prior recovery left a dead row behind (terminal_sessions
+  // has no UNIQUE constraint on role_id) — the cautious read is "alive."
+  if (sessions.some(s => isSessionAlive(s, isProcessAlive, socketExists))) {
     return { eligible: false, reason: 'shellper_alive' };
   }
-
   if (!worktreeExists) {
     return { eligible: false, reason: 'worktree_missing' };
   }
@@ -98,11 +127,14 @@ export interface BuilderInfo {
  * Derive the inputs needed to invoke `afx spawn <issueArg> --resume --protocol <cliProtocol>`
  * and the SQLite `role_id` to look up the builder's terminal session.
  *
- * Normalizes the legacy `spider` protocol alias to `spir`.
+ * Returns null for protocols that cannot be cleanly resumed via the spawn CLI
+ * (experiment/maintain/task/legacy spider/etc) — callers should skip those
+ * projects with an `unsupported_protocol` reason.
  */
-export function deriveBuilderInfo(state: ProjectState): BuilderInfo {
-  const rawProtocol = state.protocol === 'spider' ? SPIDER_TO_SPIR : state.protocol;
-
+export function deriveBuilderInfo(state: ProjectState): BuilderInfo | null {
+  if (!REVIVABLE_PROTOCOLS.has(state.protocol)) {
+    return null;
+  }
   if (state.protocol === 'bugfix') {
     const numericId = state.id.replace(/^bugfix-/, '');
     return {
@@ -112,18 +144,23 @@ export function deriveBuilderInfo(state: ProjectState): BuilderInfo {
     };
   }
   return {
-    builderId: buildAgentName('spec', state.id, rawProtocol),
+    builderId: buildAgentName('spec', state.id, state.protocol),
     issueArg: stripLeadingZeros(state.id),
-    cliProtocol: rawProtocol,
+    cliProtocol: state.protocol,
   };
 }
 
 /**
  * Resolve the builder's worktree path on disk, handling both the Spec-653
  * ID-only layout and the legacy title-suffixed form.
+ *
+ * Returns null when the project's protocol isn't revivable (no defined worktree
+ * naming) or when no matching directory exists.
  */
 export function resolveWorktreePath(buildersDir: string, state: ProjectState): string | null {
   const info = deriveBuilderInfo(state);
+  if (info === null) return null;
+
   const idOnlyName = `${info.cliProtocol}-${info.issueArg}`;
   const idOnlyPath = join(buildersDir, idOnlyName);
   if (existsSync(idOnlyPath) && existsSync(join(idOnlyPath, '.git'))) {
@@ -154,6 +191,7 @@ export function formatRelativeAge(iso: string): string {
 function reasonLabel(reason: IneligibleReason): string {
   switch (reason) {
     case 'terminal': return 'terminal';
+    case 'unsupported_protocol': return 'unsupported protocol';
     case 'no_session_row': return 'no session row';
     case 'shellper_alive': return 'shellper alive';
     case 'worktree_missing': return 'worktree missing';
@@ -163,7 +201,7 @@ function reasonLabel(reason: IneligibleReason): string {
 
 interface RecoverRow {
   state: ProjectState;
-  builderInfo: BuilderInfo;
+  builderInfo: BuilderInfo | null;
   worktreePath: string | null;
   eligibility: EligibilityResult;
 }
@@ -192,10 +230,13 @@ function printPreview(rows: RecoverRow[]): void {
 }
 
 async function respawnBuilder(info: BuilderInfo): Promise<void> {
+  // Use the current node binary and CLI entry point so the respawn invocation
+  // matches the install method this command was started under (npm global,
+  // npx, dev script, etc.) instead of relying on PATH lookup of 'afx'.
   await new Promise<void>((resolvePromise, rejectPromise) => {
     const child = spawn(
-      'afx',
-      ['spawn', info.issueArg, '--resume', '--protocol', info.cliProtocol],
+      process.execPath,
+      [process.argv[1], 'spawn', info.issueArg, '--resume', '--protocol', info.cliProtocol],
       { stdio: 'inherit' },
     );
     child.on('error', rejectPromise);
@@ -217,7 +258,11 @@ export async function workspaceRecover(options: WorkspaceRecoverOptions = {}): P
   if (!includeStale) logger.kv('Max age', `${maxAgeDays} day(s)`);
   logger.blank();
 
-  const projects = listAllProjects(config.workspaceRoot);
+  const projects = listAllProjects(config.workspaceRoot, {
+    onParseError: (statusPath, err) => {
+      logger.debug(`Skipped unparseable ${statusPath}: ${err instanceof Error ? err.message : String(err)}`);
+    },
+  });
   if (projects.length === 0) {
     logger.info('No porch projects found.');
     return;
@@ -229,18 +274,24 @@ export async function workspaceRecover(options: WorkspaceRecoverOptions = {}): P
   } finally {
     closeGlobalDb();
   }
-  const sessionByRoleId = new Map<string, DbTerminalSession>();
+  // role_id has no UNIQUE constraint in the schema, so collect every matching
+  // row per builder id rather than collapsing to last-write-wins.
+  const sessionsByRoleId = new Map<string, DbTerminalSession[]>();
   for (const s of sessions) {
-    if (s.type === 'builder' && s.role_id) sessionByRoleId.set(s.role_id, s);
+    if (s.type !== 'builder' || !s.role_id) continue;
+    const bucket = sessionsByRoleId.get(s.role_id);
+    if (bucket) bucket.push(s);
+    else sessionsByRoleId.set(s.role_id, [s]);
   }
 
   const rows: RecoverRow[] = projects.map(({ state }) => {
     const builderInfo = deriveBuilderInfo(state);
-    const session = sessionByRoleId.get(builderInfo.builderId) ?? null;
+    const matchingSessions = builderInfo ? sessionsByRoleId.get(builderInfo.builderId) ?? [] : [];
     const worktreePath = resolveWorktreePath(config.buildersDir, state);
     const ageDays = (Date.now() - Date.parse(state.updated_at)) / 86_400_000;
     const eligibility = evaluateEligibility({
-      state, session,
+      state, builderInfo,
+      sessions: matchingSessions,
       worktreeExists: worktreePath !== null,
       ageDays, maxAgeDays, includeStale,
       isProcessAlive: processExists,
@@ -251,7 +302,10 @@ export async function workspaceRecover(options: WorkspaceRecoverOptions = {}): P
 
   printPreview(rows);
 
-  const eligible = rows.filter((r): r is RecoverRow & { eligibility: { eligible: true } } => r.eligibility.eligible);
+  const eligible = rows.filter(
+    (r): r is RecoverRow & { builderInfo: BuilderInfo; eligibility: { eligible: true } } =>
+      r.eligibility.eligible && r.builderInfo !== null,
+  );
   logger.blank();
   logger.kv('Eligible', `${eligible.length} / ${rows.length}`);
 
