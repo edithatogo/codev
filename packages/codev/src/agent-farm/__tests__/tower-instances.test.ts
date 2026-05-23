@@ -747,6 +747,23 @@ describe('tower-instances', () => {
       // And must skip already-present names for idempotency.
       expect(src).toMatch(/if\s*\(\s*entry\.architects\.has\(\s*a\.name\s*\)\s*\)\s*continue/);
     });
+
+    it('Bugfix #826: reconcile loop scopes architects to this workspace', async () => {
+      // Source-level property: the sibling reconcile loop must use the
+      // workspace-scoped helper getArchitectsForWorkspace (which joins with
+      // terminal_sessions.workspace_path), NOT the global getArchitects().
+      // The global form leaked architects registered in workspace A into
+      // workspace B at launch time — see issue #826.
+      const src = fs.readFileSync(
+        path.resolve(__dirname, '../servers/tower-instances.ts'),
+        'utf8',
+      );
+      // The reconcile call site must use the workspace-scoped helper.
+      expect(src).toMatch(/getArchitectsForWorkspace\s*\(\s*resolvedPath\s*\)/);
+      // And the module must not import the unscoped getArchitects (which would
+      // re-introduce the leak if someone re-uses it in the same file).
+      expect(src).not.toMatch(/from\s+['"][^'"]*state\.js['"][^;]*\bgetArchitects\b(?!ForWorkspace)/);
+    });
   });
 
   describe('Spec 786 Phase 3 — intentional-stop flag', () => {

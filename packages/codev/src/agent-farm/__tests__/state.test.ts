@@ -6,11 +6,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { LOCAL_SCHEMA } from '../db/schema.js';
+import { LOCAL_SCHEMA, GLOBAL_SCHEMA } from '../db/schema.js';
 
 // Test directory
 const testDir = resolve(process.cwd(), '.test-state');
 let testDb: Database.Database;
+let testGlobalDb: Database.Database;
 
 // Mock the db module to use test database
 vi.mock('../db/index.js', () => {
@@ -24,6 +25,15 @@ vi.mock('../db/index.js', () => {
         testDb.prepare('INSERT OR IGNORE INTO _migrations (version) VALUES (1)').run();
       }
       return testDb;
+    },
+    getGlobalDb: () => {
+      if (!testGlobalDb) {
+        testGlobalDb = new Database(resolve(testDir, 'global.db'));
+        testGlobalDb.pragma('journal_mode = WAL');
+        testGlobalDb.pragma('busy_timeout = 5000');
+        testGlobalDb.exec(GLOBAL_SCHEMA);
+      }
+      return testGlobalDb;
     },
     closeDb: () => {
       if (testDb) {
@@ -44,6 +54,10 @@ describe('State Management', () => {
       testDb.close();
       testDb = null as any;
     }
+    if (testGlobalDb) {
+      testGlobalDb.close();
+      testGlobalDb = null as any;
+    }
     if (existsSync(testDir)) {
       rmSync(testDir, { recursive: true });
     }
@@ -54,6 +68,10 @@ describe('State Management', () => {
     if (testDb) {
       testDb.close();
       testDb = null as any;
+    }
+    if (testGlobalDb) {
+      testGlobalDb.close();
+      testGlobalDb = null as any;
     }
     if (existsSync(testDir)) {
       rmSync(testDir, { recursive: true });
@@ -487,6 +505,119 @@ describe('State Management', () => {
 
       const architectsAfterClear = state.getArchitects();
       expect(architectsAfterClear).toHaveLength(0);
+    });
+  });
+
+  // ===========================================================================
+  // Bugfix #826 — getArchitectsForWorkspace
+  // ===========================================================================
+  //
+  // Returns architects from state.db.architect whose role_id appears in a
+  // terminal_sessions row matching `workspace_path = <given path>` with
+  // `type = 'architect'`. Used by launchInstance's sibling reconcile loop to
+  // avoid leaking architects registered in one workspace into another.
+
+  describe('getArchitectsForWorkspace (Bugfix #826)', () => {
+    function insertTerminalSession(
+      id: string,
+      workspacePath: string,
+      type: 'architect' | 'builder' | 'shell',
+      roleId: string | null,
+    ): void {
+      // Prime testGlobalDb lazily through the mock if it hasn't been touched.
+      if (!testGlobalDb) {
+        state.getArchitectsForWorkspace('/tmp/__init__');
+      }
+      testGlobalDb!
+        .prepare(
+          `INSERT INTO terminal_sessions (id, workspace_path, type, role_id, pid)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+        .run(id, workspacePath, type, roleId, 1234);
+    }
+
+    it('returns empty when no terminal_sessions match the workspace', () => {
+      state.setArchitectByName('ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:00:00Z',
+      });
+
+      const result = state.getArchitectsForWorkspace('/some/workspace');
+      expect(result).toEqual([]);
+    });
+
+    it('returns only architects whose terminal_sessions row matches workspace_path', () => {
+      // Two architects in state.db: main (belongs to workspace A) and
+      // ob-refine (belongs to workspace A). Plus bug-backlog in state.db but
+      // its terminal_sessions row is for workspace B.
+      state.setArchitect({
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:00:00Z',
+      });
+      state.setArchitectByName('ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:05:00Z',
+      });
+      state.setArchitectByName('bug-backlog', {
+        name: 'bug-backlog',
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:10:00Z',
+      });
+
+      insertTerminalSession('t1', '/workspace/A', 'architect', 'main');
+      insertTerminalSession('t2', '/workspace/A', 'architect', 'ob-refine');
+      insertTerminalSession('t3', '/workspace/B', 'architect', 'bug-backlog');
+
+      const archA = state.getArchitectsForWorkspace('/workspace/A');
+      const archB = state.getArchitectsForWorkspace('/workspace/B');
+      const namesA = archA.map(a => a.name).sort();
+      const namesB = archB.map(a => a.name).sort();
+
+      expect(namesA).toEqual(['main', 'ob-refine']);
+      expect(namesB).toEqual(['bug-backlog']);
+    });
+
+    it('regression: leaked architect in state.db is NOT returned for an unrelated workspace', () => {
+      // The bug scenario from issue #826: shannon registered ob-refine, leaking
+      // a row into state.db.architect. The user then opens manazil (which has
+      // no terminal_sessions rows for these architects). Pre-fix, the launch
+      // reconcile would re-spawn ob-refine into manazil. With this filter,
+      // ob-refine is correctly excluded for manazil.
+      state.setArchitectByName('ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:00:00Z',
+      });
+      insertTerminalSession('t-shannon', '/shannon', 'architect', 'ob-refine');
+
+      const manazil = state.getArchitectsForWorkspace('/manazil');
+      expect(manazil).toEqual([]);
+    });
+
+    it('ignores non-architect terminal_sessions rows', () => {
+      state.setArchitectByName('ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:00:00Z',
+      });
+      // A builder terminal that happens to share a workspace_path shouldn't
+      // pull a same-named state.db.architect row into the result.
+      insertTerminalSession('t-builder', '/workspace/A', 'builder', 'ob-refine');
+
+      const result = state.getArchitectsForWorkspace('/workspace/A');
+      expect(result).toEqual([]);
+    });
+
+    it('returns only architects that also exist in state.db.architect', () => {
+      // terminal_sessions has a row for an architect name with no matching
+      // state.db.architect row (e.g., the architect row was deleted but the
+      // terminal_sessions row lingers). Should not be returned.
+      insertTerminalSession('t-orphan', '/workspace/A', 'architect', 'orphan-arch');
+
+      const result = state.getArchitectsForWorkspace('/workspace/A');
+      expect(result).toEqual([]);
     });
   });
 });

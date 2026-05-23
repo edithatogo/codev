@@ -33,7 +33,7 @@ import {
   validateArchitectName,
   DEFAULT_ARCHITECT_NAME,
 } from '../utils/architect-name.js';
-import { setArchitect, setArchitectByName, getArchitects } from '../state.js';
+import { setArchitect, setArchitectByName, getArchitectsForWorkspace } from '../state.js';
 
 // ============================================================================
 // Dependency interface
@@ -622,10 +622,18 @@ export async function launchInstance(workspacePath: string): Promise<{ success: 
     // preserved their rows). The ordering is critical: `addArchitect()` rejects
     // when `entry.architects.size === 0`, so it MUST run after main creation.
     //
+    // Bugfix #826: scope reconciliation to architects whose terminal_sessions
+    // row matches THIS workspace. `state.db.architect` is global-per-Tower (no
+    // workspace_path column), so a naive `getArchitects()` would leak architects
+    // registered in workspace A into workspace B when B is launched while A is
+    // still active. The terminal_sessions table in global.db has workspace_path
+    // and acts as the workspace-scoping signal until a proper schema migration
+    // (tracked separately) adds workspace_path to state.db.architect.
+    //
     // Idempotency: skip names already in `entry.architects` so a re-entrant
     // launch (or a race with `reconcileTerminalSessions`) doesn't double-spawn.
     try {
-      const persisted = getArchitects();
+      const persisted = getArchitectsForWorkspace(resolvedPath);
       for (const a of persisted) {
         if (a.name === 'main') continue;
         if (entry.architects.has(a.name)) continue;

@@ -9,7 +9,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import type { DashboardState, ArchitectState, Builder, UtilTerminal, Annotation } from './types.js';
-import { getDb, closeDb } from './db/index.js';
+import { getDb, getGlobalDb, closeDb } from './db/index.js';
 import type { DbArchitect, DbBuilder, DbUtil, DbAnnotation } from './db/types.js';
 import {
   dbArchitectToArchitectState,
@@ -396,6 +396,46 @@ export function getArchitects(): ArchitectState[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM architect ORDER BY id').all() as DbArchitect[];
   return rows.map(dbArchitectToArchitectState);
+}
+
+/**
+ * Get architects belonging to a specific workspace (Bugfix #826).
+ *
+ * The `state.db.architect` table is global-per-Tower (anchored to Tower's
+ * startup CWD) and lacks a `workspace_path` column. The `terminal_sessions`
+ * table in `global.db` DOES carry `workspace_path` — and its `role_id` for
+ * architect rows IS the architect's name. Joining across the two databases
+ * via two queries (better-sqlite3 has no native cross-database attach helper
+ * here) gives a workspace-scoped architect list without a schema migration.
+ *
+ * Used by `launchInstance`'s sibling reconcile loop to avoid re-spawning
+ * architects registered in *other* workspaces into the workspace currently
+ * being launched.
+ */
+export function getArchitectsForWorkspace(workspacePath: string): ArchitectState[] {
+  // 1) Names of architects that have a terminal_sessions row in this workspace.
+  let architectNames = new Set<string>();
+  try {
+    const globalDb = getGlobalDb();
+    const rows = globalDb
+      .prepare(
+        "SELECT DISTINCT role_id FROM terminal_sessions WHERE type = 'architect' AND workspace_path = ? AND role_id IS NOT NULL"
+      )
+      .all(workspacePath) as { role_id: string }[];
+    architectNames = new Set(rows.map(r => r.role_id));
+  } catch {
+    // Global DB unavailable / table missing — treat as empty workspace set.
+    return [];
+  }
+
+  if (architectNames.size === 0) return [];
+
+  // 2) Intersect with state.db.architect rows.
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM architect ORDER BY id').all() as DbArchitect[];
+  return rows
+    .filter(r => architectNames.has(r.id))
+    .map(dbArchitectToArchitectState);
 }
 
 /**
