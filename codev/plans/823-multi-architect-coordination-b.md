@@ -172,16 +172,23 @@ Updated cell:
 
 The leading `{' · '}` is preserved as a JSX text node (not concatenated) so React's whitespace handling renders a true ` · ` with surrounding spaces.
 
-**CSS** (whichever CSS file currently defines `.builder-col-id` and other `builder-*` classes — plan-phase check via `grep -r "\.builder-col-id" packages/dashboard/src/`):
+**CSS** — pinned by plan iter-1 Codex to `packages/dashboard/src/index.css` (`.builder-col-id` at line 1081-1086). Add the new class adjacent to the existing `.builder-col-id` block:
 
 ```css
 .builder-attribution {
   font-size: 0.9em;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
 }
 ```
 
-Single class, no media query, no responsive variant — matches the "minimum DOM change" framing.
+Single class, no media query, no responsive variant — matches the "minimum DOM change" framing. The fallback `#888` is dropped (plan iter-1 Claude verified `--text-secondary` exists at `index.css:10` and is used 30+ times across the dashboard).
+
+**Column-width caveat** (plan iter-1 Claude): `.builder-col-id` currently sets `width: 60px` with `white-space: nowrap`. Adding ` · ob-refine` (~12 extra characters) to a cell sized for 4-character builder IDs will overflow the 60px constraint. The cell will expand because `white-space: nowrap` prevents wrapping, potentially shifting downstream columns. Two correct options for the builder:
+
+- **Option (preferred)**: change `width: 60px` to `min-width: 60px` so the cell can grow when attribution renders without forcing a fixed width that overflows.
+- **Option (fallback)**: expand `width` to a value that accommodates `<id> · <name>` for realistic architect-name lengths (e.g. `width: 160px` for `#0823 · architect-2`-style names up to ~12 chars).
+
+The Playwright visual smoke at N=1/N=2/N=3 (acceptance criterion) catches any regression here. Builder picks Option (preferred) unless a layout reason emerges to fix the column width.
 
 #### Acceptance Criteria
 
@@ -216,8 +223,9 @@ Revert the commit. No persisted state mutations introduced by this phase — typ
   - **Mitigation**: the `if (row.issue_number != null) builder.issueId = ...` conditional preserves the existing semantics for rows that DO match. Regression test in the unit suite asserts the N=1 `issueId` rendering at parity.
 - **Risk**: `BuilderCard` is also used elsewhere (e.g., another dashboard view) and gets a missing-prop warning when the new `architectCount` prop is required.
   - **Mitigation**: per iter-5 Gemini's verification, `NeedsAttentionList` does NOT render `BuilderCard` (it builds `AttentionItem`s natively). Plan-phase grep for `BuilderCard` consumers: `grep -rn 'BuilderCard' packages/dashboard/src/` should turn up only `WorkView.tsx`. If others exist, default the prop to `0` (so the span never renders) and update each call site to pass the correct count where relevant.
-- **Risk**: CSS variable `--text-secondary` doesn't exist in the dashboard's design system.
-  - **Mitigation**: plan-phase grep `--text-secondary` in `packages/dashboard/src/styles/` and fall back to a hard-coded gray (`#666` or similar) if absent. The exact color is a builder judgment call within the "small, de-emphasized" constraint of OQ-B (a).
+- **Risk (RETIRED by plan iter-1 Claude verification)**: `--text-secondary` was hypothesized as possibly absent. Verified present at `packages/dashboard/src/index.css:10` and used 30+ times. No fallback needed.
+- **Risk**: `.builder-col-id` is `width: 60px` with `white-space: nowrap` — adding ` · ob-refine` overflows the fixed width and may shift downstream columns.
+  - **Mitigation**: change `width` to `min-width: 60px` so the cell grows naturally when attribution renders (preferred); or expand to ~160px to fit realistic name lengths. Playwright visual smoke at N=1/N=2/N=3 is the safety net.
 
 ---
 
@@ -422,8 +430,8 @@ Revert the commit. Documentation is fully additive.
 - [ ] Event payload is `{ workspace: <workspacePath> }` — minimum-shape, matching `worktree-config-updated` per `worktree-config-watcher.ts:60-65`.
 - [ ] The event rides the existing `'notification'` channel of the `SSEEventType` union (no new union entry) — same pattern `worktree-config-updated` uses. Plan-phase confirms by reading `packages/types/src/sse.ts` and the existing broadcast helper.
 - [ ] `WorkspaceProvider` in `packages/vscode/src/views/workspace.ts` subscribes to the new event via `connectionManager.onSSEEvent()` (existing subscription mechanism per iter-1 Claude + iter-5 Claude verification). On match, fires `this.changeEmitter.fire()` (its existing refresh trigger).
-- [ ] Tower-side unit test: `addArchitect` and the remove-seam helper each fire the broadcast notifier (assert with a mock notifier).
-- [ ] VSCode-side unit test (vitest, per #786 phase 6's new setup): subscriber callback fires `WorkspaceProvider.refresh()` (mock the `connectionManager` event source).
+- [ ] Tower-side unit test (in `packages/codev/src/agent-farm/servers/__tests__/`, route-layer test): `handleAddArchitect` and the remove route handler each call `ctx.broadcastNotification` with `type: 'architects-updated'` and `body: JSON.stringify({ workspace })` on success; do NOT call it on failure. Mock `ctx` and the underlying `addArchitect`/remove helper.
+- [ ] VSCode-side unit test in `packages/vscode/src/test/` (vscode-test harness per `packages/vscode/package.json` — NOT vitest, plan iter-1 Codex correction): subscriber callback fires `changeEmitter` on a synthetic `architects-updated` envelope; does NOT fire on unrelated envelope types or malformed JSON. Mock the `connectionManager.onSSEEvent` event source and deliver `{ data: '{"type":"architects-updated"}' }`.
 - [ ] Verify-phase manual exercise: with VSCode open, `afx workspace add-architect --name <name>` from a shell causes the tree to refresh within ~1s.
 
 #### Implementation Details
@@ -458,39 +466,130 @@ broadcast({
 **Seam location** — plan-phase final pick:
 
 - **Option A**: emit from inside `addArchitect` / remove helper in `tower-instances.ts`. Pros: every caller is covered (including future direct invocations). Cons: requires passing the broadcast notifier into `tower-instances.ts` (today it lives in `tower-server.ts` and is passed to `worktree-config-watcher.ts` via `setWorktreeConfigNotifier()`). The plan adds a similar setter (`setArchitectsUpdatedNotifier()`) OR threads `broadcast` into `InstanceDeps`.
-- **Option B**: emit from `handleAddArchitect` / `handleRemoveArchitect` route handlers in `tower-routes.ts` using the route context's `ctx.broadcastNotification(...)` (iter-4 Gemini-confirmed available). Pros: zero new wiring, all the necessary plumbing already in place. Cons: emit happens at the HTTP-route layer, not the data-mutation layer — so direct invocations of `addArchitect` (rare; today none) wouldn't trigger.
+- **Option B**: emit from `handleAddArchitect` / `handleRemoveArchitect` route handlers in `tower-routes.ts` using the route context's `ctx.broadcastNotification(...)`. Pros: zero new wiring — `broadcastNotification` is already on `RouteContext` (`tower-routes.ts:128`). Cons: emit happens at the HTTP-route layer, not the data-mutation layer — direct invocations of `addArchitect` (rare; today none) wouldn't trigger; and **`handleAddArchitect`'s current signature does not accept `ctx`**.
 
-**Plan recommendation: Option B.** Today, `addArchitect` / `removeArchitect` are only called from their route handlers. Option B is cleaner, mirrors the existing pattern, and matches Gemini's iter-4 architectural verification.
+**Plan recommendation: Option B with the signature refactor.** Today, `addArchitect` / `removeArchitect` are only called from their route handlers. Option B is cleaner and matches the existing emit pattern.
+
+**Required refactor for Option B** (per plan iter-1 Gemini):
+
+The current `handleAddArchitect` (and the analogous `handleRemoveArchitect` introduced by #786) does NOT take `ctx: RouteContext`. Today:
+
+```ts
+// tower-routes.ts:300
+async function handleAddArchitect(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  match: RegExpMatchArray,
+): Promise<void> { ... }
+```
+
+And it's called from the dispatch table at `tower-routes.ts:230`:
+
+```ts
+return await handleAddArchitect(req, res, architectsMatch);
+```
+
+**Phase 4 implementation MUST extend the signature** to accept `ctx: RouteContext` and thread `ctx` through from the dispatch site:
+
+```ts
+// tower-routes.ts:300 — updated signature
+async function handleAddArchitect(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  match: RegExpMatchArray,
+  ctx: RouteContext,
+): Promise<void> { ... }
+```
+
+And the dispatch update at `tower-routes.ts:230`:
+
+```ts
+return await handleAddArchitect(req, res, architectsMatch, ctx);
+```
+
+Same refactor applied to the remove route handler (whichever name #786 lands it as). The emit then happens after the successful `addArchitect`/`removeArchitect` call returns, before writing the 200 response:
+
+```ts
+// inside handleAddArchitect, after the successful addArchitect() return:
+if (result.success) {
+  ctx.broadcastNotification({
+    type: 'architects-updated',
+    title: 'Architects updated',
+    body: JSON.stringify({ workspace: workspacePath }),
+    workspace: workspacePath,
+  });
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ success: true, name: result.name, terminalId: result.terminalId }));
+} else { ... }
+```
+
+Failed calls do NOT emit — only successful adds/removes.
 
 **VSCode-side subscriber** (`packages/vscode/src/views/workspace.ts:37-46`):
 
-The existing `worktree-config-updated` subscriber lives there. Pattern (per iter-1 Claude's verification of `connection-manager.ts:33`):
+The existing `worktree-config-updated` subscriber lives there. **Actual pattern** (verified directly during plan iter-1 — earlier spec-phase iter-1 Claude misrepresented this; all three plan-iter-1 reviewers caught the divergence):
 
 ```ts
-this.connectionManager.onSSEEvent((event) => {
-  if (event.type === 'notification' && event.payload?.type === 'worktree-config-updated') {
-    if (event.payload.workspace === this.workspaceRoot) {
+connectionManager.onSSEEvent(({ data }) => {
+  try {
+    const envelope = JSON.parse(data) as { type?: unknown };
+    if (envelope.type === 'worktree-config-updated') {
       this.changeEmitter.fire();
     }
+  } catch {
+    // benign — malformed envelope
   }
 });
 ```
 
-Add an analogous branch:
+Key facts (from the existing comment block at `workspace.ts:33-36`):
+- Tower emits events as a JSON envelope on the SSE `data:` field with **no `event:` name**.
+- The SSE-client-level `type` is always `''`; the real type sits inside the JSON envelope at `envelope.type`.
+- The callback signature destructures `{ data }`, not `event`. There is no `event.type` or `event.payload`.
+- The existing subscriber fires `changeEmitter` **unconditionally** for the matching envelope type — it does NOT filter by workspace.
+
+**The plan's extension MUST add a second `envelope.type` branch inside the same subscriber callback** (preferred — single parse, two checks):
 
 ```ts
-this.connectionManager.onSSEEvent((event) => {
-  if (event.type === 'notification' && event.payload?.type === 'architects-updated') {
-    if (event.payload.workspace === this.workspaceRoot) {
+connectionManager.onSSEEvent(({ data }) => {
+  try {
+    const envelope = JSON.parse(data) as { type?: unknown };
+    if (envelope.type === 'worktree-config-updated' || envelope.type === 'architects-updated') {
       this.changeEmitter.fire();
     }
+  } catch {
+    // benign — malformed envelope
   }
 });
 ```
 
-(Or fold both checks into a single subscriber. Builder picks the cleaner spelling.)
+**Workspace filtering decision**: the existing `worktree-config-updated` subscriber fires unconditionally — it does NOT filter by workspace path. The plan **MIRRORS this existing behaviour** for `architects-updated`: fire unconditionally, no workspace filter. Rationale: VSCode is opened against one workspace at a time; the `WorkspaceProvider` instance is workspace-scoped at construction. Filtering at the SSE-subscriber level adds complexity without benefit in single-workspace VSCode usage. Multi-workspace Tower still emits the event with the `workspace` field in the body for dashboards or other listeners that DO care to filter.
 
-**SSE union update** (`packages/types/src/sse.ts:5-10`): no change needed if the event rides the `notification` channel. Plan confirms by reading `worktree-config-updated`'s precedent: it does NOT add `worktree-config-updated` to the `SSEEventType` union — it wraps inside `type: 'notification'` with `payload.type = 'worktree-config-updated'`. Mirror this pattern.
+**Tower-side emit shape** — uses the existing `NotifyFn` interface (`worktree-config-watcher.ts:19-24`):
+
+```ts
+type NotifyFn = (notification: {
+  type: string;
+  title: string;
+  body: string;
+  workspace?: string;
+}) => void;
+```
+
+The emit:
+
+```ts
+ctx.broadcastNotification({
+  type: 'architects-updated',
+  title: 'Architects updated',
+  body: JSON.stringify({ workspace: workspacePath }),
+  workspace: workspacePath,
+});
+```
+
+`ctx.broadcastNotification` is already available on `RouteContext` (`tower-routes.ts:128`) — no new wiring or setter needed (unlike `worktree-config-watcher.ts` which has its own one-shot setter because it lives outside the route handler).
+
+**SSE union (`packages/types/src/sse.ts:5-10`)**: **no change needed** — confirmed by reading `worktree-config-updated`'s precedent. It does NOT add itself to the `SSEEventType` union. The TypeScript union covers the *outer* SSE event types (`'notification'`, `'overview-changed'`, `'builder-spawned'`, etc.); custom envelope-type strings (`'worktree-config-updated'`, `'architects-updated'`) live inside the JSON body and are matched by the subscriber's runtime `envelope.type === '...'` check. The plan recommendation to "ride the notification channel" in iter-1 of the spec phase was based on a misreading; the actual pattern is "tower emits a generic SSE event with custom envelope-type strings in the body" — no union entry at any level.
 
 **Dashboard verify-only** (no code change):
 
@@ -620,15 +719,26 @@ None — all changes are within the codev repo.
 
 ## Expert Review
 
-**Date**: 2026-05-22 (iter-1, pending)
-**Models Consulted**: TBD (porch CMAP runs Gemini, Codex, Claude)
+**Date**: 2026-05-22 (iter-1)
+**Models Consulted**: Gemini, Codex, Claude (via porch CMAP)
+**Verdicts**: REQUEST_CHANGES (Gemini), REQUEST_CHANGES (Codex), COMMENT (Claude — same core finding, framed as COMMENT)
 
-**Sections to be updated** based on plan iter-1 feedback (filled in after consultation completes).
+**Sections updated** based on plan iter-1 feedback:
+
+- **Phase 4 VSCode subscriber code** (all three reviewers — unanimous): the original snippet `connectionManager.onSSEEvent((event) => { if (event.type === 'notification' && event.payload?.type === '...') ... })` was hallucinated from a misreading during the spec phase. **Actual pattern at `workspace.ts:37-46`** destructures `{ data }` from the callback, JSON-parses the SSE `data` field, then checks `envelope.type === '...'`. Tower emits with no `event:` name; the type sits inside the JSON envelope. Phase 4 implementation now mirrors the actual pattern exactly — single subscriber with two type-checks (`worktree-config-updated || architects-updated`), unconditional `changeEmitter` fire (matching existing behaviour, no workspace filter at the SSE layer).
+- **Phase 4 `handleAddArchitect` signature** (plan iter-1 Gemini): the current `handleAddArchitect(req, res, match)` does NOT accept `ctx: RouteContext`. Phase 4 implementation MUST extend the signature to accept `ctx` and thread it through from the dispatch site at `tower-routes.ts:230`. The same refactor applies to the remove route handler from #786.
+- **Phase 4 Tower-side emit** (clarified): uses `ctx.broadcastNotification` directly from the route handler — no new setter wiring needed (unlike `worktree-config-watcher.ts` which has its own one-shot setter because it lives outside the route handler).
+- **Phase 4 `SSEEventType` union** (clarified, plan iter-1 Claude): no change needed. The plan now explicitly says the union covers the outer SSE event types; custom envelope-type strings (`'architects-updated'`) live inside the JSON body and are matched by the subscriber's runtime check. Mirrors `worktree-config-updated`'s precedent exactly.
+- **Phase 4 VSCode test harness** (plan iter-1 Codex): corrected from "vitest, per #786 phase 6's new setup" to "`vscode-test` harness per `packages/vscode/package.json`". VSCode tests live under `packages/vscode/src/test/` and use `@vscode/test-cli`. No vitest setup exists.
+- **Phase 1 CSS file pinned** (plan iter-1 Codex): from "whichever CSS file currently defines `.builder-col-id`" to "pinned to `packages/dashboard/src/index.css`, `.builder-col-id` at line 1081-1086." Concrete file/line.
+- **Phase 1 `.builder-col-id` 60px column-width caveat added** (plan iter-1 Claude): the column is `width: 60px` with `white-space: nowrap`. Adding ` · ob-refine` overflows. Plan now specifies the fix (change to `min-width: 60px` or expand `width` to ~160px) and notes the Playwright smoke is the safety net.
+- **Phase 1 `--text-secondary` risk retired** (plan iter-1 Claude): verified the variable exists at `index.css:10` and is used 30+ times. The fallback `#888` is dropped from the CSS snippet, and the risk row is marked RETIRED.
+- **Phase 1 Risks updated**: new "column width overflow" risk added with mitigation; old `--text-secondary` risk marked RETIRED.
 
 ## Approval
 
 - [ ] Architect Review (plan-approval gate)
-- [ ] Expert AI Consultation iter-1 complete
+- [x] Expert AI Consultation iter-1 complete (Gemini REQUEST_CHANGES + Codex REQUEST_CHANGES addressed — both flagged the same Phase 4 SSE pattern divergence; Claude COMMENT same finding plus minor observations)
 
 ## Notes
 
