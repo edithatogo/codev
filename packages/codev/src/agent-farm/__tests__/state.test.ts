@@ -715,4 +715,126 @@ describe('State Management', () => {
       expect(state.getArchitect(WS_B)?.terminalId).toBe('main-B'); // unchanged
     });
   });
+
+  // ===========================================================================
+  // Bugfix #826 iter-6 — Path normalization (symlink/realpath canonicalization)
+  // ===========================================================================
+  //
+  // Tower writes canonical realpaths; CLI callers may pass raw symlinked paths.
+  // Without normalization at the state.ts boundary, the same workspace
+  // accessed via two different paths would create two distinct rows and
+  // lookups would silently fail. Each architect accessor now canonicalizes
+  // its `workspacePath` argument via `realpathSync` (falling back to
+  // `path.resolve` if the path doesn't exist).
+
+  describe('path normalization (Bugfix #826 iter-6)', () => {
+    // Use vi.fn-backed mocking? No — the simplest correctness check is a real
+    // symlink on disk. The mock DB doesn't care which absolute path is stored.
+    const { realpathSync, symlinkSync, mkdirSync: mkSync, rmSync: rmDir } = require('node:fs') as typeof import('node:fs');
+    const { join: pathJoin } = require('node:path') as typeof import('node:path');
+
+    let realDir: string;
+    let symlinkDir: string;
+    let canonicalRealDir: string;
+
+    beforeEach(() => {
+      // Create a real workspace directory and a symlink to it.
+      realDir = pathJoin(testDir, 'workspace-real');
+      mkSync(realDir, { recursive: true });
+      symlinkDir = pathJoin(testDir, 'workspace-symlinked');
+      try { rmDir(symlinkDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      symlinkSync(realDir, symlinkDir, 'dir');
+      // The canonical form is what realpath returns (handles /private/var
+      // prefixing on macOS, /tmp → /private/tmp, etc).
+      canonicalRealDir = realpathSync(realDir);
+    });
+
+    it('write via symlink + read via canonical resolves to the same row', () => {
+      // Write via the SYMLINKED path.
+      state.setArchitectByName(symlinkDir, 'ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:00:00Z',
+        terminalId: 't-sibling',
+      });
+
+      // Read via the CANONICAL realpath — must find the row.
+      const arr = state.getArchitects(canonicalRealDir);
+      expect(arr.map(a => a.name)).toEqual(['ob-refine']);
+
+      // The persisted workspace_path is the canonical form (verifiable via
+      // a direct DB query — single row, canonical workspace_path).
+      const allRows = testDb!.prepare('SELECT workspace_path, id FROM architect').all() as Array<{ workspace_path: string; id: string }>;
+      expect(allRows).toEqual([{ workspace_path: canonicalRealDir, id: 'ob-refine' }]);
+    });
+
+    it('write via canonical + read via symlink resolves to the same row', () => {
+      state.setArchitectByName(canonicalRealDir, 'ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:00:00Z',
+      });
+
+      // Read via the symlinked path — should find the row.
+      expect(state.getArchitectByName(symlinkDir, 'ob-refine')?.name).toBe('ob-refine');
+    });
+
+    it('removeArchitect via symlink removes the canonical row', () => {
+      state.setArchitectByName(canonicalRealDir, 'ob-refine', {
+        name: 'ob-refine',
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:00:00Z',
+      });
+      expect(state.getArchitects(canonicalRealDir)).toHaveLength(1);
+
+      // Remove via symlinked path.
+      state.removeArchitect(symlinkDir, 'ob-refine');
+
+      expect(state.getArchitects(canonicalRealDir)).toHaveLength(0);
+    });
+
+    it('loadState via symlink returns the canonical row', () => {
+      state.setArchitect(canonicalRealDir, {
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:00:00Z',
+      });
+
+      const loaded = state.loadState(symlinkDir);
+      expect(loaded.architect?.cmd).toBe('claude');
+    });
+
+    it('does NOT collapse two distinct workspaces that happen to share a name', () => {
+      // Sanity guard: normalization must NOT make two genuinely-different
+      // workspaces look identical. Different realpaths → different rows.
+      const otherReal = pathJoin(testDir, 'workspace-other');
+      mkSync(otherReal, { recursive: true });
+      const otherCanonical = realpathSync(otherReal);
+
+      state.setArchitectByName(canonicalRealDir, 'main', {
+        name: 'main',
+        cmd: 'claude-1',
+        startedAt: '2026-05-23T10:00:00Z',
+      });
+      state.setArchitectByName(otherCanonical, 'main', {
+        name: 'main',
+        cmd: 'claude-2',
+        startedAt: '2026-05-23T11:00:00Z',
+      });
+
+      expect(state.getArchitectByName(canonicalRealDir, 'main')?.cmd).toBe('claude-1');
+      expect(state.getArchitectByName(otherCanonical, 'main')?.cmd).toBe('claude-2');
+    });
+
+    it('falls back to path.resolve for non-existent paths (no realpath available)', () => {
+      // Write to a path that doesn't exist on disk — canonicalize() falls
+      // back to path.resolve(). Reads via the same input must still match.
+      const ghostPath = '/this/path/does/not/exist/workspace';
+      state.setArchitectByName(ghostPath, 'main', {
+        name: 'main',
+        cmd: 'claude',
+        startedAt: '2026-05-23T10:00:00Z',
+      });
+      expect(state.getArchitectByName(ghostPath, 'main')?.cmd).toBe('claude');
+    });
+  });
 });

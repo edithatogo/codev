@@ -105,6 +105,26 @@ Changes:
 
 All 1843 agent-farm tests pass.
 
+## iter-6: Path canonicalization at the state.ts boundary
+
+Architect's iter-5 independent CMAP caught a Codex REQUEST_CHANGES (HIGH): Tower writes canonical realpaths via `normalizeWorkspacePath`, but CLI callers and `migrateLocalFromJson` pass raw paths. A user accessing a workspace via symlink would create two rows (one canonical, one symlinked) and subsequent lookups would silently miss.
+
+Fix: canonicalize at the data-layer boundary. Every architect accessor in `state.ts` now passes its `workspacePath` argument through `canonicalize()` before any read/write. `migrateLocalFromJson` does the same for its workspacePath parameter.
+
+`canonicalize()` is inlined in state.ts (~10 LOC: `realpathSync` for existing paths, `path.resolve` fallback). Inlining instead of importing from `tower-utils.ts` avoids pulling server-layer imports into the data layer.
+
+Tests:
+- 6 new symlink tests in state.test.ts:
+  - write via symlink + read via canonical → same row
+  - write via canonical + read via symlink → same row
+  - removeArchitect via symlink removes canonical row
+  - loadState via symlink returns canonical row
+  - distinct workspaces don't collapse
+  - non-existent paths fall back to path.resolve
+- 1 new migrate test: migrateLocalFromJson stores canonical workspace_path when given a symlinked input.
+
+1849 agent-farm unit tests pass.
+
 ## Test run notes
 
 - `state.test.ts` — 27/27 pass (including 5 new tests for `getArchitectsForWorkspace`).

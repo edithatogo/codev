@@ -69,6 +69,45 @@ describe('Migration', () => {
       // tmux_session column removed in Spec 0104 Phase 4 — no longer migrated
     });
 
+    it('canonicalizes workspace_path via realpath when migrating (Bugfix #826 iter-6)', () => {
+      // Create a real directory and a symlink to it. migrateLocalFromJson
+      // must store the realpath form so Tower's canonical-path lookups find
+      // the row regardless of which form was passed in.
+      const { symlinkSync, realpathSync, mkdirSync: mkSync } = require('node:fs') as typeof import('node:fs');
+      const { join: pathJoin } = require('node:path') as typeof import('node:path');
+
+      const realDir = pathJoin(testDir, 'workspace-real');
+      mkSync(realDir, { recursive: true });
+      const symlinkPath = pathJoin(testDir, 'workspace-symlinked');
+      symlinkSync(realDir, symlinkPath, 'dir');
+      const canonical = realpathSync(realDir);
+
+      const jsonState = {
+        architect: {
+          pid: 1234,
+          port: 4201,
+          cmd: 'claude',
+          startedAt: '2024-01-01T00:00:00.000Z',
+        },
+        builders: [],
+        utils: [],
+        annotations: [],
+      };
+
+      const jsonPath = resolve(testDir, 'state.json');
+      writeFileSync(jsonPath, JSON.stringify(jsonState));
+
+      // Pass the SYMLINKED form; migration must canonicalize.
+      migrateLocalFromJson(db, jsonPath, symlinkPath);
+
+      // The stored workspace_path is the canonical realpath, not the symlink.
+      const row = db
+        .prepare("SELECT workspace_path FROM architect WHERE id = 'main'")
+        .get() as { workspace_path: string } | undefined;
+      expect(row?.workspace_path).toBe(canonical);
+      expect(row?.workspace_path).not.toBe(symlinkPath);
+    });
+
     it('should migrate builders', () => {
       const jsonState = {
         architect: null,

@@ -6,7 +6,7 @@
  */
 
 import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import type { DashboardState, ArchitectState, Builder, UtilTerminal, Annotation } from './types.js';
 import { getDb, closeDb } from './db/index.js';
@@ -18,6 +18,29 @@ import {
   dbAnnotationToAnnotation,
 } from './db/types.js';
 import { isPortConflictError } from './db/errors.js';
+
+/**
+ * Normalize a workspace path to its canonical form (Bugfix #826 iter-6).
+ *
+ * The architect table's primary key includes `workspace_path`. Tower writes
+ * canonical realpaths (via `normalizeWorkspacePath` in tower-utils.ts); CLI
+ * callers and legacy migration paths often pass raw paths (e.g. a symlinked
+ * workspace root). Without normalization, accessing a workspace via two
+ * different paths (symlink + realpath) creates two distinct rows and lookups
+ * silently fail.
+ *
+ * Mirrors the contract of `servers/tower-utils.ts:normalizeWorkspacePath`.
+ * Kept inline to avoid pulling the server-layer import chain into the data
+ * layer. Uses `realpathSync` when the path exists; falls back to
+ * `path.resolve` for not-yet-existing paths (e.g. fresh installs).
+ */
+function canonicalize(workspacePath: string): string {
+  try {
+    return realpathSync(workspacePath);
+  } catch {
+    return path.resolve(workspacePath);
+  }
+}
 
 /**
  * Load complete state from database
@@ -35,6 +58,7 @@ import { isPortConflictError } from './db/errors.js';
  */
 export function loadState(workspacePath: string): DashboardState {
   const db = getDb();
+  const ws = canonicalize(workspacePath);
 
   // Spec 786 Phase 5: load ALL architects, ordered `main` first then by
   // started_at (so siblings appear in spawn order).
@@ -47,7 +71,7 @@ export function loadState(workspacePath: string): DashboardState {
   // architects belonging to the requested workspace.
   const architectRows = db.prepare(
     "SELECT * FROM architect WHERE workspace_path = ? ORDER BY (id != 'main'), started_at"
-  ).all(workspacePath) as DbArchitect[];
+  ).all(ws) as DbArchitect[];
   const architects = architectRows.map(dbArchitectToArchitectState);
   // The scalar shim points at architects[0] (which is `main` when present,
   // else the first-registered architect by started_at). Preserves the legacy
@@ -88,15 +112,16 @@ export function loadState(workspacePath: string): DashboardState {
  */
 export function setArchitect(workspacePath: string, architect: ArchitectState | null): void {
   const db = getDb();
+  const ws = canonicalize(workspacePath);
 
   if (architect === null) {
-    db.prepare("DELETE FROM architect WHERE workspace_path = ? AND id = 'main'").run(workspacePath);
+    db.prepare("DELETE FROM architect WHERE workspace_path = ? AND id = 'main'").run(ws);
   } else {
     db.prepare(`
       INSERT OR REPLACE INTO architect (workspace_path, id, pid, port, cmd, started_at, terminal_id)
       VALUES (@workspacePath, 'main', 0, 0, @cmd, @startedAt, @terminalId)
     `).run({
-      workspacePath,
+      workspacePath: ws,
       cmd: architect.cmd,
       startedAt: architect.startedAt,
       terminalId: architect.terminalId ?? null,
@@ -114,9 +139,10 @@ export function setArchitect(workspacePath: string, architect: ArchitectState | 
  */
 export function setArchitectByName(workspacePath: string, name: string, architect: ArchitectState | null): void {
   const db = getDb();
+  const ws = canonicalize(workspacePath);
 
   if (architect === null) {
-    db.prepare('DELETE FROM architect WHERE workspace_path = ? AND id = ?').run(workspacePath, name);
+    db.prepare('DELETE FROM architect WHERE workspace_path = ? AND id = ?').run(ws, name);
     return;
   }
 
@@ -124,7 +150,7 @@ export function setArchitectByName(workspacePath: string, name: string, architec
     INSERT OR REPLACE INTO architect (workspace_path, id, pid, port, cmd, started_at, terminal_id)
     VALUES (@workspacePath, @name, 0, 0, @cmd, @startedAt, @terminalId)
   `).run({
-    workspacePath,
+    workspacePath: ws,
     name,
     cmd: architect.cmd,
     startedAt: architect.startedAt,
@@ -384,7 +410,8 @@ export function clearRuntime(): void {
  */
 export function removeArchitect(workspacePath: string, name: string): void {
   const db = getDb();
-  db.prepare('DELETE FROM architect WHERE workspace_path = ? AND id = ?').run(workspacePath, name);
+  const ws = canonicalize(workspacePath);
+  db.prepare('DELETE FROM architect WHERE workspace_path = ? AND id = ?').run(ws, name);
 }
 
 /**
@@ -398,15 +425,16 @@ export function removeArchitect(workspacePath: string, name: string): void {
  */
 export function getArchitect(workspacePath: string): ArchitectState | null {
   const db = getDb();
+  const ws = canonicalize(workspacePath);
   let row = db
     .prepare("SELECT * FROM architect WHERE workspace_path = ? AND id = 'main'")
-    .get(workspacePath) as DbArchitect | undefined;
+    .get(ws) as DbArchitect | undefined;
   if (!row) {
     // Spec 755: when 'main' is absent, fall back to the first-registered
     // architect (started_at ordering), not the lexicographically-first name.
     row = db
       .prepare('SELECT * FROM architect WHERE workspace_path = ? ORDER BY started_at LIMIT 1')
-      .get(workspacePath) as DbArchitect | undefined;
+      .get(ws) as DbArchitect | undefined;
   }
   return row ? dbArchitectToArchitectState(row) : null;
 }
@@ -421,9 +449,10 @@ export function getArchitect(workspacePath: string): ArchitectState | null {
  */
 export function getArchitects(workspacePath: string): ArchitectState[] {
   const db = getDb();
+  const ws = canonicalize(workspacePath);
   const rows = db
     .prepare('SELECT * FROM architect WHERE workspace_path = ? ORDER BY id')
-    .all(workspacePath) as DbArchitect[];
+    .all(ws) as DbArchitect[];
   return rows.map(dbArchitectToArchitectState);
 }
 
@@ -432,9 +461,10 @@ export function getArchitects(workspacePath: string): ArchitectState[] {
  */
 export function getArchitectByName(workspacePath: string, name: string): ArchitectState | null {
   const db = getDb();
+  const ws = canonicalize(workspacePath);
   const row = db
     .prepare('SELECT * FROM architect WHERE workspace_path = ? AND id = ?')
-    .get(workspacePath, name) as DbArchitect | undefined;
+    .get(ws, name) as DbArchitect | undefined;
   return row ? dbArchitectToArchitectState(row) : null;
 }
 
