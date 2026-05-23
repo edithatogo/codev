@@ -53,6 +53,20 @@ All MUST criteria from the spec are met:
 - [x] Tower-side unit tests in `tower-routes.test.ts` (5 new); VSCode-side runtime behavior tests in `workspace-sse-subscriber.test.ts` (9 new) + source-grep guards in `workspace.test.ts` (4 new).
 - [x] `#786` verify-scenarios Scenario 11 updated to note Phase 4 closes the gap.
 
+## Architecture Updates
+
+Updates landed in `codev/resources/arch.md`:
+
+- **VSCode extension section** (the existing "Multi-Architect Support" / "VSCode extension (Spec 786 Phase 6)" subsection): annotated as `Spec 786 Phase 6 + Spec 823 Phase 4`. Added a bullet noting that the Architects tree auto-refreshes when add/remove happens from outside VSCode (CLI, dashboard close-button, mobile TabBar) via the new `architects-updated` SSE notification. References the JSON-envelope shape + the no-workspace-filter design choice.
+- **New "Tower SSE Event Conventions" subsection** under the Multi-Architect Support section: documents the shape convention (no `event:` name on the SSE wire; `type` lives inside the JSON envelope at `data.type`; subscribers parse with `try/catch` to swallow malformed payloads). Names `worktree-config-updated`, `architects-updated`, and `builder-spawned` as the three events using this pattern. Documents the `NotifyFn` shape from `worktree-config-watcher.ts:19-24` and the `ctx.broadcastNotification` vs setter-pattern distinction (route handlers use `ctx`; standalone modules wire their own setter).
+
+Updates landed in `codev/resources/lessons-learned.md` (under "3-Way Reviews"):
+
+- "Reviewers can hallucinate code patterns when summarizing unfamiliar files" — derived from the spec iter-1 Claude misread of `workspace.ts:37-46` that propagated through to the plan before plan-iter-1 caught it. Lesson: spot-check reviewer code summaries against the actual file before incorporating.
+- "Plan-claimed test harnesses can be wrong" — derived from the plan iter-1 "NOT vitest" guidance that turned out to be over-specific against the actual repo state. Lesson: verify framework/harness claims against the actual config before following.
+
+No spec/plan-protocol changes; the per-spec lessons are documented in this review's "Lessons Learned" section below.
+
 ## Deviations from Plan
 
 - **Phase 4 test harness reframed**: The plan iter-1 Codex correction said tests should live in `packages/vscode/src/test/` using `vscode-test`, NOT vitest. Implementation went with vitest at `packages/vscode/src/__tests__/` — for two reasons: (1) the existing #786 Phase 6 test infrastructure (added with `vitest.config.ts` whose docstring explicitly says "mock the vscode module entirely") IS the vitest harness at `src/__tests__/`, not vscode-test, so the plan iter-1 claim was over-specific; (2) vscode-test is an Electron integration harness that's heavier than needed for unit-level subscriber checks. Final approach: source-grep tests in `workspace.test.ts` (cheap structural guards, established pattern from Phase 6) PLUS runtime behavior tests in `workspace-sse-subscriber.test.ts` (vi.mock('vscode', …) + captured subscriber callback exercise) covering the wiring directly. Both Gemini and Codex iter-1 Phase 4 reviews correctly flagged that source-grep alone misses runtime regressions; the new behavior test file addresses that.
