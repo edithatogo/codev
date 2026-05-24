@@ -13,6 +13,7 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { encodeWorkspacePath } from '../lib/tower-client.js';
+import { findLatestSessionId } from '../utils/claude-session-discovery.js';
 import { loadConfig } from '../../lib/config.js';
 
 const execAsync = promisify(exec);
@@ -456,7 +457,61 @@ export async function launchInstance(workspacePath: string): Promise<{ success: 
         // Parse command string to separate command and args, inject role prompt
         const cmdParts = architectCmd.split(/\s+/);
         const cmd = cmdParts[0];
-        const { args: cmdArgs, env: harnessEnv } = buildArchitectArgs(cmdParts.slice(1), workspacePath);
+
+        // Issue #830 (main architect only): if a prior Claude session exists
+        // for this workspace cwd, resume it instead of starting fresh. Role
+        // injection is skipped on the resume path — the saved conversation
+        // already contains the role/system prompt.
+        //
+        // Lookup is unconditional here (unlike builders, where spawn.ts gates
+        // discovery behind `options.resume`). The asymmetry is intentional:
+        // launchInstance only runs when main isn't already alive, so the
+        // implicit intent is always "spawn the missing main; resume its
+        // prior conversation if one exists." There is no equivalent user
+        // intent surface (no flag) on the workspace-start path.
+        //
+        // Multi-architect collision guard (Codex / Gemini cmap-3 round 2):
+        // Named sibling architects (Spec 755) share `cwd = workspacePath` and
+        // write their jsonls into the same encoded-cwd directory as main. The
+        // newest-jsonl heuristic can't tell which jsonl belongs to which
+        // architect — so if any sibling is currently persisted in state.db,
+        // main risks resuming a sibling's conversation instead of its own.
+        // Until #832 lands per-architect session UUIDs, the conservative
+        // behavior is: if state.db reports >1 architect, skip resume for
+        // main and spawn fresh with role injection. Single-architect
+        // workspaces (the common case) keep conversation resume.
+        //
+        // Note: this only checks current persisted state, not history. A
+        // sibling that existed before but was removed leaves stale jsonl
+        // files behind; main could still pick one up. Acceptable until #832.
+        let safeToResume: boolean;
+        try {
+          // Single architect (main only, or empty before first spawn) → safe.
+          // Multiple → unsafe (sibling jsonls collide with main's in the same cwd).
+          // Bugfix #826: getArchitects is workspace-scoped — pass resolvedPath
+          // (the canonical workspace path used by the architect table).
+          safeToResume = getArchitects(resolvedPath).length <= 1;
+        } catch {
+          // state.db read should never fail here, but if it does the safe
+          // default is to skip resume rather than risk attaching main to
+          // an unrelated jsonl.
+          safeToResume = false;
+        }
+        const resumeSessionId = safeToResume ? findLatestSessionId(workspacePath) : null;
+        if (!safeToResume) {
+          _deps.log('WARN', `Skipping main architect conversation resume for ${workspacePath}: persisted sibling architects detected (or state.db unreadable); cannot disambiguate jsonl by cwd. See #832.`);
+        }
+        let cmdArgs: string[];
+        let harnessEnv: Record<string, string>;
+        if (resumeSessionId) {
+          cmdArgs = [...cmdParts.slice(1), '--resume', resumeSessionId];
+          harnessEnv = {};
+          _deps.log('INFO', `Resuming main architect Claude session ${resumeSessionId.slice(0, 8)}… for ${workspacePath}`);
+        } else {
+          const built = buildArchitectArgs(cmdParts.slice(1), workspacePath);
+          cmdArgs = built.args;
+          harnessEnv = built.env;
+        }
 
         // Build env with CLAUDECODE removed so spawned Claude processes
         // don't detect a nested session, and merge harness env vars.

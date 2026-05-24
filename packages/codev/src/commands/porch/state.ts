@@ -303,6 +303,56 @@ export function findStatusPath(workspaceRoot: string, projectId: string): string
 }
 
 /**
+ * Enumerate every project on disk, parsing each status.yaml.
+ *
+ * Precedence matches findStatusPath(): `.builders/<x>/codev/projects/<id>` wins
+ * over `codev/projects/<id>` when the same project id appears in both. In
+ * multi-PR flows (Spec 653) early phases merge status.yaml to main, so the
+ * worktree copy is the fresher one.
+ *
+ * status.yaml files that fail to parse are skipped. Callers can observe these
+ * skips by passing `onParseError`; otherwise failures are silent.
+ */
+export function listAllProjects(
+  workspaceRoot: string,
+  opts?: { onParseError?: (statusPath: string, err: unknown) => void },
+): Array<{ statusPath: string; state: ProjectState }> {
+  const collected = new Map<string, { statusPath: string; state: ProjectState }>();
+
+  const addFromDir = (projectsDir: string): void => {
+    if (!fs.existsSync(projectsDir)) return;
+    const entries = fs.readdirSync(projectsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const statusPath = path.join(projectsDir, entry.name, 'status.yaml');
+      if (!fs.existsSync(statusPath)) continue;
+      try {
+        const state = readState(statusPath);
+        if (!collected.has(state.id)) {
+          collected.set(state.id, { statusPath, state });
+        }
+      } catch (err) {
+        opts?.onParseError?.(statusPath, err);
+      }
+    }
+  };
+
+  // 1. Builder worktrees first (freshest in multi-PR layouts)
+  const buildersDir = path.join(workspaceRoot, '.builders');
+  if (fs.existsSync(buildersDir)) {
+    for (const wt of fs.readdirSync(buildersDir, { withFileTypes: true })) {
+      if (!wt.isDirectory()) continue;
+      addFromDir(path.join(buildersDir, wt.name, PROJECTS_DIR));
+    }
+  }
+
+  // 2. Local main copy
+  addFromDir(path.join(workspaceRoot, PROJECTS_DIR));
+
+  return [...collected.values()];
+}
+
+/**
  * Detect project ID from the current working directory if inside a builder worktree.
  * Works from any subdirectory within the worktree.
  * Returns the porch project ID (e.g. "bugfix-237", "1298", or "0073"), or null if not in a recognized worktree.

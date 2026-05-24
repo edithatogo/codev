@@ -37,6 +37,7 @@ const SPAWNING_ARCHITECT_NAME =
   (process.env.CODEV_ARCHITECT_NAME && process.env.CODEV_ARCHITECT_NAME.trim()) || DEFAULT_ARCHITECT_NAME;
 import { loadRolePrompt } from '../utils/roles.js';
 import { buildAgentName, stripLeadingZeros } from '../utils/agent-names.js';
+import { findLatestSessionId } from '../utils/claude-session-discovery.js';
 import { fetchIssue as fetchIssueNonFatal } from '../../lib/github.js';
 import {
   type TemplateContext,
@@ -73,8 +74,23 @@ import { executeForgeCommand, loadForgeConfig } from '../../lib/forge.js';
 // =============================================================================
 
 /**
- * Log spawn success with terminal WebSocket URL
+ * On --resume, look up the prior Claude conversation jsonl for the worktree
+ * so the revived builder can pick up the saved conversation via
+ * `claude --resume <uuid>` instead of starting fresh with a resume-notice
+ * prompt. (Issue #831.) Returns undefined when not resuming or when no
+ * jsonl exists; callers fall back to the fresh-spawn path in that case.
  */
+export function discoverResumeSession(worktreePath: string, isResume: boolean | undefined): string | undefined {
+  if (!isResume) return undefined;
+  const found = findLatestSessionId(worktreePath);
+  if (found) {
+    logger.kv('Claude session', `${found.slice(0, 8)}… (resuming conversation)`);
+    return found;
+  }
+  logger.info('No prior Claude conversation found for this worktree; starting a fresh session.');
+  return undefined;
+}
+
 function logSpawnSuccess(label: string, terminalId: string, mode?: string): void {
   const client = getTowerClient();
   logger.blank();
@@ -440,6 +456,8 @@ async function spawnSpec(options: SpawnOptions, config: Config): Promise<void> {
     templateContext.existing_branch = options.branch;
   }
 
+  const resumeSessionId = discoverResumeSession(worktreePath, options.resume);
+
   const initialPrompt = buildPromptFromTemplate(config, protocol, templateContext);
   const resumeNotice = options.resume ? `\n${buildResumeNotice(projectId)}\n` : '';
   const branchNotice = options.branch
@@ -452,6 +470,7 @@ async function spawnSpec(options: SpawnOptions, config: Config): Promise<void> {
   const { terminalId } = await startBuilderSession(
     config, builderId, worktreePath, commands.builder,
     builderPrompt, role?.content ?? null, role?.source ?? null,
+    resumeSessionId,
   );
 
   upsertBuilder({
@@ -816,11 +835,13 @@ async function spawnIssueDrivenBuilder(
     : '';
   const builderPrompt = `You are a Builder. Read codev/roles/builder.md for your full role definition.\n${resumeNotice}${branchNotice}\n${prompt}`;
 
+  const resumeSessionId = discoverResumeSession(worktreePath, options.resume);
   const role = options.noRole ? null : loadRolePrompt(config, 'builder');
   const commands = getResolvedCommands();
   const { terminalId } = await startBuilderSession(
     config, builderId, worktreePath, commands.builder,
     builderPrompt, role?.content ?? null, role?.source ?? null,
+    resumeSessionId,
   );
 
   upsertBuilder({
