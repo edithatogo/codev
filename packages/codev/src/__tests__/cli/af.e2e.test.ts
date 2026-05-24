@@ -177,6 +177,37 @@ describe('afx command (CLI)', () => {
     expect(output).toMatch(/Agent Farm|Tower|Status/i);
   });
 
+  // === Issue #846: codev-wrapped variants removed ===
+
+  it('`codev afx` exits non-zero with deprecation stderr', () => {
+    const result = runCodev(['afx', 'status'], env.dir, env.env);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('codev afx');
+    expect(result.stderr).toContain('no longer supported');
+    expect(result.stderr).toContain('afx status');
+  });
+
+  it('`codev agent-farm` exits non-zero with deprecation stderr', () => {
+    const result = runCodev(['agent-farm', 'spawn'], env.dir, env.env);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('codev agent-farm');
+    expect(result.stderr).toContain('no longer supported');
+    expect(result.stderr).toContain('afx spawn');
+  });
+
+  it('`codev af` exits non-zero with deprecation stderr', () => {
+    const result = runCodev(['af', 'help'], env.dir, env.env);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('codev af');
+    expect(result.stderr).toContain('no longer supported');
+  });
+
+  it('`codev afx` with no subcommand still errors with a helpful hint', () => {
+    const result = runCodev(['afx'], env.dir, env.env);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('afx <subcommand>');
+  });
+
   it('status handles live architect state gracefully', () => {
     runCodev(['init', 'test-project', '--yes'], env.dir, env.env);
     const projectDir = join(env.dir, 'test-project');
