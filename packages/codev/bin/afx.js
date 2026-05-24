@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 
 // afx - Agent Farm CLI (standalone command)
-// Routes to agent-farm command handler
-import { run } from '../dist/cli.js';
+// Issue #846: imports runAgentFarm directly. The `codev afx` / `codev agent-farm`
+// wrapped variants were removed because they created a `process.argv[1]` invocation-style
+// split that broke spawn(execPath, [argv[1], ...]) callers (e.g. workspace-recover.ts).
+import { runAgentFarm } from '../dist/agent-farm/cli.js';
 
-const args = process.argv.slice(2);
-run(['agent-farm', ...args]);
+runAgentFarm(process.argv.slice(2)).catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

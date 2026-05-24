@@ -177,6 +177,40 @@ describe('afx command (CLI)', () => {
     expect(output).toMatch(/Agent Farm|Tower|Status/i);
   });
 
+  // === Issue #846: codev-wrapped variants removed ===
+
+  it('`codev afx` exits non-zero with deprecation stderr', () => {
+    const result = runCodev(['afx', 'status'], env.dir, env.env);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('codev afx');
+    expect(result.stderr).toContain('no longer supported');
+    expect(result.stderr).toContain('afx status');
+  });
+
+  it('`codev agent-farm` exits non-zero with deprecation stderr', () => {
+    const result = runCodev(['agent-farm', 'spawn'], env.dir, env.env);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('codev agent-farm');
+    expect(result.stderr).toContain('no longer supported');
+    expect(result.stderr).toContain('afx spawn');
+  });
+
+  it('`codev af` exits non-zero with unknown-command error (Issue #846)', () => {
+    // The standalone `af` bin was removed in this change, so `codev af` is
+    // intentionally NOT special-cased — it falls through to commander as an unknown
+    // command (consistent with `af` itself being a missing bin).
+    const result = runCodev(['af', 'help'], env.dir, env.env);
+    expect(result.status).not.toBe(0);
+    const output = result.stdout + result.stderr;
+    expect(output).toMatch(/unknown command|af/i);
+  });
+
+  it('`codev afx` with no subcommand still errors with a helpful hint', () => {
+    const result = runCodev(['afx'], env.dir, env.env);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('afx <subcommand>');
+  });
+
   it('status handles live architect state gracefully', () => {
     runCodev(['init', 'test-project', '--yes'], env.dir, env.env);
     const projectDir = join(env.dir, 'test-project');

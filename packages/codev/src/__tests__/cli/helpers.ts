@@ -19,7 +19,8 @@ export const CODEV_BIN = join(BIN_DIR, 'codev.js');
 /** Path to the afx CLI entry point */
 export const AFX_BIN = join(BIN_DIR, 'afx.js');
 
-/** Path to the deprecated af CLI entry point */
+/** Path where the deprecated `af` CLI entry point used to live (Issue #846 removed it).
+ *  Retained only for the negative existence assertion in install.e2e.test.ts. */
 export const AF_BIN = join(BIN_DIR, 'af.js');
 
 /** Path to the consult CLI entry point */
@@ -123,13 +124,6 @@ export function runCodev(args: string[], cwd: string, env: NodeJS.ProcessEnv): E
  */
 export function runAfx(args: string[], cwd: string, env: NodeJS.ProcessEnv): ExecResult {
   return runCli(AFX_BIN, args, { cwd, env });
-}
-
-/**
- * Run deprecated af CLI command.
- */
-export function runAf(args: string[], cwd: string, env: NodeJS.ProcessEnv): ExecResult {
-  return runCli(AF_BIN, args, { cwd, env });
 }
 
 /**
