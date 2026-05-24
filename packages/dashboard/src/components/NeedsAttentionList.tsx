@@ -25,6 +25,7 @@ function gateKindClass(blocked: string): string {
     case 'spec review': return 'attention-kind--spec';
     case 'plan review': return 'attention-kind--plan';
     case 'code review': return 'attention-kind--code-review';
+    case 'PR review': return 'attention-kind--pr';
     default: return 'attention-kind--plan';
   }
 }
@@ -46,31 +47,43 @@ export function buildItems(prs: OverviewPR[], builders: OverviewBuilder[]): Atte
   // and reaches the porch `pr` gate. Surfacing PRs before that means the
   // reviewer arrives ahead of the AI review comments. Cross-reference each
   // PR against the builder's gate state via `linkedIssue` → `issueId`.
-  const prGateIssueIds = new Set<string>();
+  // Track blockedSince per pr-gate builder so the waiting-time chip measures
+  // "how long since the human became the bottleneck," not "how long since the
+  // PR was opened while CMAP was still running."
+  const prGateSince = new Map<string, string>();
   const builderIssueIds = new Set<string>();
   for (const b of builders) {
     if (b.issueId) {
       builderIssueIds.add(b.issueId);
-      if (b.blocked === 'PR review') prGateIssueIds.add(b.issueId);
+      if (b.blocked === 'PR review' && b.blockedSince) {
+        prGateSince.set(b.issueId, b.blockedSince);
+      }
     }
   }
 
+  // Track which pr-gate builders had their PR successfully emitted. If a
+  // builder is at the pr gate but its PR is missing from `prs` (cache delay,
+  // pagination, transient API failure), the builder loop below still surfaces
+  // it so a real human-action signal isn't silently dropped.
+  const emittedPrGateIssueIds = new Set<string>();
+
   for (const pr of prs) {
     const hasBuilder = pr.linkedIssue !== null && builderIssueIds.has(pr.linkedIssue);
-    const builderAtPrGate = pr.linkedIssue !== null && prGateIssueIds.has(pr.linkedIssue);
+    const gateSince = pr.linkedIssue !== null ? prGateSince.get(pr.linkedIssue) : undefined;
     // Human-authored / externally opened PRs have no porch gate to wait on —
     // fall back to GitHub's reviewDecision and only surface when a review is
     // actually outstanding.
     const unaffiliatedNeedsReview = !hasBuilder && pr.reviewStatus === 'REVIEW_REQUIRED';
-    if (!builderAtPrGate && !unaffiliatedNeedsReview) continue;
+    if (!gateSince && !unaffiliatedNeedsReview) continue;
 
+    if (gateSince && pr.linkedIssue) emittedPrGateIssueIds.add(pr.linkedIssue);
     items.push({
       key: `pr-${pr.id}`,
       issueOrPR: `#${pr.id}`,
       title: pr.title,
       kind: 'PR review',
       kindClass: 'attention-kind--pr',
-      waitingSince: pr.createdAt,
+      waitingSince: gateSince || pr.createdAt,
       url: pr.url,
     });
   }
@@ -78,9 +91,11 @@ export function buildItems(prs: OverviewPR[], builders: OverviewBuilder[]): Atte
   // Builders blocked on gate approvals
   for (const b of builders) {
     if (!b.blocked || !b.blockedSince) continue;
-    // Skip "PR review" — those are emitted by the PR loop above. Without this
-    // skip, builders at the pr gate would be counted twice (once per loop).
-    if (b.blocked === 'PR review') continue;
+    // Skip pr-gate builders only when their PR was actually emitted above.
+    // Without this guard the same builder would be double-counted; with an
+    // unconditional skip a stuck builder whose PR is missing from `prs`
+    // would disappear entirely.
+    if (b.blocked === 'PR review' && b.issueId && emittedPrGateIssueIds.has(b.issueId)) continue;
     const label = b.issueId ? `#${b.issueId}` : b.id;
     items.push({
       key: `gate-${b.id}`,

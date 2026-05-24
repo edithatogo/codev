@@ -117,4 +117,60 @@ describe('NeedsAttentionList buildItems — PR gating (issue #844)', () => {
 
     expect(items.find(i => i.key === 'pr-300')).toBeUndefined();
   });
+
+  it('uses the builder blockedSince (not pr.createdAt) as waitingSince for affiliated PRs', () => {
+    const createdAt = new Date('2026-01-01T00:00:00Z').toISOString();
+    const blockedSince = new Date('2026-01-05T12:00:00Z').toISOString();
+    const prs = [makePR({ id: '400', linkedIssue: '42', createdAt })];
+    const builders = [
+      makeBuilder({ issueId: '42', blocked: 'PR review', blockedGate: 'pr', blockedSince }),
+    ];
+
+    const items = buildItems(prs, builders);
+    const pr = items.find(i => i.key === 'pr-400');
+
+    expect(pr).toBeDefined();
+    expect(pr!.waitingSince).toBe(blockedSince);
+  });
+
+  it('still surfaces a builder stuck at the pr gate when its PR is missing from prs', () => {
+    // Defensive: if a builder is at the pr gate but its PR didn't appear in
+    // `prs` (cache miss / pagination / API error), do NOT silently drop the
+    // builder from Needs Attention.
+    const prs: OverviewPR[] = [];
+    const blockedSince = new Date('2026-01-05T12:00:00Z').toISOString();
+    const builders = [
+      makeBuilder({
+        id: 'bugfix-42',
+        issueId: '42',
+        blocked: 'PR review',
+        blockedGate: 'pr',
+        blockedSince,
+      }),
+    ];
+
+    const items = buildItems(prs, builders);
+
+    expect(items.find(i => i.key === 'gate-bugfix-42')).toBeDefined();
+  });
+
+  it('does NOT double-emit when both the PR and the builder are present', () => {
+    // Regression guard for the dedupe invariant after the missing-PR fallback
+    // was added: when the PR IS emitted, the builder loop must skip.
+    const prs = [makePR({ id: '500', linkedIssue: '42' })];
+    const builders = [
+      makeBuilder({
+        id: 'bugfix-42',
+        issueId: '42',
+        blocked: 'PR review',
+        blockedGate: 'pr',
+        blockedSince: new Date('2026-01-02T00:00:00Z').toISOString(),
+      }),
+    ];
+
+    const items = buildItems(prs, builders);
+
+    expect(items).toHaveLength(1);
+    expect(items[0].key).toBe('pr-500');
+  });
 });
