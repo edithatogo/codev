@@ -44,3 +44,21 @@ Cheaper to remove the alternate surface than patch every spawn-child callsite.
   `codev agent-farm` / `codev af` outside historical specs/plans/reviews (which we
   don't rewrite). Issue's "Docs sweep" bullet was a "spot-check suggests there are very
   few but verify" — verified, there are none.
+
+## Iter-2 (architect-expanded scope)
+
+Architect overrode the `af`-stays decision: human wants `af` removed in the same PR.
+
+Changes pushed in iter-2:
+- Deleted `packages/codev/bin/af.js` (`git rm`).
+- Removed `"af": "./bin/af.js"` from `packages/codev/package.json` bin map.
+- Removed `af` from the cli.ts deprecation handler — `codev af` now falls through to
+  commander as an unknown command, consistent with `af` itself being a missing bin.
+  `codev afx` and `codev agent-farm` keep their helpful deprecation stderr because
+  those are the commonly-typed entrypoints that benefit from the gentle nudge.
+- Updated `install.e2e.test.ts` to assert `AF_BIN` does NOT exist (was: asserts exists).
+- Updated `af.e2e.test.ts` `codev af` case to assert commander's `unknown command` error.
+- Removed the unused `runAf` helper from `cli/helpers.ts` (kept `AF_BIN` export for the
+  negative-existence assertion).
+
+All checks still green: 3078 unit, 83 CLI e2e. PR will re-trigger the porch `pr` gate.

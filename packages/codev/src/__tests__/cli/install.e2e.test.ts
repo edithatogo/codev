@@ -11,7 +11,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   setupCliEnv, teardownCliEnv, CliEnv,
-  runCodev, runAfx, runAf, runConsult,
+  runCodev, runAfx, runConsult,
   CODEV_BIN, AFX_BIN, AF_BIN, CONSULT_BIN,
 } from './helpers.js';
 
@@ -34,8 +34,8 @@ describe('package installation (CLI)', () => {
     expect(existsSync(AFX_BIN)).toBe(true);
   });
 
-  it('deprecated af binary exists', () => {
-    expect(existsSync(AF_BIN)).toBe(true);
+  it('deprecated af binary no longer exists (Issue #846)', () => {
+    expect(existsSync(AF_BIN)).toBe(false);
   });
 
   it('consult binary exists', () => {

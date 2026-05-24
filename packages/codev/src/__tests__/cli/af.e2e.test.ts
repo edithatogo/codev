@@ -195,11 +195,14 @@ describe('afx command (CLI)', () => {
     expect(result.stderr).toContain('afx spawn');
   });
 
-  it('`codev af` exits non-zero with deprecation stderr', () => {
+  it('`codev af` exits non-zero with unknown-command error (Issue #846)', () => {
+    // The standalone `af` bin was removed in this change, so `codev af` is
+    // intentionally NOT special-cased — it falls through to commander as an unknown
+    // command (consistent with `af` itself being a missing bin).
     const result = runCodev(['af', 'help'], env.dir, env.env);
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('codev af');
-    expect(result.stderr).toContain('no longer supported');
+    const output = result.stdout + result.stderr;
+    expect(output).toMatch(/unknown command|af/i);
   });
 
   it('`codev afx` with no subcommand still errors with a helpful hint', () => {

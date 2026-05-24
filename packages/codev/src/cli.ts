@@ -349,10 +349,11 @@ teamCmd
     }
   });
 
-// Note: `codev afx` / `codev agent-farm` / `codev af` are intentionally NOT registered
-// here. Issue #846 removed the codev-wrapped invocation surface because it created a
-// `process.argv[1]` invocation-style split that broke `spawn(process.execPath, [process.argv[1], ...])`
-// callers (e.g. workspace-recover.ts). Use the standalone `afx` bin instead.
+// Note: `codev afx` / `codev agent-farm` are intentionally NOT registered here. Issue
+// #846 removed the codev-wrapped invocation surface because it created a `process.argv[1]`
+// invocation-style split that broke `spawn(process.execPath, [process.argv[1], ...])`
+// callers (e.g. workspace-recover.ts). Use the standalone `afx` bin instead. The
+// previously-deprecated `af` standalone bin was also removed in the same change.
 
 // When invoked via standalone bin shim (e.g. `consult` not `codev consult`),
 // strip the parent "codev" prefix from help usage lines
@@ -384,9 +385,13 @@ const isMainModule = import.meta.url === `file://${process.argv[1]}` ||
 
 if (isMainModule) {
   const args = process.argv.slice(2);
-  // Issue #846: `codev afx` / `codev agent-farm` / `codev af` are no longer supported.
-  // Refuse loudly so callers don't get a confusing commander "unknown command" message.
-  if (args[0] === 'agent-farm' || args[0] === 'afx' || args[0] === 'af') {
+  // Issue #846: `codev afx` and `codev agent-farm` are no longer supported (the
+  // wrapped agent-farm surface was removed). Emit a clear pointer at `afx` so
+  // callers don't get a bare commander "unknown command" error for these
+  // commonly-typed variants. `codev af` is intentionally NOT special-cased — the
+  // standalone `af` bin was also removed, so `codev af` falls through to commander
+  // as an unknown command (consistent with `af` itself being a missing bin).
+  if (args[0] === 'agent-farm' || args[0] === 'afx') {
     const rest = args.slice(1).join(' ');
     const hint = rest ? `afx ${rest}` : 'afx <subcommand>';
     process.stderr.write(`\`codev ${args[0]}\` is no longer supported. Use \`${hint}\` directly.\n`);
