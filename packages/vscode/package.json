@@ -174,11 +174,11 @@
       },
       {
         "command": "codev.openBuilderById",
-        "title": "Codev: Open Builder Terminal"
+        "title": "Codev (internal): Open Builder Terminal by ID"
       },
       {
         "command": "codev.openBuilderRow",
-        "title": "Codev: Open Builder Terminal (and expand row)"
+        "title": "Codev (internal): Open Builder Terminal and Expand Row"
       },
       {
         "command": "codev.openWorktreeFolder",
