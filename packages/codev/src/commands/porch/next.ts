@@ -24,6 +24,7 @@ import {
   getVerifyConfig,
   getOnCompleteConfig,
   getPhaseChecks,
+  getMaxIterations,
 } from './protocol.js';
 import {
   extractPlanPhases,
@@ -590,10 +591,14 @@ async function handleBuildVerify(
       return await handleVerifyApproved(workspaceRoot, projectId, state, protocol, statusPath, reviews);
     }
 
-    // Some request changes — check for rebuttal file first
+    // At least one reviewer returned REQUEST_CHANGES (allApprove above
+    // already advanced when verdicts were all APPROVE-or-COMMENT, per
+    // verdict.ts:57). Policy: re-iter on any REQUEST_CHANGES with no
+    // count limit in normal flow; getMaxIterations is consulted only as
+    // a safety ceiling for runaway prevention. See issue #870.
     const rebuttalFile = findRebuttalFile(workspaceRoot, state, state.iteration);
     if (rebuttalFile) {
-      // Rebuttal exists — record reviews in history and advance (no second consultation)
+      // Record reviews in history for audit trail.
       const currentPhase = state.current_plan_phase || undefined;
       const existingRecord = state.history.find(
         h => h.iteration === state.iteration &&
@@ -609,13 +614,58 @@ async function handleBuildVerify(
           reviews,
         });
       }
-      await writeStateAndCommit(statusPath, state, `chore(porch): ${state.id} ${state.phase} review-recorded`);
-      return await handleVerifyApproved(workspaceRoot, projectId, state, protocol, statusPath, reviews);
+
+      const maxIterations = getMaxIterations(protocol, state.phase);
+
+      // Safety ceiling: force-advance only when REQUEST_CHANGES has
+      // recurred for many rounds. The latest rebuttal file is preserved
+      // on disk as audit trail; the force_advanced record on state
+      // points reviewers at it.
+      if (state.iteration >= maxIterations) {
+        state.force_advanced = {
+          phase: state.current_plan_phase || state.phase,
+          iteration: state.iteration,
+          max_iterations: maxIterations,
+          rebuttal_file: path.basename(rebuttalFile),
+          at: new Date().toISOString(),
+        };
+        await writeStateAndCommit(
+          statusPath,
+          state,
+          `chore(porch): ${state.id} ${state.phase} force-advance (safety ceiling reached at iter ${state.iteration})`,
+        );
+        const response = await handleVerifyApproved(workspaceRoot, projectId, state, protocol, statusPath, reviews);
+        // Prepend the force-advance notice to whatever the approval path emitted.
+        const ceilingNotice =
+          `⚠️ FORCE-ADVANCE: REQUEST_CHANGES persisted for ${state.iteration} iterations ` +
+          `(safety ceiling = ${maxIterations}). Latest rebuttal preserved as audit trail: ${path.basename(rebuttalFile)}. ` +
+          `Reviewer verdicts on iter ${state.iteration}:\n${formatVerdicts(reviews)}`;
+        if (response.tasks && response.tasks.length > 0) {
+          response.tasks[0] = {
+            ...response.tasks[0],
+            description: `${ceilingNotice}\n\n---\n\n${response.tasks[0].description}`,
+          };
+        }
+        return response;
+      }
+
+      // Normal flow: re-iter. Increment iteration and clear build_complete
+      // so the next porch-next emits a fresh build task. The rebuttal
+      // file (still on disk at the previous iteration) is incorporated
+      // as context by buildPhasePrompt when iteration > 1.
+      state.iteration += 1;
+      state.build_complete = false;
+      await writeStateAndCommit(
+        statusPath,
+        state,
+        `chore(porch): ${state.id} ${state.phase} re-iter (iter ${state.iteration})`,
+      );
+      return next(workspaceRoot, projectId);
     }
 
-    // No rebuttal yet — emit "write rebuttal" task (do NOT increment iteration)
-    // This MUST come before the max_iterations safety valve so the builder
-    // gets a chance to write a rebuttal before force-advance kicks in.
+    // No rebuttal yet — emit "write rebuttal" task (do NOT increment iteration).
+    // Rebuttals are required even when we will re-iter; they record the
+    // builder's response to feedback and become part of the audit trail.
     const reviewInfo = reviews.map(r => {
       const phase = state.current_plan_phase || state.phase;
       const fileName = `${state.id}-${phase}-iter${state.iteration}-${r.model}.txt`;
