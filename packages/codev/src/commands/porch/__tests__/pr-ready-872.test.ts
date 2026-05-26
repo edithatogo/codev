@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { next } from '../next.js';
 import { done, approve, rollback } from '../index.js';
 import { writeState, getProjectDir, getStatusPath, readState } from '../state.js';
+import { loadProtocol, isPrCreatingPhase } from '../protocol.js';
 import type { ProjectState } from '../types.js';
 
 vi.mock('../../../lib/config.js', async (importOriginal) => {
@@ -111,6 +112,35 @@ function makeState(overrides: Partial<ProjectState>): ProjectState {
 // state-machine paths under test are reachable from a representative state).
 // ============================================================================
 
+// RESEARCH-shape: once-phases with a `consultation` block but `on` is NOT
+// `"review"` (it's the bare investigation/critique sense). This phase must
+// NOT be classified as PR-creating — otherwise porch would set
+// `pr_ready_for_human: true` on RESEARCH builders that aren't producing a PR.
+// Architect-side CMAP for #872 iter-1 caught this gap.
+const researchShapedProtocol = {
+  name: 'research',
+  version: '1.0.0',
+  phases: [
+    {
+      id: 'investigate',
+      name: 'Investigate',
+      type: 'once',
+      // Note: NO `on` field — the marker that distinguishes PR-creating from
+      // research-style consultation. `type` is "investigation", not "impl".
+      consultation: { enabled: true, models: ['codex'], parallel: true, type: 'investigation' },
+      transition: { on_complete: 'critique' },
+    },
+    {
+      id: 'critique',
+      name: 'Critique',
+      type: 'once',
+      consultation: { enabled: true, models: ['codex'], parallel: true, type: 'critique' },
+      gate: 'research-complete',
+      transition: { on_complete: null },
+    },
+  ],
+};
+
 // SPIR/ASPIR/PIR all share the same shape for our purposes: a build_verify
 // `review` phase with a `pr` gate. PIR ends there; SPIR/ASPIR continue to
 // `verify`. We exercise the pr-gate transition, which is identical across all
@@ -195,6 +225,56 @@ describe('Issue #872 — pr_ready_for_human lifecycle', () => {
 
   afterEach(() => {
     fs.rmSync(testDir, { recursive: true, force: true });
+  });
+
+  // --------------------------------------------------------------------------
+  // isPrCreatingPhase classifier — must NOT overmatch RESEARCH (iter-2 fix)
+  // --------------------------------------------------------------------------
+
+  describe('isPrCreatingPhase classifier (iter-2: narrow consultation.on === "review")', () => {
+    it('returns true for AIR pr (consultation.on === "review")', () => {
+      setupProtocol(testDir, 'air', airProtocol);
+      const protocol = loadProtocol(testDir, 'air');
+      expect(isPrCreatingPhase(protocol, 'pr')).toBe(true);
+    });
+
+    it('returns true for BUGFIX pr (consultation.on === "review")', () => {
+      setupProtocol(testDir, 'bugfix', bugfixProtocol);
+      const protocol = loadProtocol(testDir, 'bugfix');
+      expect(isPrCreatingPhase(protocol, 'pr')).toBe(true);
+    });
+
+    it('returns true for build_verify review with gate=pr (SPIR/ASPIR/PIR shape)', () => {
+      const protocol = buildVerifyReviewProtocol('spir', /*withVerifyPhase*/ true);
+      setupProtocol(testDir, 'spir', protocol);
+      expect(isPrCreatingPhase(loadProtocol(testDir, 'spir'), 'review')).toBe(true);
+    });
+
+    it('returns FALSE for RESEARCH investigate (consultation present but on is not "review")', () => {
+      // This is the bug architect-side CMAP caught in iter-1: the iter-1
+      // classifier matched bare `consultation` presence, which would have
+      // misclassified RESEARCH's investigation phase as PR-creating and leaked
+      // pr_ready_for_human: true into research state.
+      setupProtocol(testDir, 'research', researchShapedProtocol);
+      const protocol = loadProtocol(testDir, 'research');
+      expect(isPrCreatingPhase(protocol, 'investigate')).toBe(false);
+    });
+
+    it('returns FALSE for RESEARCH critique (consultation + gate, but gate is not "pr")', () => {
+      setupProtocol(testDir, 'research', researchShapedProtocol);
+      const protocol = loadProtocol(testDir, 'research');
+      // Critique has a `research-complete` gate, NOT `pr`, and its consultation
+      // block has no `on: "review"`. Both classifier markers miss it.
+      expect(isPrCreatingPhase(protocol, 'critique')).toBe(false);
+    });
+
+    it('returns FALSE for non-PR phases (BUGFIX investigate, AIR implement)', () => {
+      setupProtocol(testDir, 'bugfix', bugfixProtocol);
+      setupProtocol(testDir, 'air', airProtocol);
+      expect(isPrCreatingPhase(loadProtocol(testDir, 'bugfix'), 'investigate')).toBe(false);
+      expect(isPrCreatingPhase(loadProtocol(testDir, 'bugfix'), 'fix')).toBe(false);
+      expect(isPrCreatingPhase(loadProtocol(testDir, 'air'), 'implement')).toBe(false);
+    });
   });
 
   // --------------------------------------------------------------------------

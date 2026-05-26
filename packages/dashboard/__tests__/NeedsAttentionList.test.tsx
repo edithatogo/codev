@@ -180,16 +180,50 @@ describe('NeedsAttentionList buildItems — PR gating (issue #844)', () => {
     expect(pr!.waitingSince).toBe(createdAt);
   });
 
-  it('still surfaces a prReady builder when its PR is missing from prs', () => {
-    // Defensive: if a builder signals prReady but its PR didn't appear in
-    // `prs` (cache miss / pagination / API error), do NOT silently drop the
-    // builder from Needs Attention.
+  it('still surfaces a prReady BUGFIX builder when its PR is missing from prs (realistic shape, Issue #872 iter-2)', () => {
+    // Defensive: if a BUGFIX builder signals prReady but its PR didn't appear
+    // in `prs` (cache miss / pagination / API error), do NOT silently drop the
+    // builder. The iter-1 version of this test mocked blocked='PR review' on
+    // a BUGFIX builder, which is unrealistic — real BUGFIX builders have
+    // blocked=null/blockedSince=null because BUGFIX has no `pr` gate. With
+    // the realistic shape, the original gate-loop early-out filtered the
+    // builder before the prReady check could fire. Architect-side CMAP
+    // caught this; the loop now checks prReady BEFORE the !b.blocked skip.
     const prs: OverviewPR[] = [];
-    const blockedSince = new Date('2026-01-05T12:00:00Z').toISOString();
+    const startedAt = new Date('2026-01-05T12:00:00Z').toISOString();
     const builders = [
       makeBuilder({
         id: 'bugfix-42',
         issueId: '42',
+        protocol: 'bugfix',
+        phase: 'verified',
+        blocked: null,
+        blockedGate: null,
+        blockedSince: null,
+        startedAt,
+        prReady: true,
+      }),
+    ];
+
+    const items = buildItems(prs, builders);
+    const row = items.find(i => i.key === 'gate-bugfix-42');
+
+    expect(row).toBeDefined();
+    expect(row!.kind).toBe('PR review');
+    // Falls back to startedAt when no gate gives us blockedSince.
+    expect(row!.waitingSince).toBe(startedAt);
+  });
+
+  it('still surfaces a prReady gated builder (AIR/SPIR shape) when its PR is missing from prs', () => {
+    // Gate-bearing variant — preserves the iter-1 coverage but with the
+    // expectation explicitly tied to the gate-blocked shape.
+    const prs: OverviewPR[] = [];
+    const blockedSince = new Date('2026-01-05T12:00:00Z').toISOString();
+    const builders = [
+      makeBuilder({
+        id: 'air-42',
+        issueId: '42',
+        protocol: 'air',
         blocked: 'PR review',
         blockedGate: 'pr',
         blockedSince,
@@ -198,8 +232,10 @@ describe('NeedsAttentionList buildItems — PR gating (issue #844)', () => {
     ];
 
     const items = buildItems(prs, builders);
+    const row = items.find(i => i.key === 'gate-air-42');
 
-    expect(items.find(i => i.key === 'gate-bugfix-42')).toBeDefined();
+    expect(row).toBeDefined();
+    expect(row!.waitingSince).toBe(blockedSince);
   });
 
   it('does NOT double-emit when both the PR and the builder are present', () => {
