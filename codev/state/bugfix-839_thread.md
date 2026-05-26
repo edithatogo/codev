@@ -18,3 +18,15 @@ Fix: title-case to match the rest of the command set:
 Net diff: 2 lines.
 
 No regression test possible/needed — this is a static `package.json` manifest entry surfaced by VS Code's marketplace UI. There is no runtime path to assert against; the only "test" is reading the JSON. Will note this in the review.
+
+## PR
+
+PR #864 opened. Build + tests green via porch checks.
+
+## CMAP (iter 1)
+
+- gemini: APPROVE — HIGH confidence
+- codex:  APPROVE — "Scoped manifest fix matches the issue and leaves all 40 contributed command titles consistently prefixed with `Codev:`."
+- claude: APPROVE — "Minimal, correct fix — two command titles prefixed to match convention; all 40 commands verified consistent; no test needed for static manifest entries."
+
+3/3 APPROVE. Notifying architect.
