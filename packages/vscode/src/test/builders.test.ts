@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import type { OverviewBuilder } from '@cluesmith/codev-types';
-import { isIdleWaiting } from '@cluesmith/codev-core/builder-helpers';
+import { isIdleWaiting, resolvePrimaryArea } from '@cluesmith/codev-core/builder-helpers';
 import { orderForDisplay } from '../views/builders.js';
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
@@ -105,5 +105,27 @@ suite('orderForDisplay', () => {
 			builder('d', { phase: 'complete', lastDataAt: iso(NOW - 10 * 60_000) }),
 		];
 		assert.strictEqual(orderForDisplay(bs, NOW).length, bs.length);
+	});
+});
+
+suite('resolvePrimaryArea', () => {
+	test('returns "Uncategorized" when no areas', () => {
+		assert.strictEqual(resolvePrimaryArea([]), 'Uncategorized');
+	});
+
+	test('returns the single area when only one is present', () => {
+		assert.strictEqual(resolvePrimaryArea(['core']), 'core');
+	});
+
+	test('returns the first alphabetical area for multi-area input (parseAreaLabels pre-sorts)', () => {
+		assert.strictEqual(resolvePrimaryArea(['auth', 'core', 'tower']), 'auth');
+	});
+
+	test('returns "cross-cutting" when present, ignoring alphabetical order', () => {
+		assert.strictEqual(resolvePrimaryArea(['cross-cutting']), 'cross-cutting');
+	});
+
+	test('returns "cross-cutting" even when it would not be first alphabetically', () => {
+		assert.strictEqual(resolvePrimaryArea(['auth', 'cross-cutting', 'tower']), 'cross-cutting');
 	});
 });
