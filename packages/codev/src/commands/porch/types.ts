@@ -43,7 +43,7 @@ export interface ProtocolPhase {
   type?: 'once' | 'per_plan_phase' | 'build_verify';
   build?: BuildConfig;           // Build config (for build_verify phases)
   verify?: VerifyConfig;         // Verify config (for build_verify phases)
-  max_iterations?: number;       // Max build-verify iterations (default: 1)
+  max_iterations?: number;       // Safety ceiling for build-verify iterations (default: 8). Re-iter on REQUEST_CHANGES is uncapped in normal flow; this only fires when REQUEST_CHANGES persists for many rounds.
   on_complete?: OnCompleteConfig; // Actions after successful verify
   gate?: string;                 // Gate name that blocks after this phase
   checks?: string[];             // Check names to run (keys into protocol.checks)
@@ -178,6 +178,13 @@ export interface ProjectState {
     merged?: boolean;
     merged_at?: string;
   }>;
+  force_advanced?: {                       // Set when safety-ceiling force-advance fires (issue #870)
+    phase: string;                         // Protocol phase or plan phase the force-advance occurred in
+    iteration: number;                     // Iteration at which the ceiling was reached
+    max_iterations: number;                // Configured safety ceiling that was hit
+    rebuttal_file: string;                 // Basename of the latest rebuttal file preserved as audit trail
+    at: string;                            // ISO timestamp
+  };
   /**
    * Canonical signal that CMAP for the PR-creating phase has completed and a
    * human reviewer is now the bottleneck. Set true the moment porch transitions
