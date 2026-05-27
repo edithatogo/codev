@@ -22,3 +22,20 @@ Awaiting `plan-approval`.
 ## Plan phase — follow-up
 
 User flagged the mixed-separator state (`type:` / `priority:` colon vs `area/` slash) as a real concern. Chose option D: ship #819 as the spec calls for, file a follow-up to relitigate separators globally. Filed **#869** ("Label namespace separator: resolve mixed colon-vs-slash convention") — unassigned, `area/core` label, lays out options A (all-slash), B (all-colon), C (stay mixed) plus a "verify the web-dashboard pathway compatibility constraint" callout. Plan revised to reference #869 under Risks & Alternatives → Open question.
+
+## Implement phase — 2026-05-27
+
+Plan approved. Implemented in four commits matching the plan's logical units:
+
+- `da040105` — `parseAreaLabels` helper + 10 unit tests (no labels, null/undefined/empty-string defensive paths, single area, mixed-namespace, alphabetical sort, dedup, cross-cutting alongside others, bare `area` rejected, `area:` separator-typo rejected).
+- `fc8b3001` — `resolvePrimaryArea` helper in `packages/core/src/builder-helpers.ts` + 5 tests in `packages/vscode/src/test/builders.test.ts` (existing home of `isIdleWaiting` tests).
+- `763d8170` — wire `areas[]` through `BacklogItem` and `BuilderOverview`: type declarations, `areas: []` init at all 3 `discoverBuilders` push sites, `parseAreaLabels(issue.labels)` populate in `deriveBacklog`, parallel `issueAreasMap` join in `getOverview` enrichment loop (refactored alongside existing `issueTitleMap` join for clarity).
+- `6e90f5c6` — wire-contract `areas: string[]` field on `OverviewBuilder` and `OverviewBacklogItem` in `packages/types/src/api.ts`.
+
+Verification:
+- `pnpm -w build` — green (full workspace incl. dashboard)
+- `pnpm --filter codev-vscode run check-types` — green (covers `builders.test.ts` with `resolvePrimaryArea` tests)
+- `pnpm --filter @cluesmith/codev test src/__tests__/github.test.ts` — 66 tests pass (10 new)
+- `pnpm --filter @cluesmith/codev test` (full) — 3149 tests pass, 13 pre-existing skips, no regressions
+
+Branch pushed. Awaiting `dev-approval`.
