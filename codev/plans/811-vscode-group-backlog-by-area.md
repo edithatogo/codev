@@ -6,17 +6,13 @@ The vscode Backlog tree (`packages/vscode/src/views/backlog.ts:27`) renders open
 
 The wire already carries everything we need: `OverviewBacklogItem.area: string` (required, never `undefined`) was added by #819, projected server-side via `parseArea(issue.labels)`. The parser returns the first-alphabetical `area/*` value (with the `area/` prefix stripped), or the literal `'Uncategorized'` when no `area/*` labels are present. **The parser is policy-free** — it does NOT privilege `area/cross-cutting` (see #819's regression-guard test at `packages/codev/src/__tests__/github.test.ts:333-341`). That policy decision lives in the consumer.
 
-The cross-cutting UX privilege ("place `area/cross-cutting` issues in their own top group") is a **view-layer convention** for this PIR. The issue body documents the tagging convention:
-
-> Tag it `area/cross-cutting` only (don't list every individual area); the dedicated group surfaces them for coordination review.
-
-Under this convention, an issue tagged only with `area/cross-cutting` arrives at the view with `item.area === 'cross-cutting'`. The view's grouping logic recognises that bucket and sorts it first. No additional wire field is needed for this PIR — see *Risks & Alternatives* for the "user broke the convention" case.
+The framework intentionally does **not** privilege any specific area name (e.g. `cross-cutting`). Hardcoding `'cross-cutting'` into the view would bake a repo-specific convention into framework code — the same anti-pattern #819 corrected at the parser. Instead, a per-repo VSCode setting `codev.backlog.priorityAreas: string[]` lets each repo pin specific areas to the top of the group order, in the listed order. Default `[]` means pure alphabetical (with `Uncategorized` always last) — a no-op for repos that haven't expressed a preference.
 
 ## Proposed Change
 
 Convert `BacklogProvider` from a flat `TreeDataProvider<TreeItem>` into a two-level provider:
 
-- **Root level** (`getChildren()` with no element) → one `BacklogGroupTreeItem` per non-empty area group, ordered: `cross-cutting` → alphabetical specific areas → `Uncategorized`. Label format: `<area> (<count>)`.
+- **Root level** (`getChildren()` with no element) → one `BacklogGroupTreeItem` per non-empty area group, ordered: `priorityAreas` entries (from `codev.backlog.priorityAreas`) in the listed order → alphabetical specific areas → `Uncategorized`. Label format: `<area> (<count>)`.
 - **Group level** (`getChildren(groupItem)`) → the existing `BacklogTreeItem` rows for that group, in the same intra-group order the flat view uses today (mine-first then rest, both preserving the server's order).
 
 Add a pure helper `groupBacklogByArea(items)` (in `views/backlog.ts`) that takes `OverviewBacklogItem[]` and returns an ordered array of `{ area, items }`. Pure-functional, no VSCode dependency → unit-testable.

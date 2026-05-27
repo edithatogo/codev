@@ -28,3 +28,17 @@ Test results:
 - `pnpm --filter @cluesmith/codev test`: first run showed 17 flakes in unrelated suites (cron-cli, etc.); re-run clean at 3173 pass. Not caused by this PIR — my changes are entirely in `packages/vscode/`.
 
 Ready for dev-approval gate.
+
+## 2026-05-27 — implement phase, revision 1
+
+User correction at the dev-approval gate: hardcoding `'cross-cutting'` into the view bakes a repo-specific convention into framework code. Replaced with a per-repo VSCode setting `codev.backlog.priorityAreas: string[]` — areas listed here get pinned to the top in the listed order; default `[]` is pure alphabetical. Mirrors the framework-neutral discipline #819 already established at the parser layer.
+
+Also dropped the defensive `item.area || UNCATEGORIZED_AREA` coercion in `groupBacklogByArea` — the wire contract from #819 guarantees `area` is always a populated string, so the fallback is dead defense. Removed the corresponding empty-string-area test case.
+
+Changes:
+- `views/backlog.ts`: `groupBacklogByArea(items, priorityAreas = [])`; new `readPriorityAreas()` reads the setting; new `refresh()` for config-change re-render.
+- `extension.ts`: subscribed `onDidChangeConfiguration` for `codev.backlog.priorityAreas` to call `backlogProvider.refresh()`.
+- `package.json`: registered the `codev.backlog.priorityAreas` setting.
+- `test/backlog.test.ts`: dropped cross-cutting and empty-string fixtures; added `priorityAreas pins listed areas`, `Uncategorized stays last even when listed in priorityAreas` (defensive guard), `priorityAreas entries that match no present area are skipped silently`.
+
+Test results: `pnpm --filter codev-vscode test` → 92 pass.
