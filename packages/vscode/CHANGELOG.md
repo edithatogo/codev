@@ -7,6 +7,7 @@ What's changed in the Codev VS Code extension, version by version, written for t
 ### What's new
 
 - **Backlog tree groups by area.** GitHub issues in the Codev Backlog view are now grouped under their `area/*` labels, sorted alphabetically with `Uncategorized` last. Repos that haven't adopted `area/*` labels see no visual change — the grouping collapses to a flat list. (#811)
+- **Builders tree groups by area.** Active builders in the Codev Builders view are now grouped the same way — by their underlying issue's `area/*` labels, sorted alphabetically with `Uncategorized` last. One mental model now applies across both the Backlog and Builders views: same axis, same ordering. Repos without `area/*` labels see no visual change. (#818)
 
 ### Bug fixes
 
