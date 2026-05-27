@@ -30,3 +30,20 @@ Rewrote the plan to mirror #886's actually-shipped shape exactly:
 Only structural divergence from backlog: the accordion's `reveal()` requires a real `getParent` chain in grouping mode. Solved with a `Map<builderId, BuilderGroupTreeItem>` populated by `rootChildren()` (empty in single-Uncategorized flatten mode, so accordion semantics are unchanged on that branch).
 
 Wire-field note: revised issue body says `OverviewBuilder.areas[]` (plural) but #886 reads `item.area` (single). Plan mirrors the shipped reality, with a sentence flagging the discrepancy in case the architect wants to roll the wire shape forward to plural — that'd be a separate change against #819 anyway.
+
+## 2026-05-27 — plan revised (v3) to dedup primitives across backlog + builders
+
+User pointed out the v2 plan would commit ~67 LOC of structural duplication across 5 surfaces (grouping helper, TreeItem class, flatten predicate, expansion-state plumbing, wiring) between `views/backlog.ts` (shipped via #886) and the new `views/builders.ts` work. Verified against #885 — that issue is about display capitalization (`vscode` → `Vscode`), not deduplication; the refactor concern is unaddressed elsewhere.
+
+User chose option 1 (fold the refactor into #818). Revised plan now:
+
+1. Extracts three primitives:
+   - `groupByArea<T>(items, getArea)` to `@cluesmith/codev-core/area-grouping.ts` (generic, with a sibling test file in core's `__tests__/`)
+   - `AreaGroupTreeItem` base class in `views/area-group-tree-item.ts` with a `kind: 'backlog' | 'builder'` discriminator driving stable id prefix and contextValue; thin subclasses (`BacklogGroupTreeItem`, `BuilderGroupTreeItem`) preserve `instanceof` discrimination
+   - `AreaGroupExpansionStore` class + `wireAreaGroupExpansion` helper in `views/area-group-expansion.ts`
+2. Mechanically migrates `views/backlog.ts` / `backlog-tree-item.ts` / `extension.ts:261-271` / `test/backlog.test.ts` onto the shared primitives — behaviour byte-identical, ~50 LOC dropped from backlog code, `groupBacklogByArea` tests move to core.
+3. Wires Builders onto the same primitives.
+
+Single-Uncategorized flatten (6 LOC per provider) is kept inline — extracting it cleanly would require an abstract provider with generics, disproportionate complexity for the residual duplication.
+
+Risk: this expands #818's scope to touch the shipped backlog code in the same PR. Mitigated by the mechanical nature of the migration and by the test suite (which moves but tests the same invariants).
