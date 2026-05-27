@@ -107,3 +107,4 @@ suite('orderForDisplay', () => {
 		assert.strictEqual(orderForDisplay(bs, NOW).length, bs.length);
 	});
 });
+

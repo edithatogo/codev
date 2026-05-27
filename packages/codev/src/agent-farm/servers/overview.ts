@@ -9,6 +9,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { UNCATEGORIZED_AREA } from '@cluesmith/codev-core/constants';
 import {
   fetchPRList,
   fetchIssueList,
@@ -17,6 +18,7 @@ import {
   fetchCurrentUser,
   parseLinkedIssue,
   parseLabelDefaults,
+  parseArea,
 } from '../../lib/github.js';
 import type { ForgePR, ForgeIssueListItem } from '../../lib/github.js';
 import { loadProtocol } from '../../commands/porch/protocol.js';
@@ -81,6 +83,16 @@ export interface BuilderOverview {
    */
   spawnedByArchitect: string | null;
   /**
+   * Single `area/*` value for this builder's issue, projected via
+   * `parseArea` (first-alphabetical wins; `'Uncategorized'` when the
+   * builder has no issue or the issue has no `area/*` labels). Populated
+   * by `getOverview` via the issue-cache join after `discoverBuilders`
+   * returns — `discoverBuilders` itself sets it to `'Uncategorized'` since
+   * it has no access to the issue payload. Consumed by the builders-tree
+   * grouping in #818 and the equivalent dashboard view.
+   */
+  area: string;
+  /**
    * Canonical "PR is waiting on a human reviewer" signal (Issue #872). True the
    * moment porch transitions out of the CMAP-emitting state for the PR-creating
    * phase, for ALL bundled protocols. Computed from `pr_ready_for_human` in
@@ -110,6 +122,13 @@ export interface BacklogItem {
   url: string;
   type: string;
   priority: string;
+  /**
+   * Single `area/*` value for this issue, projected via `parseArea`
+   * (first-alphabetical wins; `'Uncategorized'` when the issue has no
+   * `area/*` labels). Consumed by the backlog grouping in #811 and the
+   * equivalent vscode view.
+   */
+  area: string;
   hasSpec: boolean;
   hasPlan: boolean;
   hasReview: boolean;
@@ -649,6 +668,7 @@ export function discoverBuilders(workspaceRoot: string): BuilderOverview[] {
         idleMs: 0,
         lastDataAt: null,
         spawnedByArchitect: null,
+        area: UNCATEGORIZED_AREA,
         prReady: false,
       });
       continue;
@@ -705,6 +725,7 @@ export function discoverBuilders(workspaceRoot: string): BuilderOverview[] {
             idleMs: computeIdleMs(parsed),
             lastDataAt: null,
             spawnedByArchitect: null,
+            area: UNCATEGORIZED_AREA,
             prReady: derivePrReady(parsed),
           });
           found = true;
@@ -738,6 +759,7 @@ export function discoverBuilders(workspaceRoot: string): BuilderOverview[] {
         idleMs: 0,
         lastDataAt: null,
         spawnedByArchitect: null,
+        area: UNCATEGORIZED_AREA,
         prReady: false,
       });
     }
@@ -796,6 +818,7 @@ export function deriveBacklog(
         url: issue.url,
         type,
         priority,
+        area: parseArea(issue.labels),
         hasSpec: !!specFile,
         hasPlan: !!planFile,
         hasReview: !!reviewFile,
@@ -918,13 +941,18 @@ export class OverviewCache {
     } else {
       backlog = deriveBacklog(issues, workspaceRoot, activeBuilderIssues, prLinkedIssues);
 
-      // Enrich builder titles from GitHub issue titles
-      // (status.yaml stores a slug, not the human-readable title)
+      // Enrich builder titles + area from the cached issue list.
+      // (status.yaml stores a slug, not the human-readable title; and
+      // discoverBuilders has no access to the issue payload, so area
+      // starts as 'Uncategorized' and gets filled here.)
       const issueTitleMap = new Map(issues.map(i => [String(i.number), i.title]));
+      const issueAreaMap = new Map(issues.map(i => [String(i.number), parseArea(i.labels)]));
       for (const b of builders) {
-        if (b.issueId !== null && issueTitleMap.has(b.issueId)) {
-          b.issueTitle = issueTitleMap.get(b.issueId)!;
-        }
+        if (b.issueId === null) continue;
+        const title = issueTitleMap.get(b.issueId);
+        if (title) b.issueTitle = title;
+        const area = issueAreaMap.get(b.issueId);
+        if (area) b.area = area;
       }
     }
 

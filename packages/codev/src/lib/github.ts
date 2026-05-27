@@ -9,6 +9,7 @@
  * @see codev/specs/589-non-github-repository-support.md
  */
 
+import { UNCATEGORIZED_AREA } from '@cluesmith/codev-core/constants';
 import { executeForgeCommand, type ForgeConfig } from './forge.js';
 import { getRepoInfo } from './team-github.js';
 import type { IssueViewResult, PrListItem, IssueListItem } from './forge-contracts.js';
@@ -504,4 +505,32 @@ export function parseLabelDefaults(
     type,
     priority: priorityLabels[0] || 'medium',
   };
+}
+
+/**
+ * Extract the single `area/*` value for an issue. Symmetric with
+ * `parseLabelDefaults`'s single-string `type` / `priority` returns.
+ *
+ * Resolution order:
+ *  - the first alphabetical `area/*` value (no label name is privileged —
+ *    the parser is policy-free about what any particular area means; teams
+ *    using Codev decide their own labeling conventions)
+ *  - `'Uncategorized'` when no `area/*` labels are present
+ *
+ * Mirrors `parseLabelDefaults`'s defensive non-array coercion: Gitea/Forgejo
+ * return `""` or `null` for empty labels instead of `[]`.
+ *
+ * The slash separator (vs `type:` / `priority:`'s colon) is intentional;
+ * see #869 for the broader namespace-separator discussion.
+ */
+export function parseArea(
+  labels: Array<{ name: string }> | null | undefined | string,
+): string {
+  const names = Array.isArray(labels) ? labels.map(l => l.name) : [];
+  const areas = [...new Set(
+    names
+      .filter(n => n.startsWith('area/'))
+      .map(n => n.slice(5)),
+  )].sort();
+  return areas[0] ?? UNCATEGORIZED_AREA;
 }

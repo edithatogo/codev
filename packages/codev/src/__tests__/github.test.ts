@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   parseLinkedIssue,
   parseLabelDefaults,
+  parseArea,
 } from '../lib/github.js';
 
 // Mock forge.js for concept command routing tests
@@ -288,6 +289,71 @@ describe('parseLabelDefaults', () => {
       type: 'bug',
       priority: 'medium',
     });
+  });
+});
+
+describe('parseArea', () => {
+  it('returns "Uncategorized" for an empty label array', () => {
+    expect(parseArea([])).toBe('Uncategorized');
+  });
+
+  it('returns "Uncategorized" for null labels (Gitea/Forgejo defensive path)', () => {
+    expect(parseArea(null)).toBe('Uncategorized');
+  });
+
+  it('returns "Uncategorized" for undefined labels (Gitea/Forgejo defensive path)', () => {
+    expect(parseArea(undefined)).toBe('Uncategorized');
+  });
+
+  it('returns "Uncategorized" for empty-string labels (Gitea/Forgejo defensive path)', () => {
+    expect(parseArea('')).toBe('Uncategorized');
+  });
+
+  it('extracts a single area/* label with the prefix stripped', () => {
+    expect(parseArea([{ name: 'area/auth' }])).toBe('auth');
+  });
+
+  it('ignores non-area labels in a mixed set', () => {
+    expect(parseArea([
+      { name: 'area/core' },
+      { name: 'type:bug' },
+      { name: 'priority:high' },
+      { name: 'bug' },
+    ])).toBe('core');
+  });
+
+  it('picks first alphabetical for multi-area input', () => {
+    expect(parseArea([
+      { name: 'area/tower' },
+      { name: 'area/core' },
+      { name: 'area/porch' },
+    ])).toBe('core');
+  });
+
+  it('does not privilege any specific area name (alphabetical wins; no special-cased label)', () => {
+    // Regression guard: the parser must remain policy-free about what any
+    // given area name means. Teams using Codev decide their own conventions.
+    expect(parseArea([
+      { name: 'area/auth' },
+      { name: 'area/cross-cutting' },
+      { name: 'area/tower' },
+    ])).toBe('auth');
+  });
+
+  it('deduplicates repeated area/* labels before picking', () => {
+    expect(parseArea([
+      { name: 'area/tower' },
+      { name: 'area/tower' },
+      { name: 'area/core' },
+    ])).toBe('core');
+  });
+
+  it('does not match bare "area" without the slash', () => {
+    expect(parseArea([{ name: 'area' }])).toBe('Uncategorized');
+  });
+
+  it('does not match area: with a colon (separator-typo)', () => {
+    expect(parseArea([{ name: 'area:core' }])).toBe('Uncategorized');
   });
 });
 

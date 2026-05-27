@@ -173,6 +173,14 @@ export interface OverviewBuilder {
    */
   spawnedByArchitect: string | null;
   /**
+   * Single `area/*` value for this builder's issue, projected via
+   * `parseArea` (first-alphabetical wins; `'Uncategorized'` when the
+   * builder has no issue or the issue has no `area/*` labels).
+   * Required-with-default — never `undefined`. Consumed by the
+   * builders-tree grouping in #818 and the equivalent dashboard view.
+   */
+  area: string;
+  /**
    * Canonical "PR is waiting on a human reviewer" signal (Issue #872). True the
    * moment porch transitions out of the CMAP-emitting state for the PR-creating
    * phase, for ALL bundled protocols. Computed from `pr_ready_for_human` in
@@ -203,6 +211,13 @@ export interface OverviewBacklogItem {
   url: string;
   type: string;
   priority: string;
+  /**
+   * Single `area/*` value for this issue, projected via `parseArea`
+   * (first-alphabetical wins; `'Uncategorized'` when the issue has no
+   * `area/*` labels). Required-with-default — never `undefined`. Consumed
+   * by the backlog grouping in #811 and the equivalent vscode view.
+   */
+  area: string;
   hasSpec: boolean;
   hasPlan: boolean;
   hasReview: boolean;
