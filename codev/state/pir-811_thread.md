@@ -66,3 +66,12 @@ Changes:
 Test results: `pnpm --filter codev-vscode test` → 90 pass.
 
 Sibling PIR #818 (builders-tree grouping) is still in plan phase. The same simpler design applies there; the architect will flag this when their plan lands so both views ship byte-identical.
+
+## 2026-05-27 — re-run CMAP after architect reconsideration
+
+Iter-2 verdicts (Codex failed first attempt on transient DNS; retried successfully):
+- Gemini: APPROVE
+- Codex: REQUEST_CHANGES — flagged unresolved `(+TBD / -TBD)` placeholders in the review's Files Changed section and a `<sha>` placeholder in the commit list. Real finding (I left placeholders when rewriting the review for the priorityAreas removal). Fixed in `2ced3f9d`: filled in real diff stats from `git diff --stat origin/main...HEAD` and the final commit sha. PR body re-synced via `gh pr edit`.
+- Claude: APPROVE
+
+Architect re-notified with REQUEST_CHANGES disposition (single-pass — no automatic re-review).
