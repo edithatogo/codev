@@ -69,3 +69,11 @@ Changes:
 Re-verification: build ✓, github tests (66 pass, net −1 from previous since two cross-cutting tests collapsed into one no-privilege guard) ✓.
 
 Still at `dev-approval`.
+
+## Implement phase — `'Uncategorized'` extracted to shared constant (2026-05-27)
+
+User flagged: the `'Uncategorized'` literal was hardcoded in two places (parser fallback in `parseArea`, and the three `discoverBuilders` builder-init sites). Extracted to `UNCATEGORIZED_AREA` in `packages/core/src/constants.ts` (alongside `DEFAULT_TOWER_PORT`, `AGENT_FARM_DIR`). Both `github.ts` and `overview.ts` now import and reference the constant. Downstream UI consumers (dashboard, vscode) that ever want to filter/match against the default can import the same constant — single source of truth.
+
+Build ✓, tests still 66/66 ✓.
+
+Still at `dev-approval`.

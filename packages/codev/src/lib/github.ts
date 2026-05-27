@@ -9,6 +9,7 @@
  * @see codev/specs/589-non-github-repository-support.md
  */
 
+import { UNCATEGORIZED_AREA } from '@cluesmith/codev-core/constants';
 import { executeForgeCommand, type ForgeConfig } from './forge.js';
 import { getRepoInfo } from './team-github.js';
 import type { IssueViewResult, PrListItem, IssueListItem } from './forge-contracts.js';
@@ -531,5 +532,5 @@ export function parseArea(
       .filter(n => n.startsWith('area/'))
       .map(n => n.slice(5)),
   )].sort();
-  return areas[0] ?? 'Uncategorized';
+  return areas[0] ?? UNCATEGORIZED_AREA;
 }

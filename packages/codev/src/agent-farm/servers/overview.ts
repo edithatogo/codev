@@ -9,6 +9,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { UNCATEGORIZED_AREA } from '@cluesmith/codev-core/constants';
 import {
   fetchPRList,
   fetchIssueList,
@@ -613,7 +614,7 @@ export function discoverBuilders(workspaceRoot: string): BuilderOverview[] {
         idleMs: 0,
         lastDataAt: null,
         spawnedByArchitect: null,
-        area: 'Uncategorized',
+        area: UNCATEGORIZED_AREA,
       });
       continue;
     }
@@ -669,7 +670,7 @@ export function discoverBuilders(workspaceRoot: string): BuilderOverview[] {
             idleMs: computeIdleMs(parsed),
             lastDataAt: null,
             spawnedByArchitect: null,
-            area: 'Uncategorized',
+            area: UNCATEGORIZED_AREA,
           });
           found = true;
           break;
@@ -702,7 +703,7 @@ export function discoverBuilders(workspaceRoot: string): BuilderOverview[] {
         idleMs: 0,
         lastDataAt: null,
         spawnedByArchitect: null,
-        area: 'Uncategorized',
+        area: UNCATEGORIZED_AREA,
       });
     }
   }
