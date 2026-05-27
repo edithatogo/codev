@@ -1,4 +1,6 @@
-# PIR Plan: `parseAreaLabels` helper + `areas[]` on `BacklogItem` and `BuilderOverview`
+# PIR Plan: `parseArea` helper + `area` on `BacklogItem` and `BuilderOverview`
+
+> **Revision (2026-05-27, during implement)**: design swapped from multi-area `areas: string[]` + `resolvePrimaryArea` projection helper to single-string `area: string` returned directly by the parser. The original design (preserved in the body below for context) permitted multi-area at the data layer and then collapsed it to one bucket via `resolvePrimaryArea` at the UI boundary — which conflicted with the project convention of "one `area/` per issue; `area/cross-cutting` is the explicit multi-area marker" (see `feedback_single_area_per_issue.md` memory). The two operations cancelled each other out and made the projection helper a band-aid. Revised design: parser does the projection once at the boundary, returns single string with `'Uncategorized'` fallback, symmetric with `parseLabelDefaults`'s single-string `type` / `priority` returns. `resolvePrimaryArea` deleted. Net change vs original: ~30 LOC smaller. Acceptance criteria from the issue body that are now obsolete: "BacklogItem.areas: string[]" reads as "BacklogItem.area: string"; "resolvePrimaryArea helper" reads as "obsoleted by parser-side projection"; "multi-area sorting" test reads as "first-alphabetical projection".
 
 ## Understanding
 

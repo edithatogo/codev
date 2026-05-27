@@ -39,3 +39,20 @@ Verification:
 - `pnpm --filter @cluesmith/codev test` (full) — 3149 tests pass, 13 pre-existing skips, no regressions
 
 Branch pushed. Awaiting `dev-approval`.
+
+## Implement phase — design revision (2026-05-27)
+
+User caught the design smell during dev-approval review: `BacklogItem.areas: string[]` permitted multi-area at the data layer while `resolvePrimaryArea` immediately collapsed it to a single bucket at the UI boundary. Two operations cancelling each other out — pointing to a misalignment between the data shape and the project convention ("one `area/` per issue; `area/cross-cutting` is the explicit multi-area marker", per `feedback_single_area_per_issue.md` memory). The array shape was inherited from the issue body without questioning whether it matched the project's existing convention.
+
+Revised to single-area at the parser (option B from the conversation):
+
+- `1142aee99` — `parseAreaLabels: (...) => string[]` → `parseArea: (...) => string`. Parser now projects once at the boundary: `'cross-cutting'` if present, else first alphabetical, else `'Uncategorized'`. Symmetric with `parseLabelDefaults`'s single-string `type` / `priority` returns. Tests rewritten for single-string outputs (12 cases, +1 from the previous 10).
+- `df442ca8` — deleted `resolvePrimaryArea` from `packages/core/src/builder-helpers.ts` and its 5-case suite from `packages/vscode/src/test/builders.test.ts`. The function had no callers — its job is now done at the parser.
+- `5c8800f8` — `BacklogItem.areas: string[]` → `BacklogItem.area: string`; same for `BuilderOverview`. 3 `discoverBuilders` push sites now init `area: 'Uncategorized'`. `getOverview` enrichment loop renamed `issueAreasMap` → `issueAreaMap`.
+- `7cf2d8cb` — same shape change on the wire-contract types in `packages/types/src/api.ts`.
+
+Plan header updated with a revision note explaining the change.
+
+Re-verification: build ✓, github tests (67 pass, +1) ✓, vscode check-types ✓. Net diff vs original revised design: ~30 LOC smaller (deleted helper + simpler test cases offset the unchanged parser body).
+
+Still at `dev-approval`.
