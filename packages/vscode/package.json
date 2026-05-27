@@ -562,6 +562,12 @@
           "type": "boolean",
           "default": true,
           "description": "Render a builder's changed-files list as a folder tree (with single-child folder chains compacted, like VSCode's Source Control panel) instead of a flat list. Toggleable via the Builders title-bar button."
+        },
+        "codev.backlog.priorityAreas": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "markdownDescription": "Area names (without the `area/` prefix) to pin to the top of the grouped Backlog tree, in the order listed. Everything else sorts alphabetically below, with `Uncategorized` always last. Default `[]` is pure alphabetical. Per-repo policy — the framework intentionally does not bake in any specific label name."
         }
       }
     }

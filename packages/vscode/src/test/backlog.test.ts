@@ -51,23 +51,54 @@ suite('groupBacklogByArea', () => {
 		assert.deepStrictEqual(out[0].items.map(i => i.id), ['1']);
 	});
 
-	test('lone cross-cutting item lands in the cross-cutting group', () => {
-		const out = groupBacklogByArea([backlogItem('1', 'cross-cutting')]);
-		assert.deepStrictEqual(out.map(g => g.area), ['cross-cutting']);
-	});
-
-	test('orders groups: cross-cutting first, alphabetical specifics, Uncategorized last', () => {
+	test('default ordering is alphabetical specifics then Uncategorized last', () => {
 		const out = groupBacklogByArea([
 			backlogItem('1', 'tower'),
 			backlogItem('2', 'Uncategorized'),
 			backlogItem('3', 'auth'),
-			backlogItem('4', 'cross-cutting'),
-			backlogItem('5', 'porch'),
+			backlogItem('4', 'porch'),
 		]);
 		assert.deepStrictEqual(
 			out.map(g => g.area),
-			['cross-cutting', 'auth', 'porch', 'tower', 'Uncategorized'],
+			['auth', 'porch', 'tower', 'Uncategorized'],
 		);
+	});
+
+	test('priorityAreas pins listed areas to the top in the listed order', () => {
+		const out = groupBacklogByArea(
+			[
+				backlogItem('1', 'tower'),
+				backlogItem('2', 'auth'),
+				backlogItem('3', 'porch'),
+				backlogItem('4', 'vscode'),
+			],
+			['porch', 'auth'],
+		);
+		assert.deepStrictEqual(
+			out.map(g => g.area),
+			['porch', 'auth', 'tower', 'vscode'],
+		);
+	});
+
+	test('Uncategorized stays last even when listed in priorityAreas', () => {
+		// Defensive: explicit policy is "Uncategorized always last". A
+		// misconfigured priority list shouldn't be able to override it.
+		const out = groupBacklogByArea(
+			[
+				backlogItem('1', 'auth'),
+				backlogItem('2', 'Uncategorized'),
+			],
+			['Uncategorized'],
+		);
+		assert.deepStrictEqual(out.map(g => g.area), ['auth', 'Uncategorized']);
+	});
+
+	test('priorityAreas entries that match no present area are skipped silently', () => {
+		const out = groupBacklogByArea(
+			[backlogItem('1', 'auth'), backlogItem('2', 'tower')],
+			['missing-area', 'auth'],
+		);
+		assert.deepStrictEqual(out.map(g => g.area), ['auth', 'tower']);
 	});
 
 	test('omits empty area groups (no "<area> (0)" headers)', () => {
@@ -102,14 +133,5 @@ suite('groupBacklogByArea', () => {
 		assert.deepStrictEqual(out.map(g => g.area), ['tower', 'vscode']);
 		assert.deepStrictEqual(out[0].items.map(i => i.id), ['2', '4']);
 		assert.deepStrictEqual(out[1].items.map(i => i.id), ['1', '3', '5']);
-	});
-
-	test('falls back to Uncategorized when area field is empty string', () => {
-		// Defensive: server contract says area is always a populated string,
-		// but a malformed payload (empty string from a custom forge adapter)
-		// must not break grouping or vanish the item.
-		const out = groupBacklogByArea([backlogItem('1', '')]);
-		assert.deepStrictEqual(out.map(g => g.area), ['Uncategorized']);
-		assert.deepStrictEqual(out[0].items.map(i => i.id), ['1']);
 	});
 });

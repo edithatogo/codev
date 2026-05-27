@@ -268,6 +268,11 @@ export async function activate(context: vscode.ExtensionContext) {
 				backlogProvider.setGroupExpanded(e.element.areaName, false);
 			}
 		}),
+		vscode.workspace.onDidChangeConfiguration((e) => {
+			if (e.affectsConfiguration('codev.backlog.priorityAreas')) {
+				backlogProvider.refresh();
+			}
+		}),
 	);
 	recentlyClosedView = vscode.window.createTreeView('codev.recentlyClosed', { treeDataProvider: new RecentlyClosedProvider(overviewCache) });
 	// Seed the badge so it's correct immediately if overview data is already

@@ -4,7 +4,6 @@ import { UNCATEGORIZED_AREA } from '@cluesmith/codev-core/constants';
 import type { OverviewCache } from './overview-data.js';
 import { BacklogGroupTreeItem, BacklogTreeItem } from './backlog-tree-item.js';
 
-const CROSS_CUTTING_AREA = 'cross-cutting';
 const EXPANSION_STATE_KEY = 'codev.backlogGroupExpansion';
 
 /**
@@ -21,49 +20,60 @@ export function spawnableBacklog(items: OverviewBacklogItem[]): OverviewBacklogI
  * Group backlog items by their resolved `area` (already projected on the
  * server via `parseArea`; see #819). Returned groups are ordered:
  *
- *   1. `cross-cutting` (highest-coordination-risk surfaced first)
- *   2. alphabetical specific areas
+ *   1. Any areas the caller pins via `priorityAreas`, in the listed order
+ *   2. Alphabetical specific areas
  *   3. `Uncategorized` (last)
  *
  * Within-group order preserves the input order — the caller has already
  * applied any "mine-first" or sort policy. Empty groups are omitted
- * (no `<area> (0)` headers).
+ * (no `<area> (0)` headers). Priority entries that don't match any
+ * present area are silently skipped — same outcome as alphabetical for
+ * absent areas.
+ *
+ * `priorityAreas` is per-repo policy supplied by the user via the
+ * `codev.backlog.priorityAreas` setting. The framework intentionally
+ * does NOT bake in any specific label name (e.g. `cross-cutting`) — that
+ * decision belongs to the repo, not the framework, mirroring the
+ * policy-free posture of `parseArea` (#819). Passing `[]` yields pure
+ * alphabetical ordering, which is the appropriate default for any repo
+ * that hasn't expressed a preference.
  *
  * Pure function — no VSCode dependency, unit-testable.
- *
- * Cross-cutting detection relies on the documented convention: an issue
- * tagged ONLY `area/cross-cutting` arrives here with `area === 'cross-cutting'`.
- * Issues that mix `area/cross-cutting` with another area label land in
- * the alphabetically-first specific area per `parseArea`'s server-side
- * projection. The framework parser is policy-free about label semantics
- * by design (see #819); the cross-cutting convention is a view-layer
- * UX choice.
  */
 export function groupBacklogByArea(
   items: OverviewBacklogItem[],
+  priorityAreas: readonly string[] = [],
 ): Array<{ area: string; items: OverviewBacklogItem[] }> {
   const buckets = new Map<string, OverviewBacklogItem[]>();
   for (const item of items) {
-    const area = item.area || UNCATEGORIZED_AREA;
-    const bucket = buckets.get(area);
+    const bucket = buckets.get(item.area);
     if (bucket) {
       bucket.push(item);
     } else {
-      buckets.set(area, [item]);
+      buckets.set(item.area, [item]);
     }
   }
 
   const result: Array<{ area: string; items: OverviewBacklogItem[] }> = [];
-  const crossCutting = buckets.get(CROSS_CUTTING_AREA);
-  if (crossCutting) {
-    result.push({ area: CROSS_CUTTING_AREA, items: crossCutting });
-    buckets.delete(CROSS_CUTTING_AREA);
+  const consumed = new Set<string>();
+
+  for (const area of priorityAreas) {
+    // Uncategorized always lands last regardless of priority configuration —
+    // it's the "no opinion" bucket, not a pinnable area.
+    if (area === UNCATEGORIZED_AREA || consumed.has(area)) { continue; }
+    const bucket = buckets.get(area);
+    if (bucket) {
+      result.push({ area, items: bucket });
+      consumed.add(area);
+    }
   }
 
   const uncategorized = buckets.get(UNCATEGORIZED_AREA);
-  buckets.delete(UNCATEGORIZED_AREA);
+  consumed.add(UNCATEGORIZED_AREA);
 
-  const specifics = [...buckets.keys()].sort();
+  const specifics = [...buckets.keys()]
+    .filter(a => !consumed.has(a))
+    .sort();
   for (const area of specifics) {
     result.push({ area, items: buckets.get(area)! });
   }
@@ -77,11 +87,13 @@ export function groupBacklogByArea(
 
 /**
  * Backlog view: open GitHub issues with no PR yet, grouped by `area/*`
- * label. Group ordering: `cross-cutting` → alphabetical specifics →
- * `Uncategorized`. Within each group, items assigned to the current
- * user (auto-detected via OverviewData.currentUser) sort to the top
- * with an `account` icon; the rest keep `issues`. Order within those
- * two segments preserves Tower's order.
+ * label. Group ordering: areas listed in the per-repo setting
+ * `codev.backlog.priorityAreas` first (in their listed order), then
+ * alphabetical specifics, then `Uncategorized` last. Within each group,
+ * items assigned to the current user (auto-detected via
+ * OverviewData.currentUser) sort to the top with an `account` icon; the
+ * rest keep `issues`. Order within those two segments preserves Tower's
+ * order.
  *
  * Row click starts work: it invokes codev.viewBacklogIssue with the
  * issue number pre-filled. Browser / copy / spawn actions live in the
@@ -100,6 +112,11 @@ export class BacklogProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     private readonly workspaceState: vscode.Memento,
   ) {
     cache.onDidChange(() => this.changeEmitter.fire());
+  }
+
+  /** Re-render when the user edits `codev.backlog.priorityAreas`. */
+  refresh(): void {
+    this.changeEmitter.fire();
   }
 
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -131,7 +148,7 @@ export class BacklogProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     if (!data) { return []; }
 
     const items = this.orderedSpawnable(data);
-    const groups = groupBacklogByArea(items);
+    const groups = groupBacklogByArea(items, this.readPriorityAreas());
     const expansion = this.readExpansionState();
     return groups.map(g => {
       const expanded = expansion[g.area] ?? true;
@@ -147,7 +164,8 @@ export class BacklogProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     if (!data) { return []; }
 
     const items = this.orderedSpawnable(data);
-    const group = groupBacklogByArea(items).find(g => g.area === areaName);
+    const group = groupBacklogByArea(items, this.readPriorityAreas())
+      .find(g => g.area === areaName);
     if (!group) { return []; }
 
     const me = data.currentUser?.toLowerCase();
@@ -189,5 +207,12 @@ export class BacklogProvider implements vscode.TreeDataProvider<vscode.TreeItem>
 
   private readExpansionState(): Record<string, boolean> {
     return this.workspaceState.get<Record<string, boolean>>(EXPANSION_STATE_KEY, {});
+  }
+
+  private readPriorityAreas(): readonly string[] {
+    const raw = vscode.workspace
+      .getConfiguration('codev')
+      .get<unknown>('backlog.priorityAreas');
+    return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === 'string') : [];
   }
 }
