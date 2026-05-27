@@ -1,7 +1,7 @@
 id: '811'
 title: vscode-group-backlog-by-area-a
 protocol: pir
-phase: review
+phase: verified
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -21,7 +21,7 @@ iteration: 1
 build_complete: true
 history: []
 started_at: '2026-05-27T10:36:54.820Z'
-updated_at: '2026-05-27T21:15:46.781Z'
+updated_at: '2026-05-27T21:26:41.774Z'
 pr_history:
   - phase: review
     pr_number: 886
