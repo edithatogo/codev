@@ -735,11 +735,12 @@ export async function approve(
 
   state.gates[gateName].status = 'approved';
   state.gates[gateName].approved_at = new Date().toISOString();
-  // Issue #872: human approving the pr gate means they've acted — the PR is no
-  // longer waiting on a reviewer, so the pr-ready signal must go false in the
-  // same write that records the approval. Clearing on gate-approval covers all
-  // four protocols with an explicit `pr` gate; BUGFIX has no gate and stays
-  // true until the architect cleans up the worktree (cleanup deletes status).
+  // Issue #872 / #887: human approving the pr gate means they've acted — the
+  // PR is no longer waiting on a reviewer, so the pr-ready signal must go
+  // false in the same write that records the approval. Clearing on
+  // gate-approval covers all five PR-emitting protocols (SPIR / ASPIR / PIR /
+  // AIR / BUGFIX), each of which now carries `gate: "pr"` on its PR-creating
+  // phase — #887 closed the BUGFIX special case.
   if (gateName === 'pr') {
     state.pr_ready_for_human = false;
   }
