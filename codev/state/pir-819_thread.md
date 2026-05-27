@@ -77,3 +77,20 @@ User flagged: the `'Uncategorized'` literal was hardcoded in two places (parser 
 Build ✓, tests still 66/66 ✓.
 
 Still at `dev-approval`.
+
+## Review phase — 2026-05-27
+
+`dev-approval` approved. Wrote `codev/reviews/819-core-parsearealabels-helper-fl.md` (commit `12f98fca`) with Summary, Files Changed, Commits, Test Results, Architecture Updates (none — no new boundaries), Lessons Learned Updates (no `lessons-learned.md` edits; the two principles surfaced went to the project's memory system instead via `feedback_framework_neutral_on_label_semantics.md`), Things to Look At, and How to Test Locally sections.
+
+Opened PR #876 against main using the review file as the body. Recorded with porch (`porch done 819 --pr 876 --branch builder/pir-819`).
+
+**Mid-PIR merge from origin/main**: user flagged a merge conflict. Fetched and merged `origin/main` (de4b060d) into the branch. Conflicts in two files, both stemming from the same upstream change — bugfix #872 added a `prReady: boolean` field to `OverviewBuilder` at the same position my PIR added `area: string`. Both fields are independent; resolved by keeping both. Three more conflicts in `discoverBuilders` push sites (same shape — `area: UNCATEGORIZED_AREA` and `prReady: false`/`derivePrReady(parsed)` both added at end of each push site). Resolved keeping both. Merge commit `6254a9c3`; pushed.
+
+Re-verification post-merge: `pnpm -w build` ✓, `pnpm --filter @cluesmith/codev test src/__tests__/github.test.ts` ✓ (66 tests), `pnpm --filter @cluesmith/codev test` (full) ✓ (3172 tests pass, +23 from bugfix-872's new tests, 13 pre-existing skips, no regressions).
+
+**3-way consultation results** (PIR single-pass, `max_iterations: 1`):
+- **Claude**: APPROVE.
+- **Codex**: COMMENT (two accuracy findings on the review file — files-changed count was 9 not 10 because I forgot to include the review file itself, and the `import { parseArea } from '@cluesmith/codev'` example was wrong since `parseArea` isn't exported from the package root). Both addressed in commit `234e88bc`. PR body re-uploaded.
+- **Gemini**: persistently failing — three consecutive `consult -m gemini` attempts exited code 1 with opaque `[object Object]` error in ~2-4s, no output file written. The `[warn] Failed to extract usage for gemini: Unexpected end of JSON input` suggests Gemini API returned an empty/malformed body. Not a code issue — looks like an API/auth/quota problem with the `consult` CLI's Gemini path. Architect notified via `afx send` for direction (skip / retry later / investigate).
+
+Porch currently blocking on Gemini producing an output. PR gate not yet pending — `porch next 819` reports `status: tasks` requesting another Gemini attempt.
