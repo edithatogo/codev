@@ -140,7 +140,7 @@ export class BacklogProvider implements vscode.TreeDataProvider<vscode.TreeItem>
   setGroupExpanded(areaName: string, expanded: boolean): void {
     const map = this.readExpansionState();
     map[areaName] = expanded;
-    void this.workspaceState.update(EXPANSION_STATE_KEY, map);
+    this.workspaceState.update(EXPANSION_STATE_KEY, map);
   }
 
   private rootChildren(): vscode.TreeItem[] {
