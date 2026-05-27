@@ -15,11 +15,12 @@ gates:
     approved_at: '2026-05-27T04:33:16.753Z'
   pr:
     status: pending
+    requested_at: '2026-05-27T04:52:40.437Z'
 iteration: 1
 build_complete: true
 history: []
 started_at: '2026-05-26T05:43:05.270Z'
-updated_at: '2026-05-27T04:35:57.403Z'
+updated_at: '2026-05-27T04:52:40.439Z'
 pr_history:
   - phase: review
     pr_number: 876
