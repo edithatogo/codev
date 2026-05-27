@@ -4,9 +4,13 @@ protocol: bugfix
 phase: pr
 plan_phases: []
 current_plan_phase: null
-gates: {}
+gates:
+  pr:
+    status: pending
+    requested_at: '2026-05-27T14:09:02.204Z'
 iteration: 1
 build_complete: false
 history: []
 started_at: '2026-05-27T13:41:02.865Z'
-updated_at: '2026-05-27T13:59:38.820Z'
+updated_at: '2026-05-27T14:09:02.204Z'
+pr_ready_for_human: true
