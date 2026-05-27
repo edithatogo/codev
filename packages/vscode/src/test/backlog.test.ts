@@ -51,7 +51,7 @@ suite('groupBacklogByArea', () => {
 		assert.deepStrictEqual(out[0].items.map(i => i.id), ['1']);
 	});
 
-	test('default ordering is alphabetical specifics then Uncategorized last', () => {
+	test('alphabetical specifics then Uncategorized last', () => {
 		const out = groupBacklogByArea([
 			backlogItem('1', 'tower'),
 			backlogItem('2', 'Uncategorized'),
@@ -62,43 +62,6 @@ suite('groupBacklogByArea', () => {
 			out.map(g => g.area),
 			['auth', 'porch', 'tower', 'Uncategorized'],
 		);
-	});
-
-	test('priorityAreas pins listed areas to the top in the listed order', () => {
-		const out = groupBacklogByArea(
-			[
-				backlogItem('1', 'tower'),
-				backlogItem('2', 'auth'),
-				backlogItem('3', 'porch'),
-				backlogItem('4', 'vscode'),
-			],
-			['porch', 'auth'],
-		);
-		assert.deepStrictEqual(
-			out.map(g => g.area),
-			['porch', 'auth', 'tower', 'vscode'],
-		);
-	});
-
-	test('Uncategorized stays last even when listed in priorityAreas', () => {
-		// Defensive: explicit policy is "Uncategorized always last". A
-		// misconfigured priority list shouldn't be able to override it.
-		const out = groupBacklogByArea(
-			[
-				backlogItem('1', 'auth'),
-				backlogItem('2', 'Uncategorized'),
-			],
-			['Uncategorized'],
-		);
-		assert.deepStrictEqual(out.map(g => g.area), ['auth', 'Uncategorized']);
-	});
-
-	test('priorityAreas entries that match no present area are skipped silently', () => {
-		const out = groupBacklogByArea(
-			[backlogItem('1', 'auth'), backlogItem('2', 'tower')],
-			['missing-area', 'auth'],
-		);
-		assert.deepStrictEqual(out.map(g => g.area), ['auth', 'tower']);
 	});
 
 	test('omits empty area groups (no "<area> (0)" headers)', () => {

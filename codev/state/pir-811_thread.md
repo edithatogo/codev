@@ -51,3 +51,18 @@ PR #886 opened with the review file as body. Single advisory 3-way consultation 
 - Claude: COMMENT (one cosmetic — `void` prefix on a fire-and-forget Promise; matches my own `feedback_no_void_floating_promise` convention)
 
 Addressed Claude's nit in `9ace0fcb` (dropped the `void` prefix). pr gate now pending; architect notified.
+
+## 2026-05-27 — review phase, revision 2
+
+Architect reconsideration during pr-gate review: drop the `codev.backlog.priorityAreas` mechanism entirely. Rationale: solving a problem we don't have; configurable shape conflated coordination with rank. Better to remove than ship + maintain.
+
+Changes:
+- `views/backlog.ts`: `groupBacklogByArea` no longer takes `priorityAreas`; pure alphabetical specifics + `Uncategorized` last. Dropped `readPriorityAreas()`, `refresh()`.
+- `extension.ts`: dropped the `onDidChangeConfiguration` listener for `codev.backlog.priorityAreas`.
+- `package.json`: dropped the `codev.backlog.priorityAreas` setting registration.
+- `test/backlog.test.ts`: dropped three priorityAreas-related tests; renamed "default ordering is alphabetical specifics then Uncategorized last" → "alphabetical specifics then Uncategorized last".
+- Plan + review docs revised to remove all priorityAreas references; alternatives section now documents both the cross-cutting hardcoding and the priorityAreas configurable as rejected.
+
+Test results: `pnpm --filter codev-vscode test` → 90 pass.
+
+Sibling PIR #818 (builders-tree grouping) is still in plan phase. The same simpler design applies there; the architect will flag this when their plan lands so both views ship byte-identical.
