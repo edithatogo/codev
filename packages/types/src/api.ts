@@ -172,6 +172,13 @@ export interface OverviewBuilder {
    * hosts more than one architect.
    */
   spawnedByArchitect: string | null;
+  /**
+   * `area/*` label values for this builder's issue (sorted, deduplicated,
+   * prefix stripped). `[]` when the builder has no issue or the issue has
+   * no `area/*` labels. Required-with-default — never `undefined`. Consumed
+   * by the builders-tree grouping in #818 and the equivalent dashboard view.
+   */
+  areas: string[];
 }
 
 export interface OverviewPR {
@@ -190,6 +197,13 @@ export interface OverviewBacklogItem {
   url: string;
   type: string;
   priority: string;
+  /**
+   * `area/*` label values for this issue (sorted, deduplicated, prefix
+   * stripped). `[]` when the issue has no `area/*` labels. Required-with-default
+   * — never `undefined`. Consumed by the backlog grouping in #811 and the
+   * equivalent vscode view.
+   */
+  areas: string[];
   hasSpec: boolean;
   hasPlan: boolean;
   hasReview: boolean;
