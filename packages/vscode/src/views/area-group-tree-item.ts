@@ -17,7 +17,7 @@ export type AreaGroupKind = 'backlog' | 'builder';
  * `areaName`, `id`, and `contextValue` all use the raw wire value so
  * expansion-state persistence and `areaName === ...` matchers in the
  * per-view providers keep working. Only the human-visible label is
- * passed through `formatAreaForDisplay` (sentence-case + separator-to-
+ * passed through `formatAreaForDisplay` (title-case + separator-to-
  * space, see #885).
  */
 export class AreaGroupTreeItem extends vscode.TreeItem {
