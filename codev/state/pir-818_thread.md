@@ -65,3 +65,17 @@ Check results:
 - `pnpm --filter codev-vscode test` ✓ — 90 tests passing, 7 new (`suite('groupByArea')`), 4 removed (`suite('groupBacklogByArea')`)
 
 Awaiting dev-approval gate review.
+
+## 2026-05-27 — dev-approval gate approved + review phase complete
+
+User asked the right hard questions before approving:
+- "what is the purpose of `area-group-expansion.ts` and tree item? is that a shared component?" → confirmed both are deliberately shared between backlog and builders; explained the `kind` discriminator + thin-subclass pattern for `instanceof` discrimination
+- "`wireAreaGroupExpansion` looks like an odd name" → agreed, renamed to `persistAreaGroupExpansion` (commit `9e838a6c`)
+- "why are we persisting area group expansions? is that an existing concept? what else is state persisted in the extension?" → enumerated all `workspaceState` usage (gate-toast seen set, backlog group expansion from #886, now builders); explained that persistence is required because VSCode's collapsibleState from the provider wins on each refresh
+
+After gate approval, advanced to review phase. PR #890 opened with the review file as body. 3-way consultation ran cleanly:
+- Gemini: APPROVE, HIGH confidence, no key issues
+- Codex: APPROVE, HIGH confidence, no key issues
+- Claude: APPROVE — detailed plan-adherence review confirming the extraction is byte-shared (~50 LOC reduction in backlog.ts on the merge-base, mechanical migration); flagged the minor plan deviations (test location, 7 tests vs 6, package.json exports vs barrel) as reasonable
+
+Architect notified; `pr` gate pending. Waiting for human merge approval.
