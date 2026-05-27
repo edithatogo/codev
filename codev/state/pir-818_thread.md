@@ -47,3 +47,21 @@ User chose option 1 (fold the refactor into #818). Revised plan now:
 Single-Uncategorized flatten (6 LOC per provider) is kept inline — extracting it cleanly would require an abstract provider with generics, disproportionate complexity for the residual duplication.
 
 Risk: this expands #818's scope to touch the shipped backlog code in the same PR. Mitigated by the mechanical nature of the migration and by the test suite (which moves but tests the same invariants).
+
+## 2026-05-27 — implement phase complete
+
+Plan-approval gate approved; advanced to implement. Three commits on builder/pir-818:
+
+1. `d5186d46` — extracted primitives (`groupByArea`, `AreaGroupTreeItem`, `AreaGroupExpansionStore`, `wireAreaGroupExpansion`, area-grouping tests; new core export)
+2. `8bd1537c` — mechanical backlog migration onto the shared primitives; `groupBacklogByArea` and its tests dropped (behaviour covered by the generic)
+3. `4419a7d7` — builders applied: `BuilderGroupTreeItem`, two-level `BuildersProvider`, `getParent` + per-render group-cache map for accordion `reveal()`, single-Uncategorized flatten; extension.ts widens `BuildersProvider` constructor with `workspaceState` and wires `wireAreaGroupExpansion`
+
+Plan deviation: tests for the generic `groupByArea<T>` landed in `packages/vscode/src/test/area-grouping.test.ts` (mocha-style, reusing the vscode-test runner) rather than `packages/core/src/__tests__/`. Core has no test infrastructure today; bootstrapping vitest just for seven tests would be disproportionate. Covered by all the same behavioural invariants from the plan, plus one extra demonstrating the generic via an arbitrary item shape.
+
+Check results:
+- `pnpm --filter codev-vscode check-types` ✓
+- `pnpm --filter codev-vscode lint` ✓
+- `pnpm --filter codev-vscode compile` ✓ (esbuild bundle)
+- `pnpm --filter codev-vscode test` ✓ — 90 tests passing, 7 new (`suite('groupByArea')`), 4 removed (`suite('groupBacklogByArea')`)
+
+Awaiting dev-approval gate review.
