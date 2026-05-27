@@ -1,7 +1,7 @@
 id: bugfix-878
 title: consult-gemini-lane-points-at-
 protocol: bugfix
-phase: pr
+phase: verified
 plan_phases: []
 current_plan_phase: null
 gates: {}
@@ -9,4 +9,5 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-05-27T05:34:36.124Z'
-updated_at: '2026-05-27T05:46:31.999Z'
+updated_at: '2026-05-27T05:52:30.741Z'
+pr_ready_for_human: true
