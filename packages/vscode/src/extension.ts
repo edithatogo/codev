@@ -350,6 +350,22 @@ export async function activate(context: vscode.ExtensionContext) {
 		}),
 	);
 
+	// Backlog mine-only / show-all toggle. Default is `false` (mine-only)
+	// so a fresh install opens to "what's on my plate". Same mechanics as
+	// the two toggles above: read setting, mirror to context key so the
+	// paired view-title commands swap correctly, refresh the provider on
+	// change so the filter takes effect immediately.
+	const readBacklogShowAll = () =>
+		vscode.workspace.getConfiguration('codev').get<boolean>('backlogShowAll', false);
+	vscode.commands.executeCommand('setContext', 'codev.backlogShowAll', readBacklogShowAll());
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeConfiguration((e) => {
+			if (!e.affectsConfiguration('codev.backlogShowAll')) { return; }
+			vscode.commands.executeCommand('setContext', 'codev.backlogShowAll', readBacklogShowAll());
+			backlogProvider.refresh();
+		}),
+	);
+
 	// Periodic overview refresh. VSCode has no timer-based refresh (event-only),
 	// so an idle workspace never sees externally-merged PRs / new issues. Mirror
 	// the dashboard's poll idiom: refresh on a cadence while the Codev sidebar is
@@ -629,6 +645,10 @@ export async function activate(context: vscode.ExtensionContext) {
 			vscode.workspace.getConfiguration('codev').update('buildersFileViewAsTree', true, vscode.ConfigurationTarget.Global)),
 		vscode.commands.registerCommand('codev.disableBuildersFileTreeMode', () =>
 			vscode.workspace.getConfiguration('codev').update('buildersFileViewAsTree', false, vscode.ConfigurationTarget.Global)),
+		vscode.commands.registerCommand('codev.showBacklogAll', () =>
+			vscode.workspace.getConfiguration('codev').update('backlogShowAll', true, vscode.ConfigurationTarget.Global)),
+		vscode.commands.registerCommand('codev.showBacklogMineOnly', () =>
+			vscode.workspace.getConfiguration('codev').update('backlogShowAll', false, vscode.ConfigurationTarget.Global)),
 		vscode.commands.registerCommand('codev.reconnect', () => connectionManager?.reconnect()),
 		vscode.commands.registerCommand('codev.connectTunnel', () => connectTunnel(connectionManager!)),
 		vscode.commands.registerCommand('codev.disconnectTunnel', () => disconnectTunnel(connectionManager!)),

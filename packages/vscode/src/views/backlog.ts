@@ -5,6 +5,7 @@ import { groupByArea } from '@cluesmith/codev-core/area-grouping';
 import type { OverviewCache } from './overview-data.js';
 import { BacklogGroupTreeItem, BacklogTreeItem } from './backlog-tree-item.js';
 import { AreaGroupExpansionStore } from './area-group-expansion.js';
+import { filterMine } from './backlog-filter.js';
 
 /**
  * Backlog rows the user can act on — exclude issues that already have an
@@ -45,6 +46,15 @@ export class BacklogProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     cache.onDidChange(() => this.changeEmitter.fire());
   }
 
+  /**
+   * Force a re-render. Used by the `codev.backlogShowAll` config-change
+   * listener — the cache hasn't changed, but the filter mode has, so
+   * the tree needs to redraw.
+   */
+  refresh(): void {
+    this.changeEmitter.fire();
+  }
+
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
     return element;
   }
@@ -64,6 +74,19 @@ export class BacklogProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     if (!data) { return []; }
 
     const items = this.orderedSpawnable(data);
+
+    // Empty mine-only state: the user has the filter on, we know who
+    // they are, and nothing matched. Show a single non-clickable
+    // placeholder pointing at the toggle — silent empty view is the
+    // confusing failure mode the issue called out.
+    if (items.length === 0 && !readBacklogShowAll() && !!data.currentUser) {
+      const placeholder = new vscode.TreeItem(
+        '(no backlog items assigned to you — click the eye icon to see all)',
+      );
+      placeholder.contextValue = 'backlog-empty';
+      return [placeholder];
+    }
+
     const groups = groupByArea(items, i => i.area);
 
     // Degenerate case: a repo that doesn't use `area/*` labels yields a
@@ -119,15 +142,27 @@ export class BacklogProvider implements vscode.TreeDataProvider<vscode.TreeItem>
    * Spawnable items in display order (mine-first, then rest), preserving
    * Tower's order within each segment. Identical to the pre-grouping
    * behavior so within-group ordering matches the old flat list.
+   *
+   * If `codev.backlogShowAll` is off and `currentUser` is known, the
+   * list is further filtered down to items assigned to the current
+   * user. When `currentUser` is unavailable, `filterMine` is a no-op so
+   * the view stays useful even when gh can't tell us who the user is.
    */
   private orderedSpawnable(data: NonNullable<ReturnType<OverviewCache['getData']>>): OverviewBacklogItem[] {
     const me = data.currentUser?.toLowerCase();
     const isMine = (item: OverviewBacklogItem) =>
       !!me && !!item.assignees?.some(a => a.toLowerCase() === me);
 
-    const items = spawnableBacklog(data.backlog);
+    let items = spawnableBacklog(data.backlog);
+    if (!readBacklogShowAll()) {
+      items = filterMine(items, data.currentUser);
+    }
     const mine = items.filter(isMine);
     const rest = items.filter(item => !isMine(item));
     return [...mine, ...rest];
   }
+}
+
+function readBacklogShowAll(): boolean {
+  return vscode.workspace.getConfiguration('codev').get<boolean>('backlogShowAll', false);
 }
