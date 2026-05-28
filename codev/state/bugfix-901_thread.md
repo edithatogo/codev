@@ -28,5 +28,14 @@ PR-loop is untouched — it iterates open PRs only, so already correct.
 
 ## PR
 
-PR #902 opened. CMAP-3 (gemini/codex/claude) running in parallel via consult.
+PR #902 opened. CMAP-3 (gemini/codex/claude) ran in parallel via consult.
 
+## CMAP-3 result
+
+All three: **APPROVE / HIGH / no key issues**. Iter-1 outputs persisted at
+`codev/projects/bugfix-901-needs-attention-surfaces-build/bugfix-901-pr-iter1-{gemini,codex,claude}.txt`.
+Claude flagged a non-blocking style nit (two existing `buildItems(prs, builders)`
+test calls rely on the new default param instead of passing `[]` explicitly) —
+left as-is. PR body updated with the verdict table.
+
+Notifying architect + running `porch done bugfix-901` to request the pr gate.
