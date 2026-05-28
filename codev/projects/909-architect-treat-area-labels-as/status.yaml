@@ -1,7 +1,7 @@
 id: '909'
 title: architect-treat-area-labels-as
 protocol: pir
-phase: plan
+phase: implement
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -17,4 +17,4 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-05-28T05:03:04.695Z'
-updated_at: '2026-05-28T05:19:16.528Z'
+updated_at: '2026-05-28T05:19:24.224Z'
