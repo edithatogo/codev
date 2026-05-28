@@ -20,3 +20,13 @@ Minimal fix:
 
 PR-loop is untouched — it iterates open PRs only, so already correct.
 
+## Implementation notes
+
+- The codev package defines its OWN `OverviewData` interface (`packages/codev/src/agent-farm/servers/overview.ts:156`) in addition to the shared one in `packages/types/src/api.ts`. Both needed updating — otherwise the local tsc check fails with `Object literal may only specify known properties` even though the wire type is correct. Worth noting if anyone wonders why the change touches two type declarations.
+- The merged-PR projection runs unconditionally even when `closed === null` (the existing recentlyClosed block early-outs). This is intentional — the consumer needs the merged-issue set independent of whether the closed-issue enrichment succeeded.
+- `recentlyMergedIssueIds: readonly string[]` in the React prop with a default of `[]` so the change is backwards-compatible for any tests/callers that don't (yet) pass it.
+
+## PR
+
+PR #902 opened. CMAP-3 (gemini/codex/claude) running in parallel via consult.
+

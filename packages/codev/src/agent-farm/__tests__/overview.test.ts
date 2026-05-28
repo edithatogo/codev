@@ -1897,6 +1897,21 @@ describe('overview', () => {
       expect(new Set(data.recentlyMergedIssueIds)).toEqual(new Set(['100', '200']));
     });
 
+    it('deduplicates recentlyMergedIssueIds when the same issue has multiple merged PRs', async () => {
+      // A follow-up PR can land while the original sits in the 24h merged
+      // window — both PRs reference the same `Fixes #N`. The consumer wants
+      // a SET of issue IDs, not a multi-bag, so the dedup is load-bearing.
+      mockFetchMergedPRs.mockResolvedValue([
+        { number: 150, title: '[Bugfix #100] First attempt', url: 'https://github.com/org/repo/pull/150', body: 'Fixes #100', createdAt: '2026-01-02T00:00:00Z', mergedAt: new Date().toISOString() },
+        { number: 151, title: '[Bugfix #100] Follow-up', url: 'https://github.com/org/repo/pull/151', body: 'Fixes #100', createdAt: '2026-01-02T01:00:00Z', mergedAt: new Date().toISOString() },
+      ]);
+
+      const cache = new OverviewCache();
+      const data = await cache.getOverview(tmpDir);
+
+      expect(data.recentlyMergedIssueIds).toEqual(['100']);
+    });
+
     it('enriches issueId from DB issue_number for unknown protocols (#664)', async () => {
       // research-533 doesn't match any protocol regex → soft mode, issueId null
       const worktreePath = createBuilderWorktree(tmpDir, 'research-533-context-window');
