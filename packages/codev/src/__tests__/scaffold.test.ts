@@ -13,9 +13,6 @@ import {
   copyResourceTemplates,
   copyRoles,
   copyRootFiles,
-  createGitignore,
-  updateGitignore,
-  CODEV_GITIGNORE_ENTRIES,
 } from '../lib/scaffold.js';
 
 describe('Scaffold Utilities', () => {
@@ -270,64 +267,6 @@ describe('Scaffold Utilities', () => {
       expect(result.conflicts).toContain('CLAUDE.md');
       expect(fs.existsSync(path.join(targetDir, 'CLAUDE.md.codev-new'))).toBe(true);
       expect(fs.readFileSync(path.join(targetDir, 'CLAUDE.md'), 'utf-8')).toBe('existing content');
-    });
-  });
-
-  describe('createGitignore', () => {
-    it('should create .gitignore with codev entries', () => {
-      const targetDir = path.join(tempDir, 'project');
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      createGitignore(targetDir);
-
-      const content = fs.readFileSync(path.join(targetDir, '.gitignore'), 'utf-8');
-      expect(content).toContain('.agent-farm/');
-      expect(content).toContain('.consult/');
-      expect(content).toContain('.builders/');
-    });
-  });
-
-  describe('updateGitignore', () => {
-    it('should append codev entries to existing .gitignore', () => {
-      const targetDir = path.join(tempDir, 'project');
-      fs.mkdirSync(targetDir, { recursive: true });
-      fs.writeFileSync(path.join(targetDir, '.gitignore'), 'node_modules/\n');
-
-      const result = updateGitignore(targetDir);
-
-      expect(result.updated).toBe(true);
-      const content = fs.readFileSync(path.join(targetDir, '.gitignore'), 'utf-8');
-      expect(content).toContain('node_modules/');
-      expect(content).toContain('.agent-farm/');
-    });
-
-    it('should not duplicate entries if already present', () => {
-      const targetDir = path.join(tempDir, 'project');
-      fs.mkdirSync(targetDir, { recursive: true });
-      fs.writeFileSync(path.join(targetDir, '.gitignore'), '.agent-farm/\n');
-
-      const result = updateGitignore(targetDir);
-
-      expect(result.updated).toBe(false);
-      expect(result.alreadyPresent).toBe(true);
-    });
-
-    it('should create .gitignore if it does not exist', () => {
-      const targetDir = path.join(tempDir, 'project');
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      const result = updateGitignore(targetDir);
-
-      expect(result.created).toBe(true);
-      expect(fs.existsSync(path.join(targetDir, '.gitignore'))).toBe(true);
-    });
-  });
-
-  describe('CODEV_GITIGNORE_ENTRIES', () => {
-    it('should contain expected entries', () => {
-      expect(CODEV_GITIGNORE_ENTRIES).toContain('.agent-farm/');
-      expect(CODEV_GITIGNORE_ENTRIES).toContain('.consult/');
-      expect(CODEV_GITIGNORE_ENTRIES).toContain('.builders/');
     });
   });
 

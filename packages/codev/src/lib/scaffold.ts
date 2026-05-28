@@ -1,36 +1,12 @@
 /**
- * Scaffold utilities for codev init and adopt commands
- * Extracted to eliminate duplication (Maintenance Run 0004)
+ * Scaffold utilities shared across codev init / adopt / update.
+ *
+ * Directory creation, skeleton copying, and root-file templating. Gitignore
+ * management lives in `./gitignore.ts` (extracted in issue #882).
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-
-/**
- * Standard gitignore entries for codev projects
- */
-export const CODEV_GITIGNORE_ENTRIES = `# Codev
-.agent-farm/
-.consult/
-codev/.update-hashes.json
-.builders/
-`;
-
-/**
- * Full gitignore content for new projects
- */
-export const FULL_GITIGNORE_CONTENT = `${CODEV_GITIGNORE_ENTRIES}
-# Dependencies
-node_modules/
-
-# Build output
-dist/
-
-# OS files
-.DS_Store
-*.swp
-*.swo
-`;
 
 interface CreateUserDirsOptions {
   skipExisting?: boolean;
@@ -216,40 +192,6 @@ export function copyRootFiles(
   }
 
   return { copied, conflicts };
-}
-
-/**
- * Create a new .gitignore file with full content (for init)
- */
-export function createGitignore(targetDir: string): void {
-  const gitignorePath = path.join(targetDir, '.gitignore');
-  fs.writeFileSync(gitignorePath, FULL_GITIGNORE_CONTENT);
-}
-
-interface UpdateGitignoreResult {
-  updated: boolean;
-  created: boolean;
-  alreadyPresent: boolean;
-}
-
-/**
- * Update existing .gitignore or create if not exists (for adopt)
- */
-export function updateGitignore(targetDir: string): UpdateGitignoreResult {
-  const gitignorePath = path.join(targetDir, '.gitignore');
-
-  if (!fs.existsSync(gitignorePath)) {
-    fs.writeFileSync(gitignorePath, CODEV_GITIGNORE_ENTRIES.trim() + '\n');
-    return { updated: false, created: true, alreadyPresent: false };
-  }
-
-  const existing = fs.readFileSync(gitignorePath, 'utf-8');
-  if (existing.includes('.agent-farm/')) {
-    return { updated: false, created: false, alreadyPresent: true };
-  }
-
-  fs.appendFileSync(gitignorePath, '\n' + CODEV_GITIGNORE_ENTRIES);
-  return { updated: true, created: false, alreadyPresent: false };
 }
 
 interface CreateProjectsDirOptions {

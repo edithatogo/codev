@@ -41,6 +41,7 @@ Generalizable wisdom extracted from review documents, ordered by impact. Updated
 - [From 653] Start from the structural insight, not the feature list. The first three spec drafts built elaborate gate-ceremony machinery (checkpoint PRs, feedback commands, verify notes) that was all eliminated once the core insight — break the 1:1 builder↔PR assumption — was identified. When a spec feels bloated, look for the one structural change that makes the ceremony unnecessary.
 - [From 653] Protocol removal requires full-repo grep, not targeted searches. Removing a protocol touches ~50 files across source, docs, templates, skills, tests, and CLI help text. Scoped searches miss skeleton templates, test fixtures, and user-facing help strings. Run `rg` across the entire repo and verify zero hits before committing.
 - [From 653] Single verify pass + rebuttal is the right consultation cadence. Multi-iteration consult loops (running `consult` manually after each fix) violate `max_iterations=1` and add little marginal value over one rigorous verify pass followed by rebuttals.
+- [From 883] Source cleanup-detection diffs from the disk-truth endpoint, not the runtime-registry one. `/api/overview` is backed by `discoverBuilders`' `readdirSync(.builders/)` scan and collapses to "did `afx cleanup` remove this worktree?" — the actual cleanup signal. `/api/state` is rebuilt from SQLite `terminal_sessions` reconciled against shellper sockets and can be pinned open indefinitely by surviving shellper processes (which are *designed* to outlive Tower restarts). The 3.0.6 tab-close fix regressed because it diffed against the registry source; switching to the disk source made it resilient to the orphan-shellper class of bugs by construction.
 
 ## Security
 
@@ -145,6 +146,7 @@ Generalizable wisdom extracted from review documents, ordered by impact. Updated
 - [From 0376] Archive `status.yaml` files before `afx cleanup` -- most projects' porch state files are deleted after PR merge, losing valuable timing data for future development analyses.
 - [From 0589] Concept command abstraction (shell command per operation, env vars for params, JSON on stdout) is an effective pattern for decoupling from a specific CLI tool. Default commands wrap the existing tool, overrides in config enable alternatives. Key: provide both sync and async variants, support `raw` mode for non-JSON output, and always thread the config through all call sites.
 - [From 0589] When migrating multiple call sites to a new abstraction, configuration threading (passing `forgeConfig`/`workspaceRoot` to every call) is easy to miss at non-obvious sites like porch checks and merge instructions. Phase-scoped consultation reviews are effective at catching these gaps.
+- [From 818] An acceptance criterion of "rule structurally identical to X" is a written-rule trap when the rule lives as duplicated prose in two views. Two copies drift even with diligence; the only durable enforcement is one shared function both views import. Extract when the second consumer lands — not before (no abstraction without users) and not later (drift starts on day one).
 
 ## Process
 

@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
 import type { OverviewBacklogItem } from '@cluesmith/codev-types';
+import { UNCATEGORIZED_AREA } from '@cluesmith/codev-core/constants';
+import { groupByArea } from '@cluesmith/codev-core/area-grouping';
 import type { OverviewCache } from './overview-data.js';
-import { BacklogTreeItem } from './backlog-tree-item.js';
+import { BacklogGroupTreeItem, BacklogTreeItem } from './backlog-tree-item.js';
+import { AreaGroupExpansionStore } from './area-group-expansion.js';
 
 /**
  * Backlog rows the user can act on — exclude issues that already have an
@@ -14,21 +17,31 @@ export function spawnableBacklog(items: OverviewBacklogItem[]): OverviewBacklogI
 }
 
 /**
- * Backlog view: open GitHub issues with no PR yet. Issues assigned to the
- * current user (auto-detected via OverviewData.currentUser) sort to the
- * top with an `account` icon; the rest keep `issues`. Order within each
- * group preserves Tower's order. Mirrors how BuildersProvider sorts
- * blocked-first above active within a single view — no separator rows.
+ * Backlog view: open GitHub issues with no PR yet, grouped by `area/*`
+ * label. Group ordering: alphabetical specific areas, then `Uncategorized`
+ * last. Within each group, items assigned to the current user
+ * (auto-detected via OverviewData.currentUser) sort to the top with an
+ * `account` icon; the rest keep `issues`. Order within those two segments
+ * preserves Tower's order.
  *
- * Row click starts work: it invokes codev.spawnBuilder with the issue
- * number pre-filled (protocol-pick only). Browser / copy actions live in
- * the right-click context menu (see package.json view/item/context).
+ * Row click starts work: it invokes codev.viewBacklogIssue with the
+ * issue number pre-filled. Browser / copy / spawn actions live in the
+ * right-click context menu (see package.json view/item/context).
+ *
+ * Group expand/collapse state persists per area name via
+ * `workspaceState` under `codev.backlogGroupExpansion`. Default for
+ * any group the user hasn't touched: expanded.
  */
 export class BacklogProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
   private readonly changeEmitter = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changeEmitter.event;
+  readonly expansion: AreaGroupExpansionStore;
 
-  constructor(private cache: OverviewCache) {
+  constructor(
+    private readonly cache: OverviewCache,
+    workspaceState: vscode.Memento,
+  ) {
+    this.expansion = new AreaGroupExpansionStore(workspaceState, 'codev.backlogGroupExpansion');
     cache.onDidChange(() => this.changeEmitter.fire());
   }
 
@@ -36,10 +49,78 @@ export class BacklogProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     return element;
   }
 
-  getChildren(): vscode.TreeItem[] {
+  getChildren(element?: vscode.TreeItem): vscode.TreeItem[] {
+    if (element instanceof BacklogGroupTreeItem) {
+      return this.rowsForGroup(element.areaName);
+    }
+    if (element) {
+      return [];
+    }
+    return this.rootChildren();
+  }
+
+  private rootChildren(): vscode.TreeItem[] {
     const data = this.cache.getData();
     if (!data) { return []; }
 
+    const items = this.orderedSpawnable(data);
+    const groups = groupByArea(items, i => i.area);
+
+    // Degenerate case: a repo that doesn't use `area/*` labels yields a
+    // single `Uncategorized` group containing every issue. Rendering its
+    // header would add no information — collapse to flat rows so the
+    // backlog looks the same as it did before grouping shipped.
+    if (groups.length === 1 && groups[0].area === UNCATEGORIZED_AREA) {
+      return groups[0].items.map(item => this.makeRow(item, data));
+    }
+
+    const expansion = this.expansion.read();
+    return groups.map(g => {
+      const expanded = expansion[g.area] ?? true;
+      const state = expanded
+        ? vscode.TreeItemCollapsibleState.Expanded
+        : vscode.TreeItemCollapsibleState.Collapsed;
+      return new BacklogGroupTreeItem(g.area, g.items.length, state);
+    });
+  }
+
+  private rowsForGroup(areaName: string): vscode.TreeItem[] {
+    const data = this.cache.getData();
+    if (!data) { return []; }
+
+    const items = this.orderedSpawnable(data);
+    const group = groupByArea(items, i => i.area).find(g => g.area === areaName);
+    if (!group) { return []; }
+
+    return group.items.map(item => this.makeRow(item, data));
+  }
+
+  private makeRow(
+    item: OverviewBacklogItem,
+    data: NonNullable<ReturnType<OverviewCache['getData']>>,
+  ): BacklogTreeItem {
+    const me = data.currentUser?.toLowerCase();
+    const assigned = !!me && !!item.assignees?.some(a => a.toLowerCase() === me);
+    const author = item.author ? ` @${item.author}` : '';
+    const ti = new BacklogTreeItem(item.id, item.url, item.title, `#${item.id} ${item.title}${author}`);
+    ti.tooltip = item.url;
+    ti.contextValue = 'backlog-item';
+    ti.iconPath = new vscode.ThemeIcon(assigned ? 'account' : 'issues');
+    if (assigned) { ti.description = 'assigned to you'; }
+    ti.command = {
+      command: 'codev.viewBacklogIssue',
+      title: 'View Issue',
+      arguments: [item.id],
+    };
+    return ti;
+  }
+
+  /**
+   * Spawnable items in display order (mine-first, then rest), preserving
+   * Tower's order within each segment. Identical to the pre-grouping
+   * behavior so within-group ordering matches the old flat list.
+   */
+  private orderedSpawnable(data: NonNullable<ReturnType<OverviewCache['getData']>>): OverviewBacklogItem[] {
     const me = data.currentUser?.toLowerCase();
     const isMine = (item: OverviewBacklogItem) =>
       !!me && !!item.assignees?.some(a => a.toLowerCase() === me);
@@ -47,21 +128,6 @@ export class BacklogProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     const items = spawnableBacklog(data.backlog);
     const mine = items.filter(isMine);
     const rest = items.filter(item => !isMine(item));
-
-    return [...mine, ...rest].map(item => {
-      const assigned = mine.includes(item);
-      const author = item.author ? ` @${item.author}` : '';
-      const ti = new BacklogTreeItem(item.id, item.url, `#${item.id} ${item.title}${author}`);
-      ti.tooltip = item.url;
-      ti.contextValue = 'backlog-item';
-      ti.iconPath = new vscode.ThemeIcon(assigned ? 'account' : 'issues');
-      if (assigned) { ti.description = 'assigned to you'; }
-      ti.command = {
-        command: 'codev.viewBacklogIssue',
-        title: 'View Issue',
-        arguments: [item.id],
-      };
-      return ti;
-    });
+    return [...mine, ...rest];
   }
 }
