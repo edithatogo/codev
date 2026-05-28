@@ -266,7 +266,7 @@ Update status as projects progress:
 |---|---|
 | `area/docs` | Documentation — CLAUDE/AGENTS, role files, `codev/resources/` |
 | `area/vscode` | VSCode extension — sidebar views, commands, keybindings |
-| `area/panel` | The **dashboard** webview (the "codev panel" tab inside the VSCode extension). Synonym alert: users say "dashboard"; the label is `area/panel`. |
+| `area/panel` | The "codev panel" tab inside the VSCode extension. |
 | `area/consult` | `consult` CLI and consultation tooling |
 | `area/tower` | Tower server + `afx` / agent-farm CLI. **No separate `area/agent-farm`** — afx work goes here. |
 | `area/cross-cutting` | Multi-area work — used **alone**, never alongside another `area/*` |
@@ -275,13 +275,11 @@ Update status as projects progress:
 | `area/terminal` | Terminal-specific — PTY, VSCode terminal pane |
 | `area/core` | Shared core library / forge abstraction; also the current catch-all for install/scaffold and release tooling until those get dedicated labels |
 
-**Synonym alert:** users often say "dashboard" — that's `area/panel`. Users may also say "web" or "mobile" — codev has neither today, so don't invent area labels for them. If `gh label list` disagrees with this table, trust the live list.
-
 **Policy:**
 
 - **Exactly one** `area/*` per issue. Multi-area work uses `area/cross-cutting` *alone* — never two `area/*` labels.
 - **No `type:*` labels.** Codev classifies issues by area only.
-- `area/` uses **slash** (Kubernetes/Terraform convention).
+- `area/` uses **slash**.
 - All `gh issue create` invocations include `--assignee @me`.
 
 **Operational recipes:**

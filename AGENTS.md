@@ -129,7 +129,7 @@ Key locations:
 |---|---|
 | `area/docs` | Documentation — this repo, CLAUDE/AGENTS, role files, `codev/resources/` |
 | `area/vscode` | VSCode extension — sidebar views, commands, keybindings |
-| `area/panel` | The **dashboard** webview (the "codev panel" tab inside the VSCode extension). Synonym alert: users say "dashboard"; the label is `area/panel`. |
+| `area/panel` | The "codev panel" tab inside the VSCode extension. |
 | `area/consult` | `consult` CLI and consultation tooling |
 | `area/tower` | Tower server + `afx` / agent-farm CLI. **No separate `area/agent-farm`** — afx work goes here. |
 | `area/cross-cutting` | Multi-area work — used **alone**, never alongside another `area/*` |
@@ -138,13 +138,11 @@ Key locations:
 | `area/terminal` | Terminal-specific — PTY, VSCode terminal pane |
 | `area/core` | Shared core library / forge abstraction (`packages/core`, `packages/codev/src/lib`); also the current catch-all for install/scaffold (`codev init`/`adopt`/`update`) and release tooling until those get dedicated labels |
 
-**Synonym alert:** users often say "dashboard" — that's `area/panel`. Users may also say "web" or "mobile" — codev has neither today, so don't invent area labels for them. If `gh label list` disagrees with this table (rare, but possible after a deliberate addition), trust the live list.
-
 **Policy:**
 
 - **Exactly one** `area/*` per issue. Multi-area work uses `area/cross-cutting` *alone* — never two `area/*` labels.
 - **No `type:*` labels.** Codev classifies issues by area only.
-- `area/` uses **slash** (Kubernetes/Terraform convention). Other label families (if ever introduced) would keep colons.
+- `area/` uses **slash**. Other label families (if ever introduced) would keep colons.
 - All `gh issue create` invocations include `--assignee @me` so issues land in the user's assigned list.
 
 **Operational recipes:**
