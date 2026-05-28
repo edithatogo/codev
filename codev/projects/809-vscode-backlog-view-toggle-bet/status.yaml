@@ -1,7 +1,7 @@
 id: '809'
 title: vscode-backlog-view-toggle-bet
 protocol: pir
-phase: plan
+phase: implement
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -17,4 +17,4 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-05-28T00:59:34.520Z'
-updated_at: '2026-05-28T04:40:54.922Z'
+updated_at: '2026-05-28T04:43:18.375Z'
