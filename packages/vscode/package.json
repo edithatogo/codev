@@ -110,6 +110,16 @@
         "icon": "$(list-flat)"
       },
       {
+        "command": "codev.showBacklogAll",
+        "title": "Codev: Show All Backlog Items",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "codev.showBacklogMineOnly",
+        "title": "Codev: Show Only My Backlog Items",
+        "icon": "$(eye-closed)"
+      },
+      {
         "command": "codev.refreshTeam",
         "title": "Codev: Refresh Team",
         "icon": "$(refresh)"
@@ -426,6 +436,16 @@
           "group": "navigation"
         },
         {
+          "command": "codev.showBacklogAll",
+          "when": "view == codev.backlog && !codev.backlogShowAll",
+          "group": "navigation"
+        },
+        {
+          "command": "codev.showBacklogMineOnly",
+          "when": "view == codev.backlog && codev.backlogShowAll",
+          "group": "navigation"
+        },
+        {
           "command": "codev.refreshOverview",
           "when": "view == codev.recentlyClosed",
           "group": "navigation"
@@ -592,6 +612,11 @@
           "type": "boolean",
           "default": true,
           "description": "Render a builder's changed-files list as a folder tree (with single-child folder chains compacted, like VSCode's Source Control panel) instead of a flat list. Toggleable via the Builders title-bar button."
+        },
+        "codev.backlogShowAll": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show every open backlog issue. When off (the default), the Backlog view filters to items assigned to the current GitHub user. Toggleable via the Backlog title-bar eye icon."
         }
       }
     }
