@@ -119,6 +119,35 @@ Key locations:
 - **During implementation**: Use `porch status <id>` for detailed phase status
 - **After completion**: Close the GitHub Issue when PR is merged
 
+### Area Labels — the organizing axis for issues
+
+`area/*` is the **primary axis** for organizing GitHub Issues in this repo. When users ask to group, edit, audit, or bulk-move issues, treat `area/*` as the grouping dimension first — not `type:*` (we don't use them), not milestones, not assignees.
+
+**Labels**:
+
+| Label | Scope |
+|---|---|
+| `area/docs` | Documentation — this repo, CLAUDE/AGENTS, role files, `codev/resources/` |
+| `area/vscode` | VSCode extension — sidebar views, panel-area views, commands, keybindings |
+| `area/dashboard` | Tower web dashboard — the `@cluesmith/codev-dashboard` React/Vite package, served by Tower and opened in a browser (distinct from any VSCode UI) |
+| `area/consult` | `consult` CLI and consultation tooling |
+| `area/tower` | Tower server + `afx` / agent-farm CLI. **No separate `area/agent-farm`** — afx work goes here. |
+| `area/cross-cutting` | Multi-area work — used **alone**, never alongside another `area/*` |
+| `area/porch` | Porch state machine / protocol orchestration |
+| `area/protocols` | Protocol definitions (`codev/protocols/`, `codev-skeleton/protocols/`) — distinct from `area/porch` (orchestration) |
+| `area/config` | `.codev/config.json` and workspace setup |
+| `area/terminal` | Terminal-specific — PTY, VSCode terminal pane |
+| `area/scaffold` | Install path — `codev init` / `adopt` / `update` / `doctor`, `codev-skeleton/`, the four-tier resolver |
+| `area/release` | Release tooling — version bumps, release protocol artifacts, release scripts |
+| `area/web` | Marketing site / web content — the `marketing/` directory |
+| `area/core` | Shared core library / forge abstraction (`packages/core`, `packages/codev/src/lib`, `packages/types`) |
+
+**Policy:**
+
+- **Exactly one** `area/*` per issue. Multi-area work uses `area/cross-cutting` *alone* — never two `area/*` labels.
+- **No `type:*` labels.** Codev classifies issues by area only.
+- `area/` uses **slash**. Other label families (if ever introduced) would keep colons.
+
 **🚨 CRITICAL: Two human approval gates exist:**
 - **conceived → specified**: AI creates spec, but ONLY the human can approve it
 - **committed → integrated**: AI can merge PRs, but ONLY the human can validate production
