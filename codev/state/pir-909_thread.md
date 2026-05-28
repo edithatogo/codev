@@ -61,3 +61,17 @@ All 4 verification checks pass:
 - `npm test` running in background; will report on completion
 
 Worktree had no `node_modules` (no postSpawn hook configured), so I ran `pnpm install` once before the build/test cycle. Recorded so a future spawn doesn't repeat the dead-end.
+
+## 2026-05-28 — forge-direct vs forge-abstract design call (at dev-approval)
+
+User flagged: "instructions shouldn't mention GitHub directly, isn't there a forge or git abstraction?"
+
+Investigated and confirmed the existing pattern:
+- **Internal automation layer**: forge concept commands at `packages/codev/scripts/forge/<provider>/`, dispatched via `packages/codev/src/lib/forge.ts`. Routes through `gh`/`glab`/`tea` per `.codev/config.json`'s `forge.provider`. Used by porch, doctor, project-summary, etc.
+- **User-facing layer** (skeleton docs + AI prompts): hardcodes `gh` everywhere. `codev-skeleton/roles/architect.md` already has `gh pr diff`, `gh pr view`, `gh pr comment`, `gh issue close`, `gh issue list`, `gh issue view`. Every protocol prompt (`codev-skeleton/protocols/*/prompts/*.md`, `*/builder-prompt.md`) uses `gh pr create`, `gh pr merge`, `gh pr view`, etc.
+
+Why two layers: the forge concept set is read-mostly (`issue-view`, `issue-list`, `pr-list`, `pr-merge`, ...) — no concepts for label management, issue editing, jq-piping. Architect interactive ops need flag shapes the abstraction doesn't expose. And there's no user-facing `codev forge <concept>` CLI.
+
+User confirmed: keep new section consistent with existing `gh` pattern. Localized forge-CLI awareness in one section would create inconsistency vs. neighboring sections (and the rest of the skeleton). Wholesale forge-agnostic skeleton refactor is a separate, much larger concern — file as a follow-up if/when wanted.
+
+No edits to the codebase. Recorded the pattern as memory ([feedback-skeleton-gh-direct]) so future sessions don't re-litigate.
