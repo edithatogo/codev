@@ -1,7 +1,7 @@
 id: '793'
 title: vscode-generalize-viewplanfile
 protocol: pir
-phase: implement
+phase: review
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -20,5 +20,5 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-05-27T10:34:42.564Z'
-updated_at: '2026-05-28T04:27:07.533Z'
+updated_at: '2026-05-28T04:29:11.794Z'
 pr_ready_for_human: false
