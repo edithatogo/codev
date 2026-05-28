@@ -186,6 +186,8 @@ During the implement phase, the reviewer's audit surfaced gaps the original plan
 
 **Final label set: 14 area labels.** The doc table in `CLAUDE.md`, `AGENTS.md`, and `codev/roles/architect.md` was rewritten to match.
 
+**Content split (later in implement phase):** After the label-set restructure, the reviewer raised the duplication concern — the same vocabulary table + policy + recipes appeared in all three files. The original plan's "belt-and-suspenders" rationale (above, lines 22–25) was overridden by a different design choice authorized at the dev-approval gate: split content by audience. **`CLAUDE.md` / `AGENTS.md`** carry the vocabulary table + policy (every session auto-loads them). **`codev/roles/architect.md`** carries the operational recipes only (loaded only for architect spawns). No cross-references between files (each is self-contained for its audience). This deviates from the plan body's "same recipes in codev and skeleton" framing (line 71); the rationale and final shape are recorded in the review file's "Things to Look At During PR Review" section.
+
 **Policy bullets touched:**
 
 - Removed: "All `gh issue create` invocations include `--assignee @me`." User correction: reporting an issue ≠ committing to do it. Self-assignment is appropriate only when the user is taking the work on, not by default. (Memory file [feedback-assign-issues-to-user] updated to match.)

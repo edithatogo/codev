@@ -71,6 +71,22 @@ Updated `codev/resources/lessons-learned.md` with two durable lessons that emerg
 
 6. **Shannon follow-up filed.** Issue [cluesmith/shannon#1872](https://github.com/cluesmith/shannon/issues/1872) tracks adopting the convention in shannon, with a 12-label proposed vocabulary derived from shannon's apps/packages layout. Out of scope for this PR but cross-linked for traceability.
 
+## 3-Way Consultation Verdicts (PIR single-pass)
+
+PIR runs one advisory consultation pass at PR-creation (`max_iterations: 1`); there is no automated re-review. Below are the verdicts and the builder's disposition. The human at the `pr` gate is the sole remaining reviewer for any contested item.
+
+- **Gemini: APPROVE** (HIGH confidence). Endorsed the dedup as "structurally superior to the original plan" and called out the `--limit 500` fix as a good catch.
+- **Claude: APPROVE** (HIGH confidence). Clean, no issues found.
+- **Codex: REQUEST_CHANGES** (HIGH confidence), with two findings:
+
+### Codex finding 1: "Implementation deviates from the approved plan by splitting content across files instead of keeping each target self-contained"
+
+**Disposition: rebutted.** The plan's "belt-and-suspenders" framing (lines 22–25 of the plan) was overridden at the `dev-approval` gate by an explicit reviewer request to dedup. The new content split (vocabulary + policy in CLAUDE.md/AGENTS.md; recipes in `codev/roles/architect.md`) is documented in the plan file's "Scope Expansion" section (a "Content split" subsection has been added in response to this finding), in the thread file, and in point 3 of this section. Both Gemini and Claude evaluated the final split and approved it; Gemini specifically called it "structurally superior to the original plan." Mid-flight scope changes authorized at the human gate, with documented rationale, are the standard PIR mechanism for plan refinement — not a defect. No code change needed.
+
+### Codex finding 2: "Approved PIR plan file is missing required YAML frontmatter (`approved` / `validated`)"
+
+**Disposition: rebutted (misapplied rule).** The frontmatter requirement in `CLAUDE.md` lines 157-164 applies to *architect-pre-created* plans — when the architect writes a plan and approves it *before* spawning a builder, so porch can skip the plan phase. In #909, the builder wrote the plan during the plan phase under the PIR protocol; approval flowed through the `plan-approval` gate in `codev/projects/909-architect-treat-area-labels-as/status.yaml` (recorded `2026-05-28T...`). The status.yaml-recorded gate IS the approval mechanism for builder-written plans — adding YAML frontmatter would be redundant with porch state. No frontmatter is required for plans written via the PIR plan phase. No code change needed.
+
 ## How to Test Locally
 
 For reviewers pulling the branch:
