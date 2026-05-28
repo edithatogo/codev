@@ -24,3 +24,14 @@ Local checks:
 - `porch done` checks: build ✓ (5.4s), tests ✓ (20.5s)
 
 Sitting at `dev-approval` gate.
+
+## dev-approval approved → review (2026-05-28)
+
+Wrote `codev/reviews/808-vscode-backlog-architect-refer.md`, opened PR #899, recorded with `porch done --pr 899 --branch builder/pir-808`. Structural checks (`pr_exists`, `review_has_arch_updates`, `review_has_lessons_updates`) all passed.
+
+3-way consultation (single advisory pass, `max_iterations: 1`):
+- gemini: APPROVE / HIGH
+- codex: APPROVE / MEDIUM
+- claude: APPROVE / HIGH (with detailed line-by-line review confirming plan adherence, code quality, and test coverage; no key issues)
+
+No REQUEST_CHANGES to address or rebut. Notified architect via afx send. Sitting at `pr` gate awaiting human merge approval.
