@@ -22,4 +22,13 @@ Plan-approval gate granted.
   - Wired `updateListViewTitles()` into the `codev.backlogShowAll` config-change listener so the title updates in lockstep with the tree (closes bug 2 from the plan).
 - Tests: extended `__tests__/backlog-filter.test.ts` with new coverage for `spawnableBacklog`, `visibleBacklogCount`, and `formatBacklogTitle`. Vitest reports 113 passed (10 files), check-types and lint clean, esbuild bundle clean.
 
-Awaiting dev-approval gate.
+Dev-approval gate granted.
+
+## Review phase
+
+PR #914 opened with `codev/reviews/911-vscode-backlog-tree-title-coun.md` as the body. 3-way consultation single pass:
+- Gemini: APPROVE (HIGH)
+- Codex: APPROVE (HIGH)
+- Claude: APPROVE (HIGH)
+
+All three flagged zero issues. The `spawnableBacklog` move from `backlog.ts` into `backlog-filter.ts` was noted by Claude as a necessary deviation from the plan's "no changes to backlog.ts" line — the helper had to migrate to keep the vscode-free guarantee of `backlog-filter.ts`, and `backlog.ts`'s re-export preserves the existing import paths. Awaiting human pr-gate approval.
