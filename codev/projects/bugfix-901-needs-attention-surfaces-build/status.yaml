@@ -1,0 +1,17 @@
+id: bugfix-901
+title: needs-attention-surfaces-build
+protocol: bugfix
+phase: pr
+plan_phases: []
+current_plan_phase: null
+gates:
+  pr:
+    status: approved
+    requested_at: '2026-05-28T02:13:21.360Z'
+    approved_at: '2026-05-28T18:59:18.179Z'
+iteration: 1
+build_complete: false
+history: []
+started_at: '2026-05-28T01:48:37.300Z'
+updated_at: '2026-05-28T18:59:18.179Z'
+pr_ready_for_human: false
