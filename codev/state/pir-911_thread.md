@@ -10,4 +10,16 @@ Wrote `codev/plans/911-vscode-backlog-tree-title-coun.md`. Picked option 2 (`Bac
 
 Two coupled bugs being closed at once: (1) the count itself was unfiltered; (2) `updateListViewTitles` is wired only to the overview-data listener, so even a correct count would stay stale until the next overview tick when the user flipped showAll. Plan addresses both — the showAll-config-change listener at `extension.ts:361-367` will also call `updateListViewTitles()`.
 
-Awaiting plan-approval gate.
+Plan-approval gate granted.
+
+## Implement phase
+
+- Moved `spawnableBacklog` into `backlog-filter.ts` so the count helper and `BacklogProvider` share the same primitive without dragging `vscode` into the vitest harness. `backlog.ts` re-exports it (and uses it internally) so existing import paths in `extension.ts` and `src/test/backlog.test.ts` keep working.
+- Added `visibleBacklogCount(data, showAll)` and `formatBacklogTitle(visible, total)` to `backlog-filter.ts`.
+- `extension.ts`:
+  - Replaced the inline `spawnableBacklog(data.backlog).length` title computation with `visibleBacklogCount` + `formatBacklogTitle`.
+  - Hoisted `readBacklogShowAll` above `updateListViewTitles` so it can be read on every refresh.
+  - Wired `updateListViewTitles()` into the `codev.backlogShowAll` config-change listener so the title updates in lockstep with the tree (closes bug 2 from the plan).
+- Tests: extended `__tests__/backlog-filter.test.ts` with new coverage for `spawnableBacklog`, `visibleBacklogCount`, and `formatBacklogTitle`. Vitest reports 113 passed (10 files), check-types and lint clean, esbuild bundle clean.
+
+Awaiting dev-approval gate.
