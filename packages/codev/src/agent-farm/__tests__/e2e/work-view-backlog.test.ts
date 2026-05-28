@@ -73,8 +73,11 @@ test.describe('Work view: backlog clickability and artifacts', () => {
       await workTab.click();
     }
 
-    // Wait for backlog section to appear
-    const backlogSection = page.locator('.work-section:has-text("Backlog")');
+    // Scope to the heading element — `:has-text` would collide with any backlog
+    // item whose title contains the section name (see #828).
+    const backlogSection = page.locator(
+      '.work-section:has(h3.work-section-title:text-is("Backlog"))',
+    );
     await expect(backlogSection).toBeVisible({ timeout: 15_000 });
 
     // Check if there are backlog rows
@@ -113,7 +116,9 @@ test.describe('Work view: backlog clickability and artifacts', () => {
       await workTab.click();
     }
 
-    const backlogSection = page.locator('.work-section:has-text("Backlog")');
+    const backlogSection = page.locator(
+      '.work-section:has(h3.work-section-title:text-is("Backlog"))',
+    );
     await expect(backlogSection).toBeVisible({ timeout: 15_000 });
 
     // Check for artifact link buttons (they appear when items have specs/plans/reviews)
@@ -149,7 +154,9 @@ test.describe('Work view: backlog clickability and artifacts', () => {
 
     if (data.recentlyClosed && data.recentlyClosed.length > 0) {
       // Recently Closed section should be visible
-      const closedSection = page.locator('.work-section:has-text("Recently Closed")');
+      const closedSection = page.locator(
+        '.work-section:has(h3.work-section-title:text-is("Recently Closed"))',
+      );
       await expect(closedSection).toBeVisible({ timeout: 5_000 });
 
       // Items should be clickable links
@@ -170,7 +177,9 @@ test.describe('Work view: backlog clickability and artifacts', () => {
     }
     // If no recently closed items, the section should not be visible
     else {
-      const closedSection = page.locator('.work-section:has-text("Recently Closed")');
+      const closedSection = page.locator(
+        '.work-section:has(h3.work-section-title:text-is("Recently Closed"))',
+      );
       await expect(closedSection).not.toBeVisible();
     }
   });
