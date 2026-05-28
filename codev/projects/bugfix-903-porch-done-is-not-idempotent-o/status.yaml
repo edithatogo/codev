@@ -1,0 +1,14 @@
+id: bugfix-903
+title: porch-done-is-not-idempotent-o
+protocol: bugfix
+phase: investigate
+plan_phases: []
+current_plan_phase: null
+gates:
+  pr:
+    status: pending
+iteration: 1
+build_complete: false
+history: []
+started_at: '2026-05-28T02:09:33.028Z'
+updated_at: '2026-05-28T02:09:33.029Z'
