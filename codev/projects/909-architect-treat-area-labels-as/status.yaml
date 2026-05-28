@@ -1,7 +1,7 @@
 id: '909'
 title: architect-treat-area-labels-as
 protocol: pir
-phase: review
+phase: verified
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -21,7 +21,7 @@ iteration: 1
 build_complete: true
 history: []
 started_at: '2026-05-28T05:03:04.695Z'
-updated_at: '2026-05-28T08:24:11.065Z'
+updated_at: '2026-05-28T08:24:22.305Z'
 pr_history:
   - phase: review
     pr_number: 912
