@@ -1,0 +1,18 @@
+id: '911'
+title: vscode-backlog-tree-title-coun
+protocol: pir
+phase: plan
+plan_phases: []
+current_plan_phase: null
+gates:
+  plan-approval:
+    status: pending
+  dev-approval:
+    status: pending
+  pr:
+    status: pending
+iteration: 1
+build_complete: false
+history: []
+started_at: '2026-05-28T08:16:25.739Z'
+updated_at: '2026-05-28T08:16:25.740Z'
