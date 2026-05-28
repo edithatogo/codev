@@ -25,15 +25,16 @@ Why this approach over alternatives: it reuses the convention already establishe
 
 - `packages/vscode/src/views/backlog.ts`
   - Add `refresh(): void { this.changeEmitter.fire(); }`, matching `BuildersProvider.refresh()` (`views/builders.ts:74-76`).
-  - Add a private `filterToMine(items, data)` helper that returns the filtered list when `backlogShowAll === false` AND `currentUser` is present; otherwise returns the input unchanged. Call it once inside `orderedSpawnable` (which is the single chokepoint feeding both `rootChildren` and `rowsForGroup`).
+  - Export a pure helper `filterMine(items: OverviewBacklogItem[], currentUser: string | null | undefined): OverviewBacklogItem[]` that returns the assignment-filtered list when `currentUser` is non-empty, otherwise returns the input unchanged. Pure-function shape mirrors `spawnableBacklog` (`backlog.ts:15-17`) so it can be unit-tested without mocking `vscode`.
+  - Inside `BacklogProvider`, read `codev.backlogShowAll` (default `false`) at the start of each render via `vscode.workspace.getConfiguration('codev')` and apply `filterMine` inside `orderedSpawnable` when the toggle is off. `orderedSpawnable` is the single chokepoint feeding both `rootChildren` and `rowsForGroup`.
   - Add an empty-state branch in `rootChildren()`: if the post-filter `items` array is empty AND the config is in mine-only mode AND `currentUser` was present (i.e. the user is genuinely seeing zero items, not just a pre-data render), return a single `vscode.TreeItem` whose label is `(no backlog items assigned to you — click the eye icon to see all)` and whose `command` is undefined (non-clickable). The existing "no data" path (`!data` → return `[]`) stays untouched so a not-yet-loaded view still renders nothing rather than the placeholder.
 
-- `packages/vscode/tests/unit/views/backlog.test.ts` (existing file — read first; if no existing tests cover `rootChildren`/`orderedSpawnable`, add a small suite)
+- `packages/vscode/src/test/backlog.test.ts` (extend the existing file alongside the `spawnableBacklog` suite)
   - Test: mine-only mode filters out non-assigned items.
   - Test: mine-only mode with no `currentUser` (gh unavailable) returns all items.
-  - Test: show-all mode returns all items regardless of `currentUser`.
-  - Test: mine-only mode with zero matches renders the placeholder row.
-  - Test: existing icon-swap behavior on assigned items is preserved in show-all mode.
+  - Test: `currentUser` matching is case-insensitive (`"Alice"` matches `"alice"`).
+  - Test: empty input returns empty.
+  - The full `BacklogProvider.rootChildren()` rendering (icons, placeholder row, config read) is not unit-tested — those paths touch `vscode.TreeItem` / `vscode.workspace.getConfiguration` and are validated at the `dev-approval` gate via the manual checklist. The pure-function tests cover the filter logic that determines correctness; the wrapper is glue.
 
 ## Risks & Alternatives Considered
 
@@ -46,8 +47,8 @@ Why this approach over alternatives: it reuses the convention already establishe
 
 ## Test Plan
 
-**Unit (Vitest, packages/vscode/tests/unit/views/backlog.test.ts):**
-- Cover the four filter cases enumerated under Files to Change.
+**Unit (Mocha + `assert`, extends `packages/vscode/src/test/backlog.test.ts`):**
+- Cover the four `filterMine` cases enumerated under Files to Change.
 
 **Manual (at the `dev-approval` gate, via `afx dev pir-809`):**
 1. Default state on first install: open the Backlog view. Title bar shows the `$(eye)` "show all" icon. Tree shows only issues assigned to me. If the assigned set is empty, the placeholder row is visible.
