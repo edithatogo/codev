@@ -1,7 +1,7 @@
 id: '808'
 title: vscode-backlog-architect-refer
 protocol: pir
-phase: implement
+phase: review
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -19,4 +19,4 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-05-28T01:29:30.057Z'
-updated_at: '2026-05-28T01:42:57.951Z'
+updated_at: '2026-05-28T01:43:06.765Z'
