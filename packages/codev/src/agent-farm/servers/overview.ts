@@ -156,13 +156,6 @@ export interface OverviewData {
   pendingPRs: PROverview[];
   backlog: BacklogItem[];
   recentlyClosed: RecentlyClosedItem[];
-  /**
-   * Issue IDs of PRs merged in the recent window (24h, matching
-   * `fetchRecentMergedPRs`). Consumers cross-reference this against a
-   * builder's `issueId` to skip stale post-merge `prReady` rows (Issue #901).
-   * Empty array when the forge call fails or yields no merge-linked rows.
-   */
-  recentlyMergedIssueIds: string[];
   /** Auto-detected forge login of the current user (via the user-identity concept). */
   currentUser?: string;
   errors?: { prs?: string; issues?: string };
@@ -1006,24 +999,7 @@ export class OverviewCache {
       });
     }
 
-    // 6. Project merged-PR linked-issue IDs for consumers (Issue #901).
-    //    NeedsAttentionList uses this set to skip the cache-miss defensive
-    //    emit for prReady builders whose PR is correctly absent from
-    //    pendingPRs because the PR has been merged. Empty when the forge
-    //    call fails (mergedPRs === null) or returned no merge-linked rows.
-    const recentlyMergedIssueIds: string[] = [];
-    if (mergedPRs) {
-      const seen = new Set<string>();
-      for (const pr of mergedPRs) {
-        const linkedIssue = parseLinkedIssue(pr.body || '', pr.title);
-        if (linkedIssue !== null && !seen.has(linkedIssue)) {
-          seen.add(linkedIssue);
-          recentlyMergedIssueIds.push(linkedIssue);
-        }
-      }
-    }
-
-    const result: OverviewData = { builders, pendingPRs, backlog, recentlyClosed, recentlyMergedIssueIds };
+    const result: OverviewData = { builders, pendingPRs, backlog, recentlyClosed };
     if (currentUser) {
       result.currentUser = currentUser;
     }

@@ -206,3 +206,23 @@ Fixes:
 Good scrutiny outcome: this is the 3rd time scrutinizing reviewer feedback paid off (1st: caught Gemini's bad
 gate-check + helper-delete suggestions on spec; here: Codex's valid catch I accepted in full). Wrote rebuttal,
 re-running porch check → porch done → expect iter-2 consult.
+
+## 2026-05-29 — Phase 2 iter-2 UNANIMOUS APPROVE → Phase 3
+
+Phase 2 iter-2: **Gemini APPROVE, Codex APPROVE (confirms fallback fixed), Claude APPROVE** (all HIGH).
+Phase 2 done. (Porch quirk: after committing the fix + `porch done`, the first `porch next` re-showed the
+iter-2 implement prompt; a second `porch done` → "ready for verification" → `porch next` then yielded the
+iter-2 consult task with `--context …iter2-context.md`. The consults use iterN-context.md to carry the rebuttal.)
+
+## 2026-05-29 — Phase 3 (remove-dead-projection) implemented
+
+Edits:
+- `packages/types/src/api.ts`: removed `recentlyMergedIssueIds` field + doc comment from OverviewData.
+- `overview.ts`: removed the field from the local OverviewData interface, deleted the computation block
+  (#901 merged-issue projection), and dropped it from the returned `result`. **KEPT** `fetchRecentMergedPRs`,
+  the `mergedPRs` Promise.all fetch, and the `issueToPrUrl` build (recentlyClosed PR-link enrichment).
+- `overview.test.ts`: removed the 2 recentlyMergedIssueIds tests + the empty-array assertion in the
+  null-mergedPRs test. The positive prUrl-enrichment test (L1853) stays → proves fetchRecentMergedPRs retained.
+- grep clean: only remaining ref is an explanatory comment in NeedsAttentionList.test.tsx (documents the removal).
+
+Running porch check (build type-checks dashboard+codev w/o the field) + dashboard tests.
