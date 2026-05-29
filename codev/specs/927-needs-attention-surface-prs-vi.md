@@ -1,9 +1,14 @@
+---
+approved: 2026-05-29
+validated: [gemini, codex, claude]
+---
+
 # Specification: Needs Attention — surface PRs via the universal `pr` gate; delete gateless builder-derived fallbacks
 
 ## Metadata
 - **ID**: spec-2026-05-29-needs-attention-surface-prs-vi
 - **Issue**: #927
-- **Status**: draft
+- **Status**: approved
 - **Created**: 2026-05-29
 
 ## Clarifying Questions Asked

@@ -243,3 +243,14 @@ Net change: **−45 LOC** (227+/272−, 8 files) — a deletion, as designed.
 Wrote review doc (codev/reviews/927-...md) with Architecture Updates (universal-pr-gate contract +
 dashboard-local rule + render-verify evidence) and Lessons Learned Updates. Next: commit review → push →
 open PR → porch done (review checks) → CMAP-at-PR → pr gate (HUMAN merges).
+
+## 2026-05-29 — PR #928 opened; PR-level CMAP iter-1
+
+PR #928 created. Review checks all ✓ (pr_exists, review_has_arch_updates, review_has_lessons_updates,
+e2e_tests[soft-skip]). PR-level CMAP: **Gemini APPROVE, Claude APPROVE, Codex REQUEST_CHANGES**.
+- C1 (FIXED, legit): spec/plan were still `Status: draft` with no `approved`/`validated` frontmatter — SPIR
+  final-approval steps require it. Added frontmatter (approved: 2026-05-29, validated: [gemini,codex,claude]) +
+  flipped Status→approved on both.
+- C2 (REBUTTED): `dev review` gateKindClass styling gap — architect EXPLICITLY ruled this OUT of scope at
+  plan-approval. Rebutted citing that decision; tracked as a follow-up. Not a #927 correctness issue (Codex agrees).
+Committed + pushed (PR auto-updates). porch done → re-consult iter-2.
