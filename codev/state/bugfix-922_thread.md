@@ -17,11 +17,16 @@ modified. The three live working copies (`.claude/`, `.codex/`, `.gemini/`)
 are intentionally left untouched per issue scope.
 
 ## Flaky tests
-Porch `tests` check failed on the 3 pre-existing flaky tests in
-`packages/codev/src/terminal/__tests__/session-manager.test.ts` that the
-architect pre-warned about (tracked in #905). Changed `it.skipIf(!!CI)` to
-plain `it.skip` with inline annotation linking back to #905. This unblocks
-porch advance without touching the underlying bug. Documented in PR/review.
+`pnpm test` fails locally on 3 pre-existing flaky tests in
+`packages/codev/src/terminal/__tests__/session-manager.test.ts`, tracked in
+#905. Not fixed here — out of scope.
+
+Note on intermediate history: I initially skipped these to unblock porch's
+phase-advance check (per the role file's "Handling Flaky Tests" section),
+but the architect corrected me — #905 documents that the same skip was
+already attempted and reverted from PR #904 as out-of-scope. The skip
+commit was reverted (`fe08391c`); diff vs main for the test file is empty.
 
 ## PR
-Pushing to `mohidmakhdoomi/codev` fork per builder preference.
+Pushing to `mohidmakhdoomi/codev` fork per builder preference; PR
+fork → upstream (`cluesmith/codev`).
