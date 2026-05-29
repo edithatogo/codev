@@ -1,0 +1,18 @@
+id: '920'
+title: vscode-editor-tab-webview-for-
+protocol: pir
+phase: plan
+plan_phases: []
+current_plan_phase: null
+gates:
+  plan-approval:
+    status: pending
+  dev-approval:
+    status: pending
+  pr:
+    status: pending
+iteration: 1
+build_complete: false
+history: []
+started_at: '2026-05-29T23:07:49.040Z'
+updated_at: '2026-05-29T23:07:49.041Z'
