@@ -83,34 +83,43 @@ describe('NeedsAttentionList buildItems — PR gating (issue #844)', () => {
     expect(items.filter(i => i.issueOrPR === '#100')).toHaveLength(1);
   });
 
-  it('surfaces a BUGFIX PR whose builder has no gate (Issue #872)', () => {
-    // BUGFIX has no `pr` gate — the v3.1.3 derivation (blocked === 'PR review')
-    // silently dropped these PRs. The canonical `prReady` signal fixes this.
-    const prs = [makePR({ id: '111', linkedIssue: '42' })];
+  it('surfaces a BUGFIX PR via the pr gate (post-#887, gate-authoritative shape)', () => {
+    // #887 gave BUGFIX a `pr` gate, so a prReady BUGFIX builder carries
+    // blocked='PR review' + blockedSince (gate-authoritative). The PR surfaces
+    // as a PR row, and its wait time is the gate-requested time — not createdAt.
+    const createdAt = new Date('2026-01-01T00:00:00Z').toISOString();
+    const blockedSince = new Date('2026-01-02T00:00:00Z').toISOString();
+    const prs = [makePR({ id: '111', linkedIssue: '42', createdAt })];
     const builders = [
       makeBuilder({
         issueId: '42',
         protocol: 'bugfix',
-        phase: 'verified',
-        blocked: null,
-        blockedGate: null,
-        blockedSince: null,
+        phase: 'review',
+        blocked: 'PR review',
+        blockedGate: 'pr',
+        blockedSince,
         prReady: true,
       }),
     ];
 
     const items = buildItems(prs, builders);
+    const row = items.find(i => i.key === 'pr-111');
 
-    expect(items.find(i => i.key === 'pr-111')).toBeDefined();
+    expect(row).toBeDefined();
+    expect(row!.waitingSince).toBe(blockedSince);
   });
 
-  it('surfaces a human-authored PR (no matching builder) only when reviewStatus is REVIEW_REQUIRED', () => {
-    const required = makePR({ id: '200', linkedIssue: null, reviewStatus: 'REVIEW_REQUIRED' });
+  it('surfaces a human-authored PR (no matching builder) only when reviewStatus is REVIEW_REQUIRED, using pr.createdAt', () => {
+    const createdAt = new Date('2026-01-03T00:00:00Z').toISOString();
+    const required = makePR({ id: '200', linkedIssue: null, reviewStatus: 'REVIEW_REQUIRED', createdAt });
     const approved = makePR({ id: '201', linkedIssue: null, reviewStatus: 'APPROVED' });
 
     const items = buildItems([required, approved], []);
+    const row = items.find(i => i.key === 'pr-200');
 
-    expect(items.find(i => i.key === 'pr-200')).toBeDefined();
+    expect(row).toBeDefined();
+    // Unaffiliated PR has no gate signal — wait time falls back to createdAt.
+    expect(row!.waitingSince).toBe(createdAt);
     expect(items.find(i => i.key === 'pr-201')).toBeUndefined();
   });
 
@@ -155,29 +164,6 @@ describe('NeedsAttentionList buildItems — PR gating (issue #844)', () => {
 
     expect(pr).toBeDefined();
     expect(pr!.waitingSince).toBe(blockedSince);
-  });
-
-  it('falls back to pr.createdAt for a prReady builder without blockedSince (BUGFIX shape)', () => {
-    // BUGFIX has no gate, so blockedSince is null even though prReady=true.
-    const createdAt = new Date('2026-01-01T00:00:00Z').toISOString();
-    const prs = [makePR({ id: '410', linkedIssue: '42', createdAt })];
-    const builders = [
-      makeBuilder({
-        issueId: '42',
-        protocol: 'bugfix',
-        phase: 'verified',
-        blocked: null,
-        blockedGate: null,
-        blockedSince: null,
-        prReady: true,
-      }),
-    ];
-
-    const items = buildItems(prs, builders);
-    const pr = items.find(i => i.key === 'pr-410');
-
-    expect(pr).toBeDefined();
-    expect(pr!.waitingSince).toBe(createdAt);
   });
 
   it('does NOT surface a prReady BUGFIX builder when its PR is missing from prs (#927: no builder stand-in)', () => {

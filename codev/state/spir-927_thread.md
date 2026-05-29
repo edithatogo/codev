@@ -162,3 +162,47 @@ verdict/file) — retried, clean APPROVE. Phase 1 unanimous, no rebuttal needed.
 
 Next: `porch done`/`next` → advance to Phase 2 (dashboard-surfacing). Per porch's reminder, /compact before
 the new phase if context is heavy.
+
+## 2026-05-29 — Phase 2 (dashboard-surfacing) implemented
+
+Edits (`packages/dashboard`):
+- `NeedsAttentionList.tsx` buildItems: deleted the builder-emit branch + bookkeeping
+  (emittedPrReadyIssueIds, mergedIssueIdSet, recentlyMergedIssueIds param); builder loop now `if (b.prReady)
+  continue;` then gate rows for `b.blocked && b.blockedSince` (covers spec/plan/dev/verify; pr excluded because
+  pr-gate builders are prReady → skipped). gateKindClass += `verify review → attention-kind--verify`.
+- `index.css`: `.attention-kind--verify` (review-style accent, var(--status-waiting)).
+- `WorkView.tsx`: dropped `recentlyMergedIssueIds` prop pass; prop removed from NeedsAttentionListProps.
+- tests: inverted the 2 "missing PR still surfaces builder" → assert no row; replaced merged-suppression test
+  with "missing PR ⇒ no row"; added verify-approval gate-row test. 14/14 pass.
+
+**porch check gating note:** porch `tests` = `pnpm --filter @cluesmith/codev test` runs ONLY codev tests, NOT
+dashboard tests. So Phase 2's NeedsAttentionList.test.tsx is NOT porch-gated — I run it manually
+(`pnpm --filter @cluesmith/codev-dashboard exec vitest run`). porch `build` DOES type-check the dashboard
+(codev build includes dashboard), so the WorkView/buildItems signature changes are gate-covered. porch
+build ✓ + tests ✓; dashboard tests 14/14. Committed 36523a35.
+
+Render-verify of the `--verify` styling: deferred to before-PR (Phase 3 doesn't touch dashboard rendering, so
+the dashboard state is final after Phase 2). Will render Needs Attention (PR row + verify gate row + empty) per
+architect's pre-PR instruction.
+
+Next: Phase 2 3-way impl consult → advance to Phase 3 (remove-dead-projection).
+
+## 2026-05-29 — Phase 2 3-way: Codex REQUEST_CHANGES (valid) → fixed
+
+**Gemini APPROVE, Claude APPROVE, Codex REQUEST_CHANGES** (all HIGH). Codex's catch was correct and I agree:
+Phase 2 carried over the OLD gateless-BUGFIX shape (prReady=true with no gate/no blockedSince) which is
+IMPOSSIBLE under Phase-1 gate-authoritative derivePrReady. Two problems:
+- C1: `waitingSince: readySince || pr.createdAt` let an *affiliated* PR fall back to createdAt — spec says
+  affiliated uses the gate timestamp (blockedSince) exclusively; createdAt is unaffiliated-only.
+- C2: tests at :86 ("BUGFIX has no gate") and :160 ("falls back to createdAt w/o blockedSince") encoded the
+  impossible shape and locked in the stale fallback.
+
+Fixes:
+- Code: `const waitingSince = prReady ? (readySince ?? pr.createdAt) : pr.createdAt;` — affiliated→gate time
+  (the `??` is now an unreachable type guard, documented), unaffiliated→createdAt.
+- Tests: reframed :86 to post-#887 gate shape (asserts waitingSince===blockedSince); removed :160
+  (impossible shape); strengthened the human-PR test to assert waitingSince===createdAt. 13/13 pass.
+
+Good scrutiny outcome: this is the 3rd time scrutinizing reviewer feedback paid off (1st: caught Gemini's bad
+gate-check + helper-delete suggestions on spec; here: Codex's valid catch I accepted in full). Wrote rebuttal,
+re-running porch check → porch done → expect iter-2 consult.

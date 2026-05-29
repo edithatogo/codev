@@ -81,13 +81,20 @@ export function buildItems(
     const unaffiliatedNeedsReview = !hasBuilder && pr.reviewStatus === 'REVIEW_REQUIRED';
     if (!prReady && !unaffiliatedNeedsReview) continue;
 
+    // Affiliated pr-gate PRs measure wait from the gate-requested time the
+    // builder carries on `blockedSince` (#927: gate-authoritative ⇒ a prReady
+    // builder always has it). Unaffiliated / human-authored PRs have no gate
+    // signal, so they use the PR's createdAt. The `?? pr.createdAt` on the
+    // affiliated branch is an unreachable type guard — NOT the old gateless
+    // BUGFIX fallback (a prReady builder without blockedSince can no longer occur).
+    const waitingSince = prReady ? (readySince ?? pr.createdAt) : pr.createdAt;
     items.push({
       key: `pr-${pr.id}`,
       issueOrPR: `#${pr.id}`,
       title: pr.title,
       kind: 'PR review',
       kindClass: 'attention-kind--pr',
-      waitingSince: readySince || pr.createdAt,
+      waitingSince,
       url: pr.url,
     });
   }
