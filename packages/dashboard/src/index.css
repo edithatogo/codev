@@ -1390,6 +1390,12 @@ a.attention-row {
   color: var(--status-waiting);
 }
 
+/* verify-approval — post-merge human gate (#927). Review-style wait, grouped
+   visually with PR / code review rather than the urgent pre-PR error gates. */
+.attention-kind--verify {
+  color: var(--status-waiting);
+}
+
 .attention-row-age {
   font-size: 13px;
   color: var(--text-muted);
