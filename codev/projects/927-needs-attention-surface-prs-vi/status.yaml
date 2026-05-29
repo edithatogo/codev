@@ -1,7 +1,7 @@
 id: '927'
 title: needs-attention-surface-prs-vi
 protocol: spir
-phase: implement
+phase: review
 plan_phases:
   - id: server-derivation
     title: Gate-authoritative pr signal + verify-approval label (overview server + types)
@@ -11,8 +11,8 @@ plan_phases:
     status: complete
   - id: remove-dead-projection
     title: Delete recentlyMergedIssueIds end-to-end (retain fetchRecentMergedPRs)
-    status: in_progress
-current_plan_phase: remove-dead-projection
+    status: complete
+current_plan_phase: null
 gates:
   spec-approval:
     status: approved
@@ -27,7 +27,7 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history:
   - iteration: 1
     plan_phase: dashboard-surfacing
@@ -46,4 +46,4 @@ history:
         file: >-
           /Users/mwk/Development/cluesmith/codev/.builders/spir-927/codev/projects/927-needs-attention-surface-prs-vi/927-dashboard-surfacing-iter1-claude.txt
 started_at: '2026-05-29T16:47:35.190Z'
-updated_at: '2026-05-29T18:00:39.775Z'
+updated_at: '2026-05-29T18:02:21.605Z'
