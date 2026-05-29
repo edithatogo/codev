@@ -3,14 +3,6 @@ import type { OverviewPR, OverviewBuilder } from '../lib/api.js';
 interface NeedsAttentionListProps {
   prs: OverviewPR[];
   builders: OverviewBuilder[];
-  /**
-   * Issue IDs of recently-merged PRs (Issue #901). Used to distinguish
-   * "PR missing from `prs` because of cache miss / pagination" (surface
-   * the defensive row) from "PR missing because it has been merged"
-   * (skip — there is nothing left for the human to do). Defaults to an
-   * empty array for callers that haven't been wired up yet.
-   */
-  recentlyMergedIssueIds?: readonly string[];
 }
 
 interface AttentionItem {
@@ -34,6 +26,7 @@ function gateKindClass(blocked: string): string {
     case 'plan review': return 'attention-kind--plan';
     case 'code review': return 'attention-kind--code-review';
     case 'PR review': return 'attention-kind--pr';
+    case 'verify review': return 'attention-kind--verify';
     default: return 'attention-kind--plan';
   }
 }
@@ -51,19 +44,14 @@ function timeAgo(dateStr: string): string {
 export function buildItems(
   prs: OverviewPR[],
   builders: OverviewBuilder[],
-  recentlyMergedIssueIds: readonly string[] = [],
 ): AttentionItem[] {
   const items: AttentionItem[] = [];
-  const mergedIssueIdSet = new Set(recentlyMergedIssueIds);
 
-  // A PR is genuinely waiting on a human only after the builder finishes CMAP
-  // for the PR-creating phase. Issue #872 made this a canonical `prReady`
-  // boolean so consumers don't have to derive it from the protocol-specific
-  // gate shape (the v3.1.3 derivation `blocked === 'PR review'` silently
-  // dropped BUGFIX because BUGFIX has no `pr` gate). Track `blockedSince`
-  // when present so the waiting-time chip measures "how long since the human
-  // became the bottleneck", with a fallback to the PR's createdAt for
-  // BUGFIX-style protocols whose pr-ready state isn't a gate.
+  // A PR is waiting on a human exactly when its builder's `pr` gate is pending
+  // (#927) — surfaced as the gate-authoritative `prReady` flag from the
+  // overview server. Build issueId → prReady / blockedSince lookups so the PR
+  // loop can match open PRs to their builder and measure waiting time from the
+  // `pr` gate's `requested_at` (carried on `blockedSince`).
   const prReadySince = new Map<string, string>();
   const prReadyIssueIds = new Set<string>();
   const builderIssueIds = new Set<string>();
@@ -77,12 +65,12 @@ export function buildItems(
     }
   }
 
-  // Track which pr-ready builders had their PR successfully emitted. If a
-  // builder signals prReady but its PR is missing from `prs` (cache delay,
-  // pagination, transient API failure), the builder loop below still surfaces
-  // it so a real human-action signal isn't silently dropped.
-  const emittedPrReadyIssueIds = new Set<string>();
-
+  // (A) PR rows: open PRs whose linked builder has a pending `pr` gate, plus
+  // unaffiliated/human-authored PRs with an outstanding GitHub review. A PR is
+  // surfaced ONLY as a PR row — never as a builder standing in for it. If a
+  // pr-ready builder's PR is absent from `prs` (cache miss / pagination /
+  // merged), nothing is emitted here; the next refresh surfaces it once
+  // `pendingPRs` includes the open PR.
   for (const pr of prs) {
     const hasBuilder = pr.linkedIssue !== null && builderIssueIds.has(pr.linkedIssue);
     const prReady = pr.linkedIssue !== null && prReadyIssueIds.has(pr.linkedIssue);
@@ -93,53 +81,33 @@ export function buildItems(
     const unaffiliatedNeedsReview = !hasBuilder && pr.reviewStatus === 'REVIEW_REQUIRED';
     if (!prReady && !unaffiliatedNeedsReview) continue;
 
-    if (prReady && pr.linkedIssue) emittedPrReadyIssueIds.add(pr.linkedIssue);
+    // Affiliated pr-gate PRs measure wait from the gate-requested time the
+    // builder carries on `blockedSince` (#927: gate-authoritative ⇒ a prReady
+    // builder always has it). Unaffiliated / human-authored PRs have no gate
+    // signal, so they use the PR's createdAt. The `?? pr.createdAt` on the
+    // affiliated branch is an unreachable type guard — NOT the old gateless
+    // BUGFIX fallback (a prReady builder without blockedSince can no longer occur).
+    const waitingSince = prReady ? (readySince ?? pr.createdAt) : pr.createdAt;
     items.push({
       key: `pr-${pr.id}`,
       issueOrPR: `#${pr.id}`,
       title: pr.title,
       kind: 'PR review',
       kindClass: 'attention-kind--pr',
-      waitingSince: readySince || pr.createdAt,
+      waitingSince,
       url: pr.url,
     });
   }
 
-  // Surface prReady builders and gate-blocked builders. Two independent
-  // signals — they share a loop but the prReady check must come BEFORE the
-  // gate-blocked early-out, otherwise BUGFIX builders (blocked = null,
-  // blockedSince = null) are filtered out before the prReady path fires and
-  // the missing-PR defense quietly drops them.
+  // (B) Gate rows: builders blocked on a genuine human-approval gate
+  // (spec/plan/dev/verify-approval). PR-ready builders are excluded — they
+  // surface ONLY as PR rows above (the dashboard-local "no builder stand-in"
+  // rule, #927). Skipping them here also keeps the `pr` gate out of the
+  // gate-row path: `pr` remains in the shared GATE_LABELS (VSCode depends on
+  // it), but a pr-gate-pending builder is `prReady`, so it never reaches the
+  // gate-row emission below.
   for (const b of builders) {
-    // Already surfaced as a PR row above — skip to avoid double-counting.
-    if (b.prReady && b.issueId && emittedPrReadyIssueIds.has(b.issueId)) continue;
-
-    // prReady builder whose PR didn't appear in `prs` (cache miss, pagination,
-    // transient API failure). Surface anyway so we don't silently drop a real
-    // human-action signal. blockedSince may be absent for gateless protocols
-    // (BUGFIX) — fall back to startedAt so the waiting chip still renders.
-    //
-    // Skip when the builder's PR has been MERGED (Issue #901): pendingPRs
-    // lists open PRs only, so a merged PR is correctly absent — emitting the
-    // defensive row would surface a stale "PR review" item for work that's
-    // already shipped. The data hazard from v3.1.4 → v3.1.5 left some
-    // in-flight builders with stale `pr_ready_for_human: true` in
-    // status.yaml; this filter masks them without a one-shot migration.
-    if (b.prReady) {
-      if (b.issueId && mergedIssueIdSet.has(b.issueId)) continue;
-      const label = b.issueId ? `#${b.issueId}` : b.id;
-      items.push({
-        key: `gate-${b.id}`,
-        issueOrPR: label,
-        title: b.issueTitle || b.id,
-        kind: 'PR review',
-        kindClass: 'attention-kind--pr',
-        waitingSince: b.blockedSince || b.startedAt || new Date().toISOString(),
-      });
-      continue;
-    }
-
-    // Gate-blocked (non-PR) builders.
+    if (b.prReady) continue;
     if (!b.blocked || !b.blockedSince) continue;
     const label = b.issueId ? `#${b.issueId}` : b.id;
     items.push({
@@ -160,8 +128,8 @@ export function buildItems(
   return items;
 }
 
-export function NeedsAttentionList({ prs, builders, recentlyMergedIssueIds }: NeedsAttentionListProps) {
-  const items = buildItems(prs, builders, recentlyMergedIssueIds);
+export function NeedsAttentionList({ prs, builders }: NeedsAttentionListProps) {
+  const items = buildItems(prs, builders);
 
   if (items.length === 0) {
     return <p className="work-empty">Nothing needs attention</p>;

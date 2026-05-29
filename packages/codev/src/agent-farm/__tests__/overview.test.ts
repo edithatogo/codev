@@ -618,6 +618,13 @@ describe('overview', () => {
       }))).toBe('PR review');
     });
 
+    it('returns "verify review" when verify-approval is pending and requested (#927)', () => {
+      expect(detectBlocked(makeParsed({
+        gates: { 'verify-approval': 'pending' },
+        gateRequestedAt: { 'verify-approval': '2026-05-29T12:00:00Z' },
+      }))).toBe('verify review');
+    });
+
     it('returns first blocked gate when multiple are pending', () => {
       expect(detectBlocked(makeParsed({
         gates: { 'spec-approval': 'pending', 'plan-approval': 'pending' },
@@ -683,6 +690,13 @@ describe('overview', () => {
       }))).toBe('2026-02-17T12:00:00Z');
     });
 
+    it('returns requested_at timestamp for pending verify-approval gate (#927)', () => {
+      expect(detectBlockedSince(makeParsed({
+        gates: { 'verify-approval': 'pending' },
+        gateRequestedAt: { 'verify-approval': '2026-05-29T12:00:00Z' },
+      }))).toBe('2026-05-29T12:00:00Z');
+    });
+
     it('returns first blocked gate timestamp when multiple are pending', () => {
       expect(detectBlockedSince(makeParsed({
         gates: { 'spec-approval': 'pending', 'plan-approval': 'pending' },
@@ -699,7 +713,7 @@ describe('overview', () => {
   // ==========================================================================
 
   // ==========================================================================
-  // derivePrReady (Issue #872) — canonical pr_ready_for_human signal
+  // derivePrReady (#927) — gate-authoritative "PR ready for human" signal
   // ==========================================================================
 
   describe('derivePrReady', () => {
@@ -720,53 +734,61 @@ describe('overview', () => {
       };
     }
 
-    it('returns true when status.yaml explicitly says pr_ready_for_human: true', () => {
-      // Explicit field wins, regardless of protocol or gate shape.
-      expect(derivePrReady(makeParsed({ prReadyForHuman: true }))).toBe(true);
+    it('returns true when the pr gate is pending and requested — uniform across protocols', () => {
+      // The signal is the gate shape, not the protocol name. #887 gave BUGFIX a
+      // pr gate, so all five PR-producing protocols use the identical predicate.
+      for (const protocol of ['bugfix', 'air', 'spir', 'aspir', 'pir']) {
+        expect(derivePrReady(makeParsed({
+          protocol,
+          gates: { pr: 'pending' },
+          gateRequestedAt: { pr: '2026-05-26T12:00:00Z' },
+        }))).toBe(true);
+      }
     });
 
-    it('returns false when status.yaml explicitly says pr_ready_for_human: false', () => {
-      // Explicit false (e.g., after pr gate approved) trumps any fallback.
+    it('returns false when the pr gate is pending but has NO requested_at (freshly-initialized project)', () => {
+      // Porch initializes every gate to status: pending with no requested_at;
+      // the requested_at conjunct prevents mis-flagging brand-new projects.
+      expect(derivePrReady(makeParsed({
+        gates: { pr: 'pending', 'spec-approval': 'pending', 'verify-approval': 'pending' },
+        gateRequestedAt: {},
+      }))).toBe(false);
+    });
+
+    it('returns false once the pr gate has been approved', () => {
+      expect(derivePrReady(makeParsed({
+        gates: { pr: 'approved' },
+        gateRequestedAt: { pr: '2026-05-26T12:00:00Z' },
+        gateApprovedAt: { pr: '2026-05-26T13:00:00Z' },
+      }))).toBe(false);
+    });
+
+    it('reads the pr gate directly and ignores pr_ready_for_human (#927)', () => {
+      // Field true but gate not pending → not ready (kills the sticky-field hazard #919).
+      expect(derivePrReady(makeParsed({
+        prReadyForHuman: true,
+        gates: {},
+        gateRequestedAt: {},
+      }))).toBe(false);
+      // Field false but gate genuinely pending → ready (the gate is authoritative).
       expect(derivePrReady(makeParsed({
         prReadyForHuman: false,
         gates: { pr: 'pending' },
         gateRequestedAt: { pr: '2026-05-26T12:00:00Z' },
-      }))).toBe(false);
-    });
-
-    it('falls back to pr gate pending+requested for legacy state files (SPIR/AIR shape)', () => {
-      // Pre-#872 state.yaml has no field — fall back to v3.1.3 derivation.
-      expect(derivePrReady(makeParsed({
-        protocol: 'air',
-        gates: { pr: 'pending' },
-        gateRequestedAt: { pr: '2026-05-26T12:00:00Z' },
       }))).toBe(true);
     });
 
-    it('falls back to BUGFIX phase=verified for legacy state files (the #872 regression case)', () => {
-      // BUGFIX has no pr gate — the v3.1.3 NeedsAttentionList silently dropped
-      // these. The fallback closes that gap until porch writes the explicit
-      // field on the in-flight builder.
+    it('does NOT fall back to bugfix phase=verified (removed gateless crutch)', () => {
+      // A gateless bugfix variant no longer surfaces a PR row — by design (#927).
       expect(derivePrReady(makeParsed({
         protocol: 'bugfix',
         phase: 'verified',
-      }))).toBe(true);
-    });
-
-    it('does NOT fall back to phase=verified for non-BUGFIX protocols', () => {
-      // SPIR/ASPIR `verified` means the verify-approval gate was approved post-merge
-      // — the PR is already merged and reviewed, not waiting.
-      expect(derivePrReady(makeParsed({
-        protocol: 'spir',
-        phase: 'verified',
-      }))).toBe(false);
-      expect(derivePrReady(makeParsed({
-        protocol: 'aspir',
-        phase: 'verified',
+        gates: {},
+        gateRequestedAt: {},
       }))).toBe(false);
     });
 
-    it('returns false when no signal is present', () => {
+    it('returns false when no pr-gate signal is present', () => {
       expect(derivePrReady(makeParsed({ protocol: 'spir', phase: 'implement' }))).toBe(false);
     });
   });
@@ -1878,38 +1900,6 @@ describe('overview', () => {
 
       expect(data.recentlyClosed).toHaveLength(1);
       expect(data.recentlyClosed[0].prUrl).toBeUndefined();
-      // Issue #901: null merged-PR fetch should still yield an empty array,
-      // not undefined, so NeedsAttentionList's `?? []` doesn't have to absorb
-      // an inconsistent shape.
-      expect(data.recentlyMergedIssueIds).toEqual([]);
-    });
-
-    it('exposes recentlyMergedIssueIds for merged-PR consumers (Issue #901)', async () => {
-      mockFetchMergedPRs.mockResolvedValue([
-        { number: 150, title: '[Bugfix #100] Fix the bug', url: 'https://github.com/org/repo/pull/150', body: 'Fixes #100', createdAt: '2026-01-02T00:00:00Z', mergedAt: new Date().toISOString() },
-        { number: 151, title: '[Spec 200] Add feature', url: 'https://github.com/org/repo/pull/151', body: 'Closes #200', createdAt: '2026-01-02T00:00:00Z', mergedAt: new Date().toISOString() },
-        { number: 152, title: 'No linked issue', url: 'https://github.com/org/repo/pull/152', body: 'Cleanup', createdAt: '2026-01-02T00:00:00Z', mergedAt: new Date().toISOString() },
-      ]);
-
-      const cache = new OverviewCache();
-      const data = await cache.getOverview(tmpDir);
-
-      expect(new Set(data.recentlyMergedIssueIds)).toEqual(new Set(['100', '200']));
-    });
-
-    it('deduplicates recentlyMergedIssueIds when the same issue has multiple merged PRs', async () => {
-      // A follow-up PR can land while the original sits in the 24h merged
-      // window — both PRs reference the same `Fixes #N`. The consumer wants
-      // a SET of issue IDs, not a multi-bag, so the dedup is load-bearing.
-      mockFetchMergedPRs.mockResolvedValue([
-        { number: 150, title: '[Bugfix #100] First attempt', url: 'https://github.com/org/repo/pull/150', body: 'Fixes #100', createdAt: '2026-01-02T00:00:00Z', mergedAt: new Date().toISOString() },
-        { number: 151, title: '[Bugfix #100] Follow-up', url: 'https://github.com/org/repo/pull/151', body: 'Fixes #100', createdAt: '2026-01-02T01:00:00Z', mergedAt: new Date().toISOString() },
-      ]);
-
-      const cache = new OverviewCache();
-      const data = await cache.getOverview(tmpDir);
-
-      expect(data.recentlyMergedIssueIds).toEqual(['100']);
     });
 
     it('enriches issueId from DB issue_number for unknown protocols (#664)', async () => {

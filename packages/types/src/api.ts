@@ -181,16 +181,18 @@ export interface OverviewBuilder {
    */
   area: string;
   /**
-   * Canonical "PR is waiting on a human reviewer" signal (Issue #872). True the
-   * moment porch transitions out of the CMAP-emitting state for the PR-creating
-   * phase, for ALL bundled protocols. Computed from `pr_ready_for_human` in
-   * status.yaml when present; otherwise falls back to the v3.1.3 derived logic
-   * (`blocked === 'PR review'` || BUGFIX `phase === 'verified'`) so in-flight
-   * projects from before this field shipped continue to surface correctly.
+   * Canonical "PR is waiting on a human reviewer" signal. Gate-authoritative
+   * (#927): true exactly when the builder's `pr` gate is genuinely pending
+   * (`status: pending` + `requested_at`). Porch requests the `pr` gate after
+   * the PR phase / CMAP for EVERY bundled PR-producing protocol (BUGFIX, AIR,
+   * SPIR, ASPIR, PIR — #887 gave BUGFIX a `pr` gate), so the pending `pr` gate
+   * is the uniform post-CMAP signal.
    *
    * Consumers gate on this single boolean instead of deriving from the
-   * protocol-specific gate shape (the v3.1.3 derivation silently dropped
-   * BUGFIX PRs because BUGFIX has no `pr` gate).
+   * protocol-specific gate shape. (Earlier revisions read `pr_ready_for_human`
+   * plus a `bugfix && phase === 'verified'` fallback; #927 dropped both in
+   * favor of reading the `pr` gate directly — the field is coincident with the
+   * gate, and the gate read avoids the sticky-`false` rollback hazard.)
    */
   prReady: boolean;
 }
@@ -247,16 +249,6 @@ export interface OverviewData {
   pendingPRs: OverviewPR[];
   backlog: OverviewBacklogItem[];
   recentlyClosed: OverviewRecentlyClosed[];
-  /**
-   * Issue IDs of PRs merged in the recent window (matches the
-   * `fetchRecentMergedPRs` 24h window in the overview server). Consumers
-   * cross-reference this against a builder's `issueId` to detect post-merge
-   * builders whose status.yaml may still carry stale `prReady: true` — used
-   * by `NeedsAttentionList` to skip the cache-miss defensive emit when the
-   * PR is correctly absent from `pendingPRs` because it has been merged
-   * (Issue #901). Empty array when the forge call fails or returns no rows.
-   */
-  recentlyMergedIssueIds: string[];
   /** Auto-detected GitHub login of the current user (via the user-identity forge concept). */
   currentUser?: string;
   errors?: { prs?: string; issues?: string };

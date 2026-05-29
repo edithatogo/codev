@@ -1,0 +1,52 @@
+id: '927'
+title: needs-attention-surface-prs-vi
+protocol: spir
+phase: review
+plan_phases:
+  - id: server-derivation
+    title: Gate-authoritative pr signal + verify-approval label (overview server + types)
+    status: complete
+  - id: dashboard-surfacing
+    title: PR-rows-only Needs Attention + verify styling (dashboard)
+    status: complete
+  - id: remove-dead-projection
+    title: Delete recentlyMergedIssueIds end-to-end (retain fetchRecentMergedPRs)
+    status: complete
+current_plan_phase: null
+gates:
+  spec-approval:
+    status: approved
+    requested_at: '2026-05-29T17:03:20.375Z'
+    approved_at: '2026-05-29T17:07:20.553Z'
+  plan-approval:
+    status: approved
+    requested_at: '2026-05-29T17:17:05.611Z'
+    approved_at: '2026-05-29T17:27:03.979Z'
+  pr:
+    status: approved
+    requested_at: '2026-05-29T18:13:40.170Z'
+    approved_at: '2026-05-29T22:22:11.644Z'
+  verify-approval:
+    status: pending
+iteration: 1
+build_complete: true
+history:
+  - iteration: 1
+    plan_phase: dashboard-surfacing
+    build_output: ''
+    reviews:
+      - model: gemini
+        verdict: APPROVE
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-927/codev/projects/927-needs-attention-surface-prs-vi/927-dashboard-surfacing-iter1-gemini.txt
+      - model: codex
+        verdict: REQUEST_CHANGES
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-927/codev/projects/927-needs-attention-surface-prs-vi/927-dashboard-surfacing-iter1-codex.txt
+      - model: claude
+        verdict: APPROVE
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-927/codev/projects/927-needs-attention-surface-prs-vi/927-dashboard-surfacing-iter1-claude.txt
+started_at: '2026-05-29T16:47:35.190Z'
+updated_at: '2026-05-29T22:22:11.645Z'
+pr_ready_for_human: false
