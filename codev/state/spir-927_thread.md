@@ -226,3 +226,20 @@ Edits:
 - grep clean: only remaining ref is an explanatory comment in NeedsAttentionList.test.tsx (documents the removal).
 
 Running porch check (build type-checks dashboard+codev w/o the field) + dashboard tests.
+
+## 2026-05-29 — Phase 3 UNANIMOUS APPROVE → Review phase
+
+Phase 3 3-way: **Gemini APPROVE (HIGH), Codex APPROVE (MED), Claude APPROVE (HIGH)** — no issues. All 3
+implement phases done. porch → **review** phase. Checks: pr_exists, review_has_arch_updates,
+review_has_lessons_updates, e2e_tests (e2e soft-skips: no root test:e2e script).
+
+**Render-verify (architect's pre-PR instruction + UI-PR policy):** built the dashboard, loaded the REAL built
+CSS + exact NeedsAttentionList row DOM in headless chromium. `.attention-kind--verify` → `rgb(234,179,8)`
+(=--status-waiting, == PR row), ≠ spec (red), ≠ unstyled control. Proves the new className gets styling (no
+"className w/o CSS" gap). Screenshot tmp/verify-render.png. Harness in tmp/ (NOT committed).
+
+Net change: **−45 LOC** (227+/272−, 8 files) — a deletion, as designed.
+
+Wrote review doc (codev/reviews/927-...md) with Architecture Updates (universal-pr-gate contract +
+dashboard-local rule + render-verify evidence) and Lessons Learned Updates. Next: commit review → push →
+open PR → porch done (review checks) → CMAP-at-PR → pr gate (HUMAN merges).
