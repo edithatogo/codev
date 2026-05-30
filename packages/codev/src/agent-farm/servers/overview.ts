@@ -38,7 +38,20 @@ export interface BuilderOverview {
   id: string;
   issueId: string | null;
   issueTitle: string | null;
+  /**
+   * Display phase. Collapsed: prefers the active plan sub-phase id
+   * (`current_plan_phase`) over the protocol phase so the dashboard can match
+   * it against `planPhases` for sub-phase progress. Read `protocolPhase` for
+   * the coarse protocol phase.
+   */
   phase: string;
+  /**
+   * Coarse protocol phase (`plan` / `implement` / `review`, …) — the raw
+   * `phase:` from `status.yaml` before the `phase` field's sub-phase collapse.
+   * Surfaces the high-level phase for at-a-glance UIs (#810) without leaking
+   * plan sub-phase ids. Empty string when no live status exists.
+   */
+  protocolPhase: string;
   mode: 'strict' | 'soft';
   gates: Record<string, string>;
   worktreePath: string;

@@ -61,3 +61,7 @@ Reviewer asked for `[<phase>] #<id> <title>` (phase first, right after the icon)
 - `builder-row.ts` — label is now `${phasePrefix}#${id} ${title}${state}`; doc comment updated.
 - `builder-row.test.ts` — all label assertions flipped to phase-first order.
 - vscode `test:unit` ✓ 123, `lint` ✓, `esbuild` ✓.
+
+## Build fix: BuilderOverview local interface also needed the field
+
+`pnpm build` failed (TS2353) — `overview.ts` defines a **local `BuilderOverview` interface duplicating** codev-types' `OverviewBuilder`, and the `builders.push({...})` sites are typed as the local one. Added `protocolPhase` there too. The codev package has **no `check-types` script**, so vscode check-types passed while this stayed hidden until a full `pnpm build` ran `tsc` over codev/src. Lesson: when touching the overview shape, build the codev package, not just vscode check-types. `pnpm --filter @cluesmith/codev build` ✓ now.
