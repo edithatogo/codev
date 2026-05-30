@@ -1,0 +1,30 @@
+id: '810'
+title: vscode-builder-row-legibility-
+protocol: pir
+phase: review
+plan_phases: []
+current_plan_phase: null
+gates:
+  plan-approval:
+    status: approved
+    requested_at: '2026-05-30T00:02:32.837Z'
+    approved_at: '2026-05-30T00:22:40.465Z'
+  dev-approval:
+    status: approved
+    requested_at: '2026-05-30T00:28:32.693Z'
+    approved_at: '2026-05-30T02:02:06.186Z'
+  pr:
+    status: approved
+    requested_at: '2026-05-30T02:32:46.611Z'
+    approved_at: '2026-05-30T02:35:28.593Z'
+iteration: 1
+build_complete: true
+history: []
+started_at: '2026-05-29T23:59:51.417Z'
+updated_at: '2026-05-30T02:35:28.595Z'
+pr_history:
+  - phase: review
+    pr_number: 941
+    branch: builder/pir-810
+    created_at: '2026-05-30T02:04:26.798Z'
+pr_ready_for_human: false

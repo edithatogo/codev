@@ -13,6 +13,7 @@ function makeBuilder(overrides: Partial<OverviewBuilder> = {}): OverviewBuilder 
     issueId: '823',
     issueTitle: 'Multi-architect coordination',
     phase: 'implement',
+    protocolPhase: 'implement',
     mode: 'strict',
     gates: {},
     worktreePath: '/tmp/.builders/spir-823',

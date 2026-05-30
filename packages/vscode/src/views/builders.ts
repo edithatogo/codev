@@ -12,6 +12,7 @@ import { BuilderFolderTreeItem } from './builder-folder-tree-item.js';
 import { buildFilePathTree, type FilePathNode } from './file-path-tree.js';
 import type { BuilderDiffCache } from './builder-diff-cache.js';
 import { AreaGroupExpansionStore } from './area-group-expansion.js';
+import { builderRowLabel, gateIconFor } from './builder-row.js';
 
 /**
  * Order builders for the Builders tree: three buckets, top-down.
@@ -166,14 +167,7 @@ export class BuildersProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private makeBuilderRow(b: OverviewBuilder, now: number): BuilderTreeItem {
     const isBlocked = !!b.blocked;
     const isIdle = !isBlocked && isIdleWaiting(b, now);
-    const waitTime = isBlocked && b.blockedSince ? ` [${timeSince(b.blockedSince)}]` : '';
-    const idleTime = isIdle && b.lastDataAt ? ` [${timeSince(b.lastDataAt)} silent]` : '';
-    const phaseLabel = isBlocked
-      ? `blocked on ${b.blocked}${waitTime}`
-      : isIdle
-      ? `waiting on input${idleTime}`
-      : `[${b.phase}]`;
-    const item = new BuilderTreeItem(b.id, `#${b.issueId ?? b.id} ${b.issueTitle ?? ''} ${phaseLabel}`);
+    const item = new BuilderTreeItem(b.id, builderRowLabel(b, isIdle, now));
     // Stable id (not the churning label) so VSCode persists expansion across
     // the frequent overview-poll refreshes, and so the accordion's
     // collapseAll+reveal can target this row reliably.
@@ -201,10 +195,12 @@ export class BuildersProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const protocol = b.protocol || 'unknown';
     const reviewSuffix = builderHasReviewFile(b) ? '-review' : '';
     item.contextValue = `${family}-${protocol}${reviewSuffix}`;
-    // Three icons for three states: bell (gate), comment-discussion
-    // (silent, likely waiting on a question), circle-filled (live/active).
+    // Three icons for three states: gate-specific codicon (blocked, shape
+    // varies by gate via `gateIconFor` — color stays warning-yellow),
+    // comment-discussion (silent, likely waiting on a question), circle-filled
+    // (live/active).
     item.iconPath = isBlocked
-      ? new vscode.ThemeIcon('bell', new vscode.ThemeColor('notificationsWarningIcon.foreground'))
+      ? new vscode.ThemeIcon(gateIconFor(b.blockedGate), new vscode.ThemeColor('notificationsWarningIcon.foreground'))
       : isIdle
       ? new vscode.ThemeIcon('comment-discussion', new vscode.ThemeColor('notificationsInfoIcon.foreground'))
       : new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('testing.iconPassed'));
@@ -323,14 +319,4 @@ function placeholder(label: string): vscode.TreeItem {
   item.contextValue = 'builder-file-none';
   item.iconPath = new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('disabledForeground'));
   return item;
-}
-
-function timeSince(isoDate: string): string {
-  const ms = Date.now() - new Date(isoDate).getTime();
-  const minutes = Math.floor(ms / 60000);
-  if (minutes < 1) { return '<1m'; }
-  if (minutes < 60) { return `${minutes}m`; }
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) { return `${hours}h`; }
-  return `${Math.floor(hours / 24)}d`;
 }
