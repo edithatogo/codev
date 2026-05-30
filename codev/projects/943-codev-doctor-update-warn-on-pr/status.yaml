@@ -1,0 +1,14 @@
+id: '943'
+title: codev-doctor-update-warn-on-pr
+protocol: air
+phase: implement
+plan_phases: []
+current_plan_phase: null
+gates:
+  pr:
+    status: pending
+iteration: 1
+build_complete: false
+history: []
+started_at: '2026-05-30T03:51:33.844Z'
+updated_at: '2026-05-30T03:51:33.845Z'
