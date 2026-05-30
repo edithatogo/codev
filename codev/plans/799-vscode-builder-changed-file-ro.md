@@ -3,9 +3,9 @@
 ## Understanding
 
 Builder changed-file rows in the VSCode Builders view (list and tree mode) render
-their filenames in flat grey instead of SCM colors — Added should be green,
-Modified yellow, Deleted red. The `A`/`M`/`D` status badge on the right still
-renders correctly; only the label *color* is missing.
+their filenames in grey instead of SCM colors — Added should be green, Modified
+yellow, Deleted red. The `A`/`M`/`D` status badge on the right stays correct;
+only the label *color* is wrong.
 
 **Critical context the issue body did not have: the issue's own "proposed fix"
 was already implemented and shipped, and it did not work.**
@@ -14,222 +14,220 @@ was already implemented and shipped, and it did not work.**
   resourceUri"` switched `builderFileResourceUri` to the custom
   `codev-builder-diff:` scheme (`builder-file-tree-item.ts:43-45`), shipped in
   v3.1.4.
-- The architect **reopened** the issue on 2026-05-29, confirming via a fresh
-  screenshot that rows are **still grey** — the fix is present in the bundled
-  code but the user-visible behavior is unchanged.
+- The architect **reopened** the issue on 2026-05-29, confirming via fresh
+  screenshot that rows are **still grey** — the fix is in the bundled code but the
+  behavior is unchanged.
 
-So the issue body's root-cause theory ("the built-in Git decorator wins the
-color merge on the `file:` URI") is wrong, or at best a second-order effect. We
-re-investigated from scratch (3-lens parallel investigation + adversarial
-synthesis, run `wf_7b1f578b-c4b`).
+### The decisive symptom
 
-### Root cause
+The reviewer reports that the correct colors render **for a split second, then are
+instantly overridden by grey**. That flicker is the whole diagnosis: it rules out
+a static wrong-color (the SCM color tokens clearly *do* resolve to visible
+green/yellow/red) and points squarely at a **late-arriving grey decoration winning
+a re-merge** after the first paint.
 
-VSCode's tree-label color pipeline is **entirely scheme-agnostic**. No layer
-(`treeView.ts` `TreeRenderer`, `labels.ts`, `decorationsService.getDecoration`)
-inspects the URI scheme when deciding the label color. The badge and the color
-are derived from the **same** `FileDecoration` returned by
-`provideFileDecoration`, and applied as **two independent CSS classes**
-(`badgeClassName` for the badge, `labelClassName` for the color), each gated only
-on the sibling booleans of the `explorer.decorations` setting (both default
-`true`).
+### Root cause (high confidence, VSCode-source-backed)
 
-The decisive evidence is the **badge-yes / color-no symptom**: because the badge
-renders, our provider *is* being invoked for the `codev-builder-diff:` scheme,
-the decoration *does* reach the label renderer, and the color path *is*
-reachable. The only variable left that can be wrong is the **color value**.
+The shipped fix's premise — *"the built-in Git decorator only acts on
+`scheme === 'file'`, so the custom scheme stops it from firing"* — **is false.**
 
-`BuilderFileDecorationProvider` (`builder-file-decoration.ts:18-26`) sets each
-status color to a borrowed `gitDecoration.*ResourceForeground` ThemeColor token,
-but the extension's `package.json` ships **no `contributes.colors` block**
-(confirmed: `contributes` keys are `commands, menus, snippets, keybindings,
-viewsContainers, views, configuration` — no `colors`). We depend on theme tokens
-we do not own resolving to a saturated, distinguishable value in the user's
-active theme. They instead resolve to something at or near the default tree-label
-foreground → grey.
+Verified against `microsoft/vscode` source:
 
-This explains **both** the original intermittent grey (when the Git decorator was
-also firing on the `file:` URI and could win the merge) **and** the persistent
-grey after the scheme swap (Git no longer fires, but our own color token still
-resolves near-foreground). The scheme swap fixed a real but *different* defect
-and left the color-value defect untouched.
+1. **Git's decorators do not check `uri.scheme`.** In
+   `extensions/git/src/decorationProvider.ts`, `GitDecorationProvider` is a pure
+   `this.decorations.get(uri.toString())` lookup, and `GitIgnoreDecorationProvider`
+   does `getRepository(uri)` (path-based) then `repository.checkIgnore(paths)`
+   (shells out to `git check-ignore` on the URI's path) — **neither inspects the
+   scheme.** Our `codev-builder-diff:` URI is built as
+   `vscode.Uri.file(path.join(worktreePath, rel)).with({ scheme })`, so its
+   `.path`/`.fsPath` still point at the real, gitignored `.builders/<id>/…` file.
+   Git resolves the repo by that path and `git check-ignore` matches → Git emits
+   its grey `gitDecoration.ignoredResourceForeground` decoration on our row.
 
-This is a `medium`-confidence diagnosis. It is robust to the two most likely
-failure modes of the borrowed token (undefined, or resolving near-foreground),
-but unit tests cannot render labels or resolve theme tokens, so it **must be
-confirmed on the running extension** before we commit. That confirmation is the
-`dev-approval` gate's job — and is exactly why this is a PIR.
+2. **Extensions cannot outrank Git in the merge.**
+   `src/vs/workbench/api/browser/mainThreadDecorations.ts` pins *every*
+   extension-provided decoration (Git's and ours) to a hardcoded `weight: 10`. In
+   `src/vs/workbench/services/decorations/browser/decorationsService.ts` the merge
+   sorts by weight desc (a no-op tie at equal weight) and takes
+   `data.find(d => !!d.color) ?? data[0]` — the **first colored entry in
+   non-deterministic registration/merge order**.
+
+3. **Timing produces the flicker.** Our decoration resolves synchronously (cache
+   lookup) and paints first → correct color. Git's `GitIgnoreDecorationProvider`
+   resolves on a **500 ms debounce**, then fires a decoration-change that triggers
+   a re-merge; when Git's equal-weight grey lands first in the merge order, it
+   wins → grey. This is the open, unresolved VSCode issue
+   [#187756](https://github.com/microsoft/vscode/issues/187756) ("FileDecoration
+   color overrides gitDecoration color … all decoration providers have the same
+   weight").
+
+So the scheme swap was orthogonal to the actual mechanism. There is **no API to
+set decoration weight or to suppress another extension's provider**. The only
+lever an extension controls is the **URI shape**: if the URI's path does not
+resolve to a real tracked/ignored file inside an open repo, `getRepository(uri)`
+returns undefined, Git's provider returns nothing, and ours becomes the sole
+colored decoration — winning by default.
 
 ### Why the prior unit tests passed while the bug shipped
 
-`builder-file-tree-item.test.ts` asserts only URI *shapes* (scheme is non-`file`)
-and cache lookups. It never asserts the decoration carries a color, and cannot
-observe rendering. It passed while the color stayed broken.
+`builder-file-tree-item.test.ts` asserts only that the scheme is non-`file`. It
+never asserts the URI path is un-resolvable by Git, and cannot observe rendering.
+It passed while the bug shipped — and would still pass against the broken code.
 
 ## Proposed Change
 
-**Diagnostic-first, then fix.** Because a guess-fix already shipped and failed,
-the implement phase opens with a live A/B diagnostic the human verifies at the
-`dev-approval` gate, *then* lands the fix.
+Keep the `codev-builder-diff:` scheme, but **stop deriving the URI from the real
+worktree filesystem path.** Build a synthetic path that (a) Git cannot resolve to
+a repo-tracked/ignored file, while (b) still ending in the real basename so the
+file-type icon resolves, and (c) carrying the real worktree path in the query so
+our own decoration provider and command handlers can recover it.
 
-### Step 0 — Live diagnostic (confirm root cause before committing the fix)
+### The change
 
-Temporary instrumentation, reverted before PR:
+In `builder-file-tree-item.ts`, change `builderFileResourceUri`:
 
-1. In `provideFileDecoration`, hard-code a maximally-saturated, definitely-defined
-   color for **all** statuses: `color: new vscode.ThemeColor('charts.red')` (or
-   `'errorForeground'`).
-2. Add `console.log(uri.toString(), uri.scheme, this.cache.decorationFor(uri))`
-   at the top of `provideFileDecoration`.
-3. `pnpm --filter @cluesmith/codev compile`, launch the Extension Development
-   Host (F5 / "Run Extension"), open a workspace with a spawned builder worktree,
-   **reload the window** (FileDecoration color caching can require a reload —
-   microsoft/vscode#209907), expand a builder, look at the rows.
+```ts
+export function builderFileResourceUri(worktreePath: string, rel: string): vscode.Uri {
+  // Synthetic path ('/' + rel), NOT the real worktree fsPath. The built-in Git
+  // decorators resolve a repository by PATH and run `git check-ignore` on it
+  // (scheme-agnostic) — with the real `.builders/<id>/…` path they fire their
+  // grey "ignored" decoration and, at equal weight, win the color merge on a
+  // 500ms debounce (#799, vscode#187756). A path that doesn't resolve into any
+  // open repo makes Git's getRepository() return undefined, so it never fires
+  // and our SCM color is the sole (winning) decoration. The basename at the tail
+  // still drives the file-type icon; the real worktree path rides in the query
+  // for our provider/handlers to read back.
+  return vscode.Uri.from({
+    scheme: BUILDER_FILE_SCHEME,
+    path: '/' + rel,
+    query: `wt=${encodeURIComponent(worktreePath)}`,
+  });
+}
+```
 
-Interpretation:
-- **Rows turn red** → the scheme, provider invocation, `explorer.decorations.colors`,
-  and the color CSS path are all healthy; the only defect was the borrowed
-  `gitDecoration.*` tokens resolving near-foreground. **Root cause confirmed** →
-  proceed to Step 1.
-- **Rows stay grey** → the color CSS class is not being applied at all (value was
-  never the issue). Switch to the fallback path (Risks section).
-- The `console.log` independently confirms the provider fires once per row for the
-  custom scheme (re-falsifying the "provider not invoked for custom scheme"
-  hypothesis live).
+Why this satisfies every constraint:
 
-### Step 1 — The fix (most-likely branch): own the colors
+- **Git no longer fires.** `/src/components/Foo.tsx` does not start with any open
+  repo root (the workspace repo root is an absolute path like
+  `/Users/…/codev`), so `getRepository(uri)` → undefined and `checkIgnore` is
+  never called. `GitDecorationProvider` also returns undefined (it has no entry
+  keyed by this URI's `toString()`). Git contributes nothing → our decoration
+  wins. No flicker.
+- **Uniqueness across builders is preserved.** Two builders can share the same
+  `rel`; the `wt=<worktree>` query keeps `uri.toString()` distinct per builder, so
+  the per-builder decoration cache (keyed by `uri.toString()`) does not collide.
+  This is the role the full worktree path played in the old `file:`-based URI.
+- **The file-type icon still resolves** — `IFileIconTheme` keys off the last path
+  segment (the real basename), which is unchanged.
+- **The cache and the tree item stay in lockstep** — both call this one helper, so
+  their URIs match exactly (`builder-diff-cache.ts:107` and
+  `builder-file-tree-item.ts:78`). No cache/keying changes needed; the map already
+  keys by `uri.toString()`.
 
-Keep the custom `codev-builder-diff:` scheme (it correctly and permanently stops
-the built-in Git decorator from firing on the gitignored worktree paths;
-reverting to `file:` would regress to the intermittent Git-ignored grey). Stop
-borrowing `gitDecoration.*` tokens; register first-class, self-owned colors so the
-tint is deterministic and theme-independent.
+### What this drops vs. the medium-confidence draft
 
-1. Add a `contributes.colors` array to `packages/vscode/package.json` with one
-   entry per status:
-   - `codev.builderDiff.addedForeground`
-   - `codev.builderDiff.modifiedForeground`
-   - `codev.builderDiff.deletedForeground`
-   - `codev.builderDiff.renamedForeground` (also used for Copied)
-   - `codev.builderDiff.conflictingForeground` (Unmerged)
-
-   Each with an explicit `defaults` block for `light`, `dark`, and
-   `highContrast`, seeded from the Git extension's known-saturated values so they
-   never collapse to foreground (added ≈ `#587c0c`/`#81b88b`, modified ≈
-   `#895503`/`#e2c08d`, deleted ≈ `#ad0707`/`#c74e39`, renamed/copied ≈ the
-   "modified/added" family, conflicting ≈ `#6c6cc4`/`#e4676b`). Final exact hexes
-   chosen during implementation to match VSCode's current Git defaults.
-
-2. In `builder-file-decoration.ts`, change the `DECO` map's `color` strings from
-   `gitDecoration.*ResourceForeground` to the new `codev.builderDiff.*Foreground`
-   ids. No other logic changes — `new vscode.ThemeColor(d.color)` already wraps
-   whatever id is supplied. `T` (type-changed) keeps mapping to the modified
-   token; `C` (copied) keeps mapping to the renamed token.
-
-3. Add regression tests (see Test Plan).
-
-4. Bump version + add an *unreleased* VSCode CHANGELOG entry **only after** the
-   live diagnostic confirms color renders. (The reopen comment removed the prior
-   premature CHANGELOG entry; do not re-add until genuinely confirmed.)
+The earlier draft proposed registering own `contributes.colors` because the
+leading hypothesis was a grey *color value*. The flicker disproves that (the
+colors render correctly before being overridden), so **`contributes.colors` is
+not part of this fix** — the borrowed `gitDecoration.*` tokens resolve fine.
 
 ### What this does NOT touch (already correct)
 
-- Cache keying — `decorationFor`/`syncDecorations` both key by `uri.toString()`
-  via the shared `builderFileResourceUri` helper; the tree-item URI and the
-  decoration-map key match exactly. (`builder-diff-cache.ts:56,103,108`)
-- Provider registration — exactly one `registerFileDecorationProvider` at
-  `extension.ts:267`; no competing Codev provider exists.
-- The custom scheme itself — kept.
+- Provider registration — one `registerFileDecorationProvider` at
+  `extension.ts:267`; no competing Codev provider.
+- Cache keying — `decorationFor`/`syncDecorations` key by `uri.toString()` via the
+  shared helper (`builder-diff-cache.ts:56,103,108`).
+- The diff command — `codev.openBuilderFileDiff` receives the `BuilderFileTreeItem`
+  itself (`arguments: [this]`) and builds diff URIs from `worktreePath`/`baseRef`/
+  `plan`, never from `resourceUri`. Unaffected by the synthetic path.
 
 ## Files to Change
 
-- `packages/vscode/src/views/builder-file-decoration.ts:18-26` — repoint the
-  `DECO` map `color` values from `gitDecoration.*ResourceForeground` to the new
-  `codev.builderDiff.*Foreground` token ids. (Step 0 also temporarily edits
-  `provideFileDecoration` at `:35-46` for the diagnostic; reverted before PR.)
-- `packages/vscode/package.json` — add a `contributes.colors` array (new key) with
-  the five `codev.builderDiff.*Foreground` color definitions + light/dark/highContrast
-  defaults. Version bump after confirmation.
-- `packages/vscode/src/test/builder-file-tree-item.test.ts` (or a new
-  `builder-file-decoration.test.ts`) — add tests asserting the decoration *content*
-  (color id + badge), plus a `package.json` contract test (every DECO color id is
-  declared in `contributes.colors`).
-- `packages/vscode/CHANGELOG.md` (or the worktrees changelog path used for the
-  VSCode extension) — unreleased entry, added last, only after live confirmation.
+- `packages/vscode/src/views/builder-file-tree-item.ts:43-45` — rewrite
+  `builderFileResourceUri` to build a synthetic-path URI (worktree in the query),
+  per above. Update the surrounding doc comment (lines 20-34, 75-78) to describe
+  the path-resolution mechanism, not the (false) scheme-gating one.
+- `packages/vscode/src/views/builder-diff-cache.ts` — **no logic change** (it uses
+  the helper); only verify the comment at `:96-100` still reads correctly.
+- `packages/vscode/src/test/builder-file-tree-item.test.ts` — replace the
+  shape-only assertions with ones that would actually catch this class of bug
+  (see Test Plan).
+- `packages/vscode/package.json` — verify whether the `builder-file` contextValue
+  exposes any built-in fsPath-based menu items (see Risks); add a CHANGELOG/version
+  bump **only after** live confirmation. The VSCode CHANGELOG entry goes in the
+  path used for this repo's extension changelog.
 
 ## Risks & Alternatives Considered
 
-- **Risk: diagnostic shows rows stay grey even with a hard-coded bright color.**
-  Then the color CSS class is not applied at all and `contributes.colors` won't
-  help. Fallback, in order: (a) verify `explorer.decorations.colors` is `true` in
-  the test profile (it gates the color class independently of badges; if a profile
-  disabled it, badges show but colors never do — that's a config/UX issue, not a
-  code bug); (b) open Developer Tools, inspect the row label DOM — is the decoration
-  color class *absent* (would contradict the badge → unlikely) or *present-but-
-  overridden* by a higher-specificity rule (TreeView selection/focus foreground, or
-  a custom-view label foreground)? If overridden, the fix shifts to CSS specificity;
-  (c) last resort — encode status via a colored `ThemeIcon`/`iconPath` glyph on the
-  TreeItem (rendered through a more deterministic path), accepting the loss of the
-  SCM-label look.
-
-- **Risk: the borrowed `gitDecoration.*` tokens are actually defined (the built-in
-  Git extension is usually active).** True — so "undefined token" is not certain.
-  But our own `contributes.colors` with saturated explicit defaults is robust
-  *regardless* of whether the cause is "undefined" or "resolves near-foreground":
-  no theme overrides our `codev.builderDiff.*` ids, so our saturated defaults
-  always win. The diagnostic disambiguates which it was, but the fix covers both.
-
-- **Alternative: revert to the `file:` scheme.** Rejected. The scheme swap was a
-  genuine, separate win (stops the intermittent Git-ignored-grey on the gitignored
-  worktree path). Reverting re-introduces that bug to fix nothing — the color
-  pipeline is scheme-agnostic, so `file:` would not restore color either.
-
-- **Alternative: add a second FileDecorationProvider / change cache keying.**
-  Rejected. Both are already correct; the synthesis explicitly ruled out a
-  colorless-provider-wins-merge race (single provider) and a cache key mismatch.
-
-- **Risk noted in the original issue: third-party extensions that filter
-  `resourceUri.scheme === 'file'` skip our rows.** Unchanged by this plan (we keep
-  the custom scheme); built-in `revealFileInOS`/`copyFilePath` accept the fsPath
-  regardless, so the right-click menu stays intact.
+- **Risk: `resourceUri.fsPath` is now synthetic, so any built-in command that
+  reveals/copies the file path (`revealFileInOS`, `copyFilePath`) would point at
+  the fake path.** Must verify during implement whether the `builder-file`
+  contextValue actually contributes such items. If it does: either remove them for
+  this row type, or back them with a small custom command that reads the real path
+  from `wt=` (query) + the rel (path) and calls the underlying action. The custom
+  diff command is unaffected (it uses the item, not the URI). The original issue
+  already flagged this scheme-vs-fsPath trade-off as acceptable.
+- **Risk: a synthetic path accidentally resolves into a repo** (e.g. if a repo were
+  rooted at `/`). Not possible in practice — repo roots are absolute workspace
+  paths; `/src/...` never matches. The live diagnostic confirms Git no longer
+  fires.
+- **Alternative: register own `contributes.colors` / saturated tokens.** Rejected
+  as the fix — the flicker proves the color value is fine; it would not stop Git's
+  grey from winning the merge.
+- **Alternative: revert to the `file:` scheme.** Rejected — same root cause
+  (Git path-resolves it), plus it re-introduces nothing useful.
+- **Alternative: try to outrank Git via decoration weight.** Impossible — the
+  extension `FileDecoration` API exposes no weight; `mainThreadDecorations` pins
+  all extensions to `weight: 10` (vscode#187756, unresolved).
+- **Alternative (fallback if synthetic path somehow still flickers): a colored
+  `ThemeIcon`/`iconPath` status glyph instead of a label tint** — rendered through
+  a path that doesn't participate in the FileDecoration merge at all. Loses the
+  SCM-label look; only if the URI-shape fix is somehow insufficient.
 
 ## Test Plan
 
 The `dev-approval` gate is the real verification — unit tests cannot render labels
-or resolve theme tokens.
+or run the decoration merge.
+
+### Live confirmation of the root cause (cheap, do first)
+
+Already strongly indicated by the flicker, but to nail it before/at the gate:
+**disable the built-in Git extension** (Extensions → Git → Disable) and reload with
+the *current* (broken) build. If the rows then render the correct colors with no
+flicker, Git is confirmed as the overrider → the URI-shape fix is the right lever.
 
 ### Manual (at the dev-approval gate — the killer move)
 
 1. `pnpm --filter @cluesmith/codev compile` in the worktree.
 2. Launch the Extension Development Host (F5 "Run Extension", or install the built
-   `.vsix`). Open a workspace that has at least one spawned builder worktree with
+   `.vsix`) on a workspace with at least one spawned builder worktree containing
    Added, Modified, and Deleted files.
-3. **Reload the window** (Developer: Reload Window) — FileDecoration color caching
-   can require a reload.
-4. Expand a builder row in the Builders view. Confirm in **both list and tree
-   mode**:
-   - Added file label is green, Modified is yellow, Deleted is red (badges
-     unchanged).
-   - Try a light theme, a dark theme, and a high-contrast theme — colors stay
-     distinguishable in all three.
-5. Run the Step 0 diagnostic first if there is any doubt the fix took effect.
+3. Developer: Reload Window. Expand a builder row. Confirm in **both list and tree
+   mode**, with the Git extension **enabled**:
+   - Added is green, Modified yellow, Deleted red — and the color is **stable** (no
+     flash-then-grey).
+   - Badges still correct.
+   - Repeat across light, dark, and high-contrast themes.
+4. Confirm the per-file diff still opens (click a row) and the right-click menu
+   behaves (per the fsPath risk above).
 
-### Unit / contract (regression guards)
+### Unit / regression (guards that would actually catch this class of bug)
 
-- Assert decoration **content**: instantiate `BuilderFileDecorationProvider` with a
-  seeded cache, call `provideFileDecoration` per status, assert the returned
-  decoration carries a defined `color` whose `ThemeColor` id is the expected
-  `codev.builderDiff.*` token (not a borrowed `gitDecoration.*` one) and a
-  non-empty badge. This would have caught the original "borrowed-token" defect that
-  the shape-only tests missed.
-- `package.json` contract test: parse `contributes.colors`, assert every color id
-  referenced by the `DECO` map is declared with `light`/`dark`/`highContrast`
-  defaults.
+- Assert the URI path is **not Git-resolvable**: `uri.path` must not contain the
+  worktree absolute path; the real worktree path must be recoverable from the
+  query (`wt=`). This is the assertion that would have caught the shipped bug,
+  which the old scheme-only test missed.
+- Assert **uniqueness**: two builders with the same `rel` produce distinct
+  `uri.toString()` (so the decoration cache doesn't collide).
+- Keep: scheme is `BUILDER_FILE_SCHEME` (non-`file`); basename is preserved at the
+  path tail (icon resolution).
+- Assert the decoration **content**: `provideFileDecoration` returns a defined
+  `color` + badge per status (cheap guard against a future regression dropping the
+  color).
 
 ### Optional (rendering-layer smoke)
 
-- If feasible per `codev/resources/testing-guide.md`, a VSCode integration /
-  Playwright test that launches the extension against a fixture worktree and reads
-  the computed label color, asserting it is the contributed status color and not
-  the default tree foreground. This is the only layer that can actually observe the
-  grey-vs-colored regression.
+If feasible per `codev/resources/testing-guide.md`, a VSCode integration test that
+launches against a fixture worktree and asserts the changed-file row's computed
+label color is the status color, not the default/ignored grey — the only layer
+that can observe the merge outcome.

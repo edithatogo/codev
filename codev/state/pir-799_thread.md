@@ -29,6 +29,21 @@ The two lead lenses disagreed; synthesis reconciled it decisively:
 
 **Recommended fix**: KEEP the custom scheme (reverting re-introduces the intermittent Git-ignored grey). REPLACE borrowed tokens with first-class `contributes.colors` (`codev.builderDiff.*Foreground`) with saturated light/dark/highContrast defaults; point the DECO map at them. Robust to both "token undefined" and "token resolves near-foreground".
 
-**PIR fit**: confidence is medium and unit tests can't render — so the plan is **diagnostic-first at the dev-approval gate**: hard-code a bright color + log provideFileDecoration, reload the Extension Dev Host, confirm rows turn red (→ value problem, our fix works) vs stay grey (→ fallback: check `explorer.decorations.colors`, CSS specificity via DevTools, or iconPath approach). The human runs the extension before any PR exists — exactly why PIR was chosen.
+**PIR fit**: confidence is medium and unit tests can't render — so the plan is diagnostic-first at the dev-approval gate. The human runs the extension before any PR exists — exactly why PIR was chosen.
 
-Writing the plan now.
+Plan v1 committed (`22f30291`), plan-approval gate requested.
+
+### Plan v2 — reviewer feedback flipped the diagnosis (high confidence now)
+
+Reviewer reported the decisive symptom: **correct colors render for a split second, then are instantly overridden by grey.** That flicker disproves the v1 "color value resolves to grey" theory (the SCM tokens clearly DO render) and points at a late grey decoration winning a re-merge.
+
+Targeted source investigation (background agent, microsoft/vscode) confirmed, high confidence:
+- The built-in Git decorators (`GitDecorationProvider`, `GitIgnoreDecorationProvider` in `extensions/git/src/decorationProvider.ts`) do **NOT** check `uri.scheme`. They resolve the repo by **path** and run `git check-ignore` on the fsPath. Our `Uri.file(worktreePath/rel).with({scheme})` keeps the real gitignored `.builders/<id>/…` path → Git STILL fires its grey `ignoredResourceForeground` decoration. **The shipped scheme swap was cosmetic.**
+- Extensions can't set decoration weight; `mainThreadDecorations.ts` pins all extensions (Git + ours) to `weight: 10`. Merge picks `data.find(d=>!!d.color)` in non-deterministic order. Git's `checkIgnore` resolves on a **500ms debounce** → after our synchronous paint → re-merge → grey wins. Exactly the flicker. (Open vscode issue #187756.)
+- Only lever: **URI shape**. A path that doesn't resolve into any open repo → `getRepository(uri)` undefined → Git never fires → ours is the sole colored decoration.
+
+**Revised fix**: keep the custom scheme but build the URI from a **synthetic path** (`path: '/'+rel`, worktree carried in `query: wt=…`). Git can't path-resolve it; basename at the tail still drives the file icon; the query keeps `uri.toString()` unique per builder (cache no longer collides). Dropped the `contributes.colors` work (color value is fine). Diff command uses the item not the URI, so unaffected. New risk: synthetic fsPath breaks any built-in fsPath menu item (revealFileInOS/copyFilePath) — verify the `builder-file` contextValue menu during implement.
+
+Live confirmation at dev-approval: disable the built-in Git extension → flicker should stop on the *current* build (proves Git is the overrider). Then verify the fix gives stable color with Git enabled.
+
+Recommitting plan v2.
