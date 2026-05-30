@@ -29,3 +29,24 @@ icons untouched. Survives truncation (leading position). Pure helper
 mirroring #810's extracted-testable-helper-with-fallback pattern.
 
 Plan rewritten, awaiting `plan-approval`.
+
+### Implement phase
+
+Implemented per the v2 plan:
+- New `packages/vscode/src/views/backlog-recency.ts` — pure helpers
+  `isRecentlyCreated`, `recencyPrefix` (`'[new] '`/`''`), `relativeAge` (tooltip),
+  all with injected `now`. Hardcoded 24h `RECENT_THRESHOLD_MS`.
+- `backlog.ts makeRow` — `[new]` prefix after `#id`, before title; tooltip
+  gains `Created <age>` when parseable. Icons untouched.
+- New vitest `__tests__/backlog-recency.test.ts` — 9 tests (boundaries,
+  malformed/missing, future-clamp, prefix output, age tiers).
+
+Build/test: `check-types` ✓, `lint` ✓, esbuild ✓, vitest 122/122 (9 new) ✓.
+
+Note: had to build `@cluesmith/codev-core` and `@cluesmith/codev-types` first —
+the worktree's tsc/esbuild couldn't resolve their subpath exports until built.
+Pre-existing env/build-ordering issue (confirmed via git-stash that the
+status.ts/workspace.ts/terminal-adapter.ts errors exist without my diff), not
+caused by this change.
+
+Awaiting `dev-approval` gate.
