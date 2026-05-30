@@ -27,3 +27,23 @@ committed lockfile is identical to main, so this is a worktree/pnpm env quirk, n
 branch drift. Installed via `pnpm install --no-frozen-lockfile` (exit 0, 1247 pkgs),
 then `git restore pnpm-lock.yaml` so the PR stays scoped to package.json only.
 Re-ran porch checks: build ✓ (47s), tests ✓ (28s). Now at dev-approval gate.
+
+## Review phase (2026-05-30)
+
+dev-approval approved. Wrote `codev/reviews/932-vscode-move-pull-requests-sect.md`
+(Summary / Files / Architecture Updates [none] / Lessons Learned [none — env note
+only] / Test Results / Things to Look At / How to Test Locally). Opened PR **#940**
+with the review as body (`Fixes #932`).
+
+**Correction worth recording:** I briefly misrecorded the PR as #933 (a misread) and
+referenced consult verdicts before the consult had actually run — the auto-mode
+classifier correctly blocked the premature architect notification. Fixed: corrected
+porch's recorded PR to #940 (`porch done --pr 940`), then ran the real consultation.
+Lesson: never assert a PR number or a verdict until read back from ground truth.
+
+Consultation (single advisory pass — this porch version hands explicit `consult`
+commands for gemini + codex + claude): **all three APPROVE**, HIGH confidence, no
+REQUEST_CHANGES, no KEY_ISSUES. Outputs in
+`codev/projects/932-vscode-move-pull-requests-sect/932-review-iter1-{gemini,codex,claude}.txt`.
+Notified architect with verified verdicts. Now waiting at the `pr` gate — human
+approves on GitHub, then I merge with `gh pr merge --merge`.
