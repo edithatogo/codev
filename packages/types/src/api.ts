@@ -302,6 +302,41 @@ export interface IssueView {
   }>;
 }
 
+// --- Backlog search (GET /api/backlog-search) ---
+
+/**
+ * One searchable backlog row returned by Tower's GET /api/backlog-search.
+ * Distinct from `OverviewBacklogItem`: it carries the issue `body` (so the
+ * search panel can match against it host-side) and omits the spec/plan/
+ * builder enrichment the sidebar tree needs. Body lives only on this
+ * on-demand search path — `OverviewBacklogItem` and `/api/overview` stay
+ * body-free so the always-on overview payload doesn't grow.
+ */
+export interface BacklogSearchItem {
+  id: string;
+  title: string;
+  url: string;
+  /** Single `area/*` value (via `parseArea`); `'Uncategorized'` when unlabeled. */
+  area: string;
+  author?: string;
+  assignees?: string[];
+  createdAt: string;
+  /** Issue body for substring matching. `''` when the forge can't supply it. */
+  body: string;
+}
+
+/**
+ * Response shape of GET /api/backlog-search. `currentUser` powers the
+ * panel's "Me"/"Unassigned" assignee scope. `error` is set (with an empty
+ * `items`) when the forge is unavailable, so the panel can show a reason
+ * rather than a silent empty table.
+ */
+export interface BacklogSearchResponse {
+  items: BacklogSearchItem[];
+  currentUser?: string;
+  error?: string;
+}
+
 // --- Team (GET /workspace/:path/api/team) ---
 
 export interface ReviewBlockingEntry {

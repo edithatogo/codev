@@ -38,6 +38,14 @@ export interface IssueListItem {
   closedAt?: string;
   author?: { login: string };
   assignees?: Array<{ login: string }>;
+  /**
+   * Issue body. Only populated when the caller opts in via
+   * `fetchIssueList(..., { includeBody: true })` (the backlog-search path);
+   * omitted from the default `/api/overview` fetch so that payload stays
+   * lean. Non-GitHub forges may not populate it — consumers degrade to
+   * title-only matching when it's absent.
+   */
+  body?: string;
 }
 
 /** Output of the `issue-list` concept command. */

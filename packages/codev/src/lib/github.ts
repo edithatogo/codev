@@ -108,8 +108,15 @@ export async function fetchPRList(
 export async function fetchIssueList(
   cwd?: string,
   forgeConfig?: ForgeConfig | null,
+  options?: { state?: 'open' | 'closed' | 'all'; includeBody?: boolean },
 ): Promise<ForgeIssueListItem[] | null> {
-  const result = await executeForgeCommand('issue-list', {}, {
+  // Opt-in env passed to the `issue-list` concept. The default
+  // (/api/overview) path sends neither, preserving the lean open-issue
+  // fetch; the backlog-search path sets state + requests `body`.
+  const env: Record<string, string> = {};
+  if (options?.state) { env.CODEV_ISSUE_STATE = options.state; }
+  if (options?.includeBody) { env.CODEV_ISSUE_FIELDS = 'body'; }
+  const result = await executeForgeCommand('issue-list', env, {
     cwd,
     forgeConfig,
   });
