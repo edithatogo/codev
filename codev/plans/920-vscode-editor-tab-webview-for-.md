@@ -15,30 +15,30 @@ The Backlog sidebar tree answers "what's on my plate" but offers no real search.
 - → `deriveBacklog` (`packages/codev/src/agent-farm/servers/overview.ts:800`) → `BacklogItem` → `OverviewBacklogItem` (`packages/types/src/api.ts:210`) — no `body`
 - → `/api/overview` → `TowerClient.getOverview` → `OverviewCache` (vscode) — no `body`
 
-The acceptance criteria require substring search over **title AND body**. So body must be sourced through Tower (the extension never shells out to `gh` directly — it only talks to Tower's HTTP API). This is the central decision for the `plan-approval` gate — see **Design Decision 1**.
+The acceptance criteria require substring search over **title AND body**. So body must be sourced through Tower (the extension never shells out to `gh` directly — it only talks to Tower's HTTP API). **Resolved (Decision 1): a dedicated `GET /api/backlog-search` endpoint supplies body on a fresh fetch, leaving `/api/overview` untouched.**
 
 Everything else (table, dropdowns, sort, footer, singleton panel, theming) is local to a new vscode webview and well-supported by existing patterns (`view-issue.ts` for lifecycle/refresh; `backlog-filter.ts` for vitest-tested pure helpers; existing `view/title` menu wiring for the icon).
 
-## Design Decisions (resolve at the gate)
+## Design Decisions
 
-### Decision 1 — Where does `body` come from? **(the big one)**
+### Decision 1 — Where does `body` come from? **(DECIDED: Option B — dedicated search API)**
 
-**Recommended — Option A: add an optional, server-truncated `body` to the existing shared backlog pipeline.**
+A **dedicated `GET /api/backlog-search` Tower endpoint** supplies the searchable dataset. It does a **fresh fetch each time it's hit** (no 30 s overview cache reuse) and returns the open backlog **with full, un-truncated `body`**. `/api/overview` and `OverviewBacklogItem` are left **completely unchanged** — the web dashboard and sidebar tree see no payload growth, and there are no Option-A truncation/cache hacks.
 
-- `issue-list` concept adds `body` to its `--json` fields (GitHub first; other forges optional — field stays `body?`).
-- `IssueListItem.body?: string`, `OverviewBacklogItem.body?: string`.
-- `deriveBacklog` copies `issue.body`, **truncated server-side to ~2000 chars** (substring search needs a prefix, not the whole essay — bounds payload growth).
-- The overview server **already fetches the issue list once and caches it** (`fetchIssuesCached`, 30 s TTL), so this adds **zero new round-trips and zero new caches**. The sidebar tree ignores the new field; the panel filters cached data client-of-Tower-side with instant response.
+Concretely:
+- `issue-list` forge concept gains `body` in its `--json` fields (`packages/codev/scripts/forge/github/issue-list.sh`); `IssueListItem.body?: string` (`forge-contracts.ts`). Optional field — GitHub-populated; other forges degrade to title-only.
+- The new endpoint runs its **own** issue fetch (bypassing the shared 30 s `issueCache`, so it's always fresh) and projects the open backlog via the existing `deriveBacklog` logic plus `body`.
+- A new response type (`BacklogSearchItem` = the searchable record incl. `body`) + `TowerClient.searchBacklog(...)` method. **`OverviewBacklogItem` does NOT gain `body`** — body lives only on the search path.
 
-Trade-off: `/api/overview` payload grows by up to ~2 KB × ≤200 issues (~400 KB worst case) and the web dashboard receives body it doesn't use. Truncation caps it; localhost transport makes it acceptable.
+**Filtering runs host-side, not per-keystroke server-side.** The endpoint is hit **once when the panel opens** (and on manual refresh / `OverviewCache.onDidChange`), returning the in-scope dataset (with body); the actual substring + scope + sort filtering happens in the extension host via pure vitest-tested helpers, so live typing is instant with no network per keystroke. (A fresh `gh` fetch on every debounced keystroke would add ~1 s latency — unacceptable for live search.) Body crosses to the host but **never to the webview** — the host posts back only display rows (`#`, title, area, assignee, age).
 
-**Alternative — Option B: dedicated `GET /api/backlog-search` endpoint + `TowerClient` method**, returning the same open-backlog set enriched with body, fetched by the panel only while it's open (throttled off `OverviewCache.onDidChange` like `view-issue.ts`). Keeps `/api/overview` lean for the web dashboard at the cost of a second issue fetch and new route/client/core surface.
+### Decision 2 — Status: Open / Closed / All  **(PENDING your answer)**
 
-**Recommendation: Option A + truncation.** It is the most literal reading of the issue's "v1 keeps the data source the same as the sidebar tree," reuses the existing cache, and is the smallest moving-parts change. I'll implement A unless the gate prefers B's payload isolation.
+Option B makes a **functional** Status dropdown nearly free (the endpoint can take a `state` param → `gh issue list --state open|closed|all`). Choice:
+- **(a)** Functional Open / Closed / All (endpoint `state` param). Widens v1 slightly past the issue's stated scope.
+- **(b)** Open only — omit the dropdown; add Status later. Honors the issue's "closed search out of scope."
 
-### Decision 2 — Status dropdown vs. out-of-scope "open only"
-
-The acceptance list names a `Status: Open / Closed / All` dropdown in the query row, but **"search across closed issues … is out of scope"** for v1. These conflict. **Recommendation:** render the Status dropdown for layout fidelity but **fix it to `Open` (disabled, tooltip "v1: open backlog only")** so the extension point is visible without shipping a non-functional Closed/All. Alternative: omit the dropdown entirely in v1. Gate decides.
+*(This section updated once you decide.)*
 
 ### Decision 3 — Command name (collision with #918)
 
@@ -57,8 +57,8 @@ The acceptance list names a `Status: Open / Closed / All` dropdown in the query 
 
 ### Architecture
 
-1. **Body into the data pipeline** (per Decision 1, Option A). Optional field, GitHub-populated, server-truncated.
-2. **Filtering runs host-side in pure, vitest-tested helpers** in `backlog-filter.ts` — matches the issue's stated test plan. The webview is a thin view: it renders controls + table, **debounces (~150 ms) and posts the current criteria** to the extension host, and renders the rows the host posts back. Body never ships wholesale to the webview — only matched result rows cross the boundary.
+1. **Dedicated search endpoint supplies body** (per Decision 1, Option B). `GET /api/backlog-search` does its own fresh issue fetch (with `body`, bypassing the 30 s overview cache), projects the open backlog via `deriveBacklog` + `body`, returns `BacklogSearchItem[]`. `/api/overview` and `OverviewBacklogItem` are untouched. The panel calls it via `TowerClient.searchBacklog(...)`.
+2. **Filtering runs host-side in pure, vitest-tested helpers** in `backlog-filter.ts` — matches the issue's stated test plan. The endpoint is hit once on panel open (and on refresh / `OverviewCache.onDidChange`) to fetch the body-enriched dataset; the host then filters/sorts in-memory per the current criteria. The webview is a thin view: it renders controls + table, **debounces (~150 ms) and posts the current criteria** to the extension host, and renders the rows the host posts back. Body never ships to the webview — only matched display rows cross the boundary.
 3. **Singleton `WebviewPanel`** owned by a `BacklogSearchPanel` class. `createOrShow` focuses the existing panel if open, else creates one in `ViewColumn.Beside` with `enableScripts` + a strict CSP (nonce'd inline script, `localResourceRoots` scoped). HTML/CSS/JS **inlined as a template string** (no runtime file read → no esbuild copy-asset step). CSS variables only (`--vscode-*`).
 4. **Message protocol** (typed): webview→host `{type:'search', criteria}` and `{type:'open', id}`; host→webview `{type:'results', rows, footer}`. `open` runs `vscode.commands.executeCommand('codev.viewBacklogIssue', id)` — identical to a sidebar row click.
 5. **Live data:** the panel subscribes to `OverviewCache.onDidChange` and re-runs the current criteria so results stay fresh while open; disposes the subscription with the panel.
@@ -69,14 +69,16 @@ Empty query + scopes → all in-scope matches. Empty query + empty scopes → ev
 
 ## Files to Change
 
-**Data pipeline (only if Decision 1 = Option A):**
-- `packages/codev/scripts/forge/github/issue-list.sh` — add `body` to `--json` fields.
+**Search endpoint + body source (server):**
+- `packages/codev/scripts/forge/github/issue-list.sh` — add `body` to `--json` fields (optional; GitHub-populated).
 - `packages/codev/src/lib/forge-contracts.ts:32` — `IssueListItem.body?: string`.
-- `packages/types/src/api.ts:210` — `OverviewBacklogItem.body?: string` (+ doc comment).
-- `packages/codev/src/agent-farm/servers/overview.ts:800` — `deriveBacklog` copies truncated `issue.body`.
+- `packages/types/src/api.ts` — new `BacklogSearchItem` (open-backlog record incl. `body`) and the `/api/backlog-search` response type. **`OverviewBacklogItem` unchanged.**
+- `packages/codev/src/agent-farm/servers/overview.ts` — a body-enriched projection (reuse `deriveBacklog`; carry `body`) and a **fresh** issue fetch that bypasses the 30 s `issueCache`.
+- `packages/codev/src/agent-farm/servers/tower-routes.ts:152` — register `GET /api/backlog-search` (`handleBacklogSearch`), takes `workspace` (+ `state` param iff Decision 2 = functional Status).
+- `packages/core/src/tower-client.ts:314` — new `searchBacklog(workspacePath, …)` method (sibling of `getOverview`).
 
 **VSCode panel (new):**
-- `packages/vscode/src/webviews/backlog-search-panel.ts` — `BacklogSearchPanel` (singleton lifecycle, CSP/nonce HTML, message routing, `OverviewCache` subscription).
+- `packages/vscode/src/webviews/backlog-search-panel.ts` — `BacklogSearchPanel` (singleton lifecycle, CSP/nonce HTML, message routing, fetch-on-open + `OverviewCache.onDidChange` refresh subscription).
 - `packages/vscode/src/webviews/backlog-search.html.ts` *(or inlined in the panel)* — HTML/CSS/JS template, CSS-variables-only.
 
 **VSCode wiring:**
@@ -87,16 +89,16 @@ Empty query + scopes → all in-scope matches. Empty query + empty scopes → ev
 **Tests:**
 - `packages/vscode/src/test/` (or existing `backlog.test.ts` sibling) — vitest unit tests for `searchBacklog` (each scope, AND-composition, substring case-insensitivity, body match, sort directions, empty-query passthrough, 200 cap) and `formatAge`.
 
-**Alternative-only (if Decision 1 = Option B):** `packages/codev/src/agent-farm/servers/tower-routes.ts` (+`overview.ts` handler) new `GET /api/backlog-search`; `packages/core/src/tower-client.ts` new method; new core type — *instead of* the four pipeline edits above.
-
 ## Risks & Alternatives Considered
 
-- **Risk — scope creep beyond `area/vscode`.** Body-in-pipeline (Option A) touches core types + the forge concept + Tower server, not just vscode. Mitigation: optional field, GitHub-only population, server truncation; no behavior change for any existing consumer. If the gate wants to keep the change strictly vscode-local, Option B confines server work to one additive endpoint — still not vscode-only, but isolated from `/api/overview`. There is **no** fully vscode-local way to get body (the extension can't shell to `gh`).
-- **Risk — overview payload bloat (Option A).** Mitigated by ~2000-char server-side truncation; revisit only if profiling shows it matters.
+- **Risk — change spans more than `area/vscode`.** The dedicated endpoint (Option B) touches the forge concept, a core type, the Tower server, and `TowerClient` — not just vscode. This is unavoidable: the extension can't shell to `gh`, so body must come through Tower. Mitigation: all additive (a new endpoint + optional field), `/api/overview` and every existing consumer untouched, web-dashboard payload unchanged.
+- **Risk — stale data while the panel is open.** The endpoint fetches fresh on open but the host filters a snapshot. Mitigation: re-fetch on `OverviewCache.onDidChange` (throttled, like `view-issue.ts`) and on the explicit Search button, so an open panel tracks backlog changes.
 - **Risk — first webview in the extension → CSP/theming pitfalls.** Mitigation: strict nonce'd CSP, `localResourceRoots`, CSS variables only; manually verified across dark/light/high-contrast at the `dev-approval` gate (PR diff can't catch theme regressions — the core PIR justification).
 - **Risk — `#918` command-name race.** Mitigated by Decision 3 (`codev.openBacklogSearch`).
-- **Alternative rejected — webview-side filtering in JS.** Instant typing without round-trips, but duplicates/untestable logic and would need full body shipped into the webview. Host-side pure helpers (the issue's own skeleton) are testable and keep body host-side; debounce makes the round-trip imperceptible on localhost.
-- **Alternative rejected — per-issue `/api/issue` body fetch for search.** 200 round-trips per query; non-starter for live search.
+- **Alternative rejected — Option A (body on the shared `/api/overview`).** Smaller surface but bloats the always-on overview payload for the web dashboard and forces truncation/cache compromises. Rejected in favor of isolating body on a dedicated, on-demand search path.
+- **Alternative rejected — server-side filtering per keystroke.** A fresh `gh` fetch (~1 s) on every debounced keystroke makes live search unusable. The endpoint supplies the dataset once; the host filters in-memory.
+- **Alternative rejected — webview-side filtering in JS.** Would need full body shipped into the webview and duplicates/untestable logic. Host-side pure helpers (the issue's own skeleton) keep body off the webview and stay vitest-testable.
+- **Alternative rejected — per-issue `/api/issue` body fetch for search.** 200 round-trips per query; non-starter.
 
 ## Test Plan
 

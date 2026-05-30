@@ -11,3 +11,6 @@ Investigated the codebase before drafting the plan. Key findings:
 - Existing pure-helper pattern: `views/backlog-filter.ts` (vscode-free, vitest-tested). Issue's skeleton says extend it for multi-filter — so **filtering runs host-side in pure helpers**, webview sends debounced criteria, host posts back rows. Matches the stated test plan.
 
 Plan written to `codev/plans/920-vscode-editor-tab-webview-for-.md`. Central gate decisions surfaced: (1) body source — overview field+truncate vs dedicated endpoint; (2) Status dropdown in v1 (closed search is out-of-scope); (3) command name; (4) age format; (5) whether typed `area/...` filters by area.
+
+### Gate feedback round 1 (2026-05-30)
+Reviewer chose **Option B** for body source — a dedicated `GET /api/backlog-search` endpoint (fresh fetch, full body, no overview caching/truncation). `/api/overview` + `OverviewBacklogItem` untouched; filtering still host-side (endpoint hit once on open/refresh, not per keystroke). Decisions 3/4/5 confirmed as-recommended. Plan revised accordingly. **Decision 2 (Status: functional Open/Closed/All vs Open-only) still open** — Option B makes a functional Status dropdown cheap; awaiting reviewer's a/b pick. Gate still pending.
