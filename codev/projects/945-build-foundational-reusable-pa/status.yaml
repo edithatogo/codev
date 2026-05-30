@@ -1,0 +1,20 @@
+id: '945'
+title: build-foundational-reusable-pa
+protocol: spir
+phase: specify
+plan_phases: []
+current_plan_phase: null
+gates:
+  spec-approval:
+    status: pending
+  plan-approval:
+    status: pending
+  pr:
+    status: pending
+  verify-approval:
+    status: pending
+iteration: 1
+build_complete: false
+history: []
+started_at: '2026-05-30T23:09:36.579Z'
+updated_at: '2026-05-30T23:09:36.580Z'
