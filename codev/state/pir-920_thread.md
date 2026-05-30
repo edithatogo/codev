@@ -16,4 +16,15 @@ Plan written to `codev/plans/920-vscode-editor-tab-webview-for-.md`. Central gat
 Reviewer chose **Option B** for body source — a dedicated `GET /api/backlog-search` endpoint (fresh fetch, full body, no overview caching/truncation). `/api/overview` + `OverviewBacklogItem` untouched; filtering still host-side (endpoint hit once on open/refresh, not per keystroke). Decisions 3/4/5 confirmed as-recommended. Plan revised accordingly. **Decision 2 (Status: functional Open/Closed/All vs Open-only) still open** — Option B makes a functional Status dropdown cheap; awaiting reviewer's a/b pick. Gate still pending.
 
 ### Gate feedback round 2 (2026-05-30)
-Reviewer chose **(a)**: functional Status dropdown (Open/Closed/All), default Open. `/api/backlog-search` takes a `state` param → `gh issue list --state`. Note: Closed/All lift the PR-exclusion filter (closed issues usually have a merged PR). Status is the one criterion that re-hits the endpoint; all other filters stay host-side/instant. All five decisions now resolved. Plan finalized. Gate still pending approval.
+Reviewer chose **(a)**: functional Status dropdown (Open/Closed/All), default Open. `/api/backlog-search` takes a `state` param → `gh issue list --state`. Note: Closed/All lift the PR-exclusion filter (closed issues usually have a merged PR). Status is the one criterion that re-hits the endpoint; all other filters stay host-side/instant. All five decisions now resolved. Plan finalized.
+
+### Plan approved → implement phase (2026-05-30)
+Gate `plan-approval` approved. Advanced to `implement`. Building server endpoint + vscode webview panel.
+
+### Implement complete → dev-approval gate (2026-05-30)
+Implemented across server + vscode:
+- **Server data path**: `issue-list` github concept parameterized (`CODEV_ISSUE_STATE`, `CODEV_ISSUE_FIELDS`) — defaults unchanged so `/api/overview` stays lean; `IssueListItem.body?`; `fetchIssueList(..., {state, includeBody})`; new `GET /api/backlog-search` (`handleBacklogSearch`) — fresh fetch w/ body, open→PR-excluded set, closed/all→raw set; `BacklogSearchItem`/`BacklogSearchResponse` wire types; `TowerClient.searchBacklog`.
+- **VSCode**: pure `searchBacklog`/`formatAge` helpers in `backlog-filter.ts` (host-side filter/sort, sentinels for me/unassigned); new `webviews/backlog-search-panel.ts` (singleton WebviewPanel, CSP+nonce, CSS-vars-only theme, debounced criteria, refetch on Status change / OverviewCache heartbeat / open; body never crosses to webview); `codev.openBacklogSearch` command + `$(search)` title-bar icon in package.json + extension.ts.
+- **Tests**: 20+ new vitest cases for searchBacklog (text/scopes/AND/sort/no-mutate) + formatAge thresholds.
+
+Green: types+core+codev build ✓, vscode check-types ✓ / lint ✓ / esbuild bundle ✓, vscode unit 135 ✓, codev github/overview/tower-routes 296 ✓. issue-list.sh exec bit preserved. Awaiting `dev-approval` — reviewer runs the worktree to verify the panel across themes/result-sizes/filter combos.
