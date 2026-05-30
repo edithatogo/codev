@@ -131,8 +131,23 @@ leading hypothesis was a grey *color value*. The flicker disproves that (the
 colors render correctly before being overridden), so **`contributes.colors` is
 not part of this fix** — the borrowed `gitDecoration.*` tokens resolve fine.
 
+### Coloring stays automatic — no per-row work, no new colors
+
+This fix does **not** introduce manual per-row coloring or any new color
+definitions. `BuilderFileDecorationProvider.provideFileDecoration`
+(`builder-file-decoration.ts:35-46`) already colors every row automatically:
+VSCode queries it per URI, it looks up the status from the cache and returns the
+matching `gitDecoration.*ResourceForeground` ThemeColor. That provider is
+unchanged. Those theme-color *tokens* are registered by the built-in Git
+extension at activation and resolve from the active theme **regardless of whether
+Git's decorator fires on any given URI** (token definition ≠ decorator) — the
+flicker already proves they render. The synthetic-path change only stops Git's
+*competing* grey decoration; it does not change where our color comes from.
+
 ### What this does NOT touch (already correct)
 
+- The decoration provider — `provideFileDecoration` and the `DECO` color map are
+  unchanged; coloring remains automatic per status.
 - Provider registration — one `registerFileDecorationProvider` at
   `extension.ts:267`; no competing Codev provider.
 - Cache keying — `decorationFor`/`syncDecorations` key by `uri.toString()` via the
