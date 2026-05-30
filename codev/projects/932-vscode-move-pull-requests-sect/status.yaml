@@ -1,7 +1,7 @@
 id: '932'
 title: vscode-move-pull-requests-sect
 protocol: pir
-phase: review
+phase: verified
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -21,7 +21,7 @@ iteration: 1
 build_complete: true
 history: []
 started_at: '2026-05-29T23:15:39.691Z'
-updated_at: '2026-05-30T02:20:45.156Z'
+updated_at: '2026-05-30T02:21:01.279Z'
 pr_history:
   - phase: review
     pr_number: 933
