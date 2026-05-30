@@ -1,7 +1,7 @@
 id: '799'
 title: vscode-builder-changed-file-ro
 protocol: pir
-phase: review
+phase: verified
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -21,7 +21,7 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-05-30T00:23:40.118Z'
-updated_at: '2026-05-30T02:52:49.866Z'
+updated_at: '2026-05-30T02:52:59.161Z'
 pr_history:
   - phase: review
     pr_number: 942
