@@ -20,6 +20,7 @@ function makeBuilder(overrides: Partial<OverviewBuilder> = {}): OverviewBuilder 
     issueId: '42',
     issueTitle: 'Issue 42',
     phase: 'review',
+    protocolPhase: 'review',
     mode: 'strict',
     gates: {},
     worktreePath: '/path',

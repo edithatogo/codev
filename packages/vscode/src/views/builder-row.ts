@@ -62,8 +62,11 @@ export function timeSince(isoDate: string, now: number): string {
  *  - idle:    ` waiting on input [<elapsed> silent]`
  *  - active:  (empty — the phase prefix already covers it)
  *
- * Empty `phase` (rare transient init state) omits the prefix entirely — the row
- * reads `#<id> <title>` rather than carrying a literal `[] `.
+ * The prefix uses the coarse `protocolPhase` (`plan` / `implement` / `review`),
+ * NOT the collapsed `phase` field — `phase` prefers free-form plan sub-phase
+ * ids (e.g. `phase_0_rebase_onto_ci`) which are too low-level for the row.
+ * Empty `protocolPhase` (rare transient init state) omits the prefix entirely —
+ * the row reads `#<id> <title>` rather than carrying a literal `[] `.
  *
  * `isIdle` is injected by the caller (which already computes it via
  * `isIdleWaiting` for the icon + contextValue dispatch) rather than recomputed
@@ -79,6 +82,6 @@ export function builderRowLabel(b: OverviewBuilder, isIdle: boolean, now: number
     : isIdle
     ? ` waiting on input${idleTime}`
     : '';
-  const phasePrefix = b.phase ? `[${b.phase}] ` : '';
+  const phasePrefix = b.protocolPhase ? `[${b.protocolPhase}] ` : '';
   return `#${b.issueId ?? b.id} ${phasePrefix}${b.issueTitle ?? ''}${stateLabel}`;
 }

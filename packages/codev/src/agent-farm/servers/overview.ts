@@ -657,6 +657,7 @@ export function discoverBuilders(workspaceRoot: string): BuilderOverview[] {
         issueId: null,
         issueTitle: null,
         phase: '',
+        protocolPhase: '',
         mode: 'soft',
         gates: {},
         worktreePath,
@@ -714,6 +715,9 @@ export function discoverBuilders(workspaceRoot: string): BuilderOverview[] {
             phase: (parsed.currentPlanPhase && parsed.currentPlanPhase !== 'null')
               ? parsed.currentPlanPhase
               : parsed.phase,
+            // Coarse protocol phase, uncollapsed — high-level UIs (#810) read
+            // this so they never surface plan sub-phase ids.
+            protocolPhase: parsed.phase,
             mode: 'strict',
             gates: parsed.gates,
             worktreePath,
@@ -748,6 +752,7 @@ export function discoverBuilders(workspaceRoot: string): BuilderOverview[] {
         issueId,
         issueTitle: null,
         phase: '',
+        protocolPhase: '',
         mode: 'soft',
         gates: {},
         worktreePath,

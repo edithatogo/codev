@@ -36,3 +36,20 @@ Extracted two pure helpers into new `packages/vscode/src/views/builder-row.ts`:
 - `pnpm test:unit` ✓ 122 passed (9 new in `builder-row.test.ts`)
 
 Awaiting `dev-approval` gate.
+
+## Dev-approval feedback: phase prefix showed low-level plan sub-phase ids
+
+Reviewer caught that some rows displayed `[phase_0_rebase_onto_ci]` / `[phase_1_schema]` instead of `[implement]`. Root cause: `OverviewBuilder.phase` is **collapsed** in `overview.ts:714` — it prefers `current_plan_phase` (a free-form plan sub-phase id) over the protocol phase, because the **dashboard intentionally** matches that id against `planPhases` to render `(1/4)` sub-phase progress (`BuilderCard.tsx:23`). So `b.phase` is the wrong field for a high-level prefix.
+
+Considered a vscode-only heuristic (map `b.phase` → `implement` if it's a `planPhases` id) but rejected it: it relies on an unproven "sub-phase ⟹ implement" invariant and would silently rot. Reviewer agreed — went with exposing ground truth instead.
+
+### Fix: new `protocolPhase` wire field (expands beyond the vscode-only plan)
+- `packages/types/src/api.ts` — added `OverviewBuilder.protocolPhase` (= raw `parsed.phase`: plan/implement/review). `phase` documented as the collapsed/sub-phase field; unchanged.
+- `packages/codev/src/agent-farm/servers/overview.ts` — set `protocolPhase: parsed.phase` at the active push site, `''` at the two soft fallbacks. **`phase` left untouched → dashboard `(1/4)` unaffected.**
+- `builder-row.ts` — prefix reads `b.protocolPhase`.
+- Fixtures updated for the new required field: `builder-row.test.ts` (+ new test: sub-phase id in `phase` still renders `[implement]`), dashboard `BuilderCard`/`NeedsAttentionList` tests, codev e2e `spec-823` mock.
+
+### Checks (re-run)
+- vscode `check-types` ✓, `lint` ✓, `esbuild` ✓; `test:unit` ✓ 123 passed (10 in builder-row).
+- dashboard `tsc -b --force` ✓; `pnpm test` 314 passed, **1 pre-existing failure** in `scrollController.test.ts` (Issue #630, console.warn spy) — **proven unrelated**: fails identically with my entire diff stashed on a clean tree. Out of scope per PIR flaky-test guidance; noted here + for the review file. (Porch's `tests` check runs the codev package only, not dashboard, so it's green.)
+- codev-types + codev-core rebuilt (fresh-worktree `pnpm install` had left them without `dist/`).

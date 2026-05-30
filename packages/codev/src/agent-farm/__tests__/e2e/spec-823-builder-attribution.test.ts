@@ -64,6 +64,7 @@ function makeBuilder(
     issueId,
     issueTitle: `Test ${issueId}`,
     phase: 'implement',
+    protocolPhase: 'implement',
     mode: 'strict' as const,
     gates: {},
     worktreePath: `/tmp/.builders/${id}`,

@@ -25,6 +25,7 @@ function builder(overrides: Partial<OverviewBuilder>): OverviewBuilder {
     issueId: '810',
     issueTitle: 'builder row legibility',
     phase: 'implement',
+    protocolPhase: 'implement',
     mode: 'strict',
     gates: {},
     worktreePath: '/tmp/wt',
@@ -46,16 +47,32 @@ function builder(overrides: Partial<OverviewBuilder>): OverviewBuilder {
 }
 
 describe('builderRowLabel', () => {
-  it('active builder: phase prefix after the issue number, no trailing state label', () => {
-    const b = builder({ issueId: '882', issueTitle: 'refactor extract', phase: 'implement' });
+  it('active builder: protocol-phase prefix after the issue number, no trailing state label', () => {
+    const b = builder({
+      issueId: '882',
+      issueTitle: 'refactor extract',
+      protocolPhase: 'implement',
+    });
     expect(builderRowLabel(b, false, NOW)).toBe('#882 [implement] refactor extract');
+  });
+
+  it('renders the coarse protocolPhase, NOT the collapsed sub-phase id in `phase`', () => {
+    // The defining case: a builder mid-implementation has `phase` overwritten
+    // with a plan sub-phase id, but the prefix must show the protocol phase.
+    const b = builder({
+      issueId: '1190',
+      issueTitle: 'Audit and unify',
+      phase: 'phase_0_rebase_onto_ci',
+      protocolPhase: 'implement',
+    });
+    expect(builderRowLabel(b, false, NOW)).toBe('#1190 [implement] Audit and unify');
   });
 
   it('blocked builder: phase prefix + trailing "blocked on <label> [<elapsed>]"', () => {
     const b = builder({
       issueId: '791',
       issueTitle: 'Startup preflight',
-      phase: 'plan',
+      protocolPhase: 'plan',
       blocked: 'plan review',
       blockedSince: TWELVE_MIN_AGO,
     });
@@ -69,7 +86,7 @@ describe('builderRowLabel', () => {
     const b = builder({
       issueId: '794',
       issueTitle: 'Notification refactor',
-      phase: 'implement',
+      protocolPhase: 'implement',
       blocked: null,
       lastDataAt: SIX_MIN_AGO,
     });
@@ -78,13 +95,13 @@ describe('builderRowLabel', () => {
     );
   });
 
-  it('empty phase: no "[] " literal prefix', () => {
-    const b = builder({ issueId: '810', issueTitle: 'x', phase: '' });
+  it('empty protocolPhase: no "[] " literal prefix', () => {
+    const b = builder({ issueId: '810', issueTitle: 'x', protocolPhase: '' });
     expect(builderRowLabel(b, false, NOW)).toBe('#810 x');
   });
 
   it('falls back to id when issueId/issueTitle are null', () => {
-    const b = builder({ id: 'pir-999', issueId: null, issueTitle: null, phase: 'plan' });
+    const b = builder({ id: 'pir-999', issueId: null, issueTitle: null, protocolPhase: 'plan' });
     expect(builderRowLabel(b, false, NOW)).toBe('#pir-999 [plan] ');
   });
 });
