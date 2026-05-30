@@ -25,4 +25,8 @@ Implemented per plan:
 
 Worktree had no node_modules; ran `pnpm install --frozen-lockfile` + built core/types (their `.d.ts` are required for vscode check-types). Then: check-types ✓, lint ✓, vitest 120 passed (incl. 4 new files / 7 new tests).
 
-Awaiting `dev-approval` gate.
+dev-approval approved.
+
+## Review phase (2026-05-30)
+
+Wrote `codev/reviews/918-vscode-quick-pick-command-for-.md` (retrospective: Summary, Files Changed, Commits, Test Results, Architecture Updates [none — self-contained, reuses OverviewCache + viewBacklogIssue], Lessons Learned [none — established conventions], Things to Look At, How to Test Locally). No arch.md / lessons-learned.md edits needed. Opening PR next; porch verify runs single-pass 3-way consult.
