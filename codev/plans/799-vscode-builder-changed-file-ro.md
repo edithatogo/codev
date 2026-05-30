@@ -68,6 +68,33 @@ resolve to a real tracked/ignored file inside an open repo, `getRepository(uri)`
 returns undefined, Git's provider returns nothing, and ours becomes the sole
 colored decoration — winning by default.
 
+### Confirming evidence (the "sometimes it's correct" case)
+
+Reviewers occasionally see the rows render *correctly* and stably. Verified why:
+each `.builders/<id>/` worktree is **its own git repository**, and the main repo
+**gitignores `.builders/`**:
+
+- main repo: `git check-ignore` → `.gitignore:3:.builders/` matches
+  `.builders/pir-799/codev/plans/799-…md` (ignored).
+- worktree repo: `git -C .builders/pir-799 rev-parse --show-toplevel` returns the
+  worktree itself, and the same file is ` M` (tracked & modified) there.
+
+VSCode's Git extension associates a path with the **closest** containing repo. So:
+
+- When VSCode **has** detected the nested worktree as a repo, these paths resolve
+  to the *worktree* repo, where they're modified/added (not ignored) → Git applies
+  its modified/added color (which matches ours) → **stable, correct**. (Notably,
+  in this state the color may actually be coming from *Git's worktree-repo
+  decoration*, not ours — they coincide because we reuse the same tokens.)
+- When VSCode has **not** (fresh spawn, scan depth/timing, Tower restart), the path
+  resolves to the *main* repo, where `.builders/` is ignored → Git's grey
+  "ignored" decoration wins the equal-weight merge → **grey / flicker**.
+
+This is exactly the repo-detection sensitivity the issue body described, and it
+confirms the path-based mechanism. The synthetic-path fix makes `getRepository`
+return undefined for **both** repos, so Git contributes nothing in *either* state
+and our provider's color applies deterministically — eliminating the flip.
+
 ### Why the prior unit tests passed while the bug shipped
 
 `builder-file-tree-item.test.ts` asserts only that the scheme is non-`file`. It
