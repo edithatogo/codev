@@ -47,3 +47,26 @@ Targeted source investigation (background agent, microsoft/vscode) confirmed, hi
 Live confirmation at dev-approval: disable the built-in Git extension → flicker should stop on the *current* build (proves Git is the overrider). Then verify the fix gives stable color with Git enabled.
 
 Recommitting plan v2.
+
+### plan-approval APPROVED → implement phase
+
+Plan approved (after reviewer Q&A that strengthened it: the flicker symptom, the "works in codev not shannon" question — both explained by the path→repo→decoration chain and worktree-as-own-repo detection state; the fix is robust to all of it).
+
+Pre-implementation de-risking confirmed:
+- No menu item uses the `builder-file` contextValue → no built-in fsPath right-click actions to break.
+- `codev.openBuilderFileDiff` (extension.ts:626-631) uses `arg.plan`/`worktreePath`/`baseRef`, never `resourceUri`/`fsPath` → synthetic path is safe for the diff command.
+
+Implementing: synthetic-path `builderFileResourceUri` + updated doc comments + regression tests.
+
+### Implement complete — pausing at dev-approval
+
+Change (1 source file + 1 test file):
+- `builder-file-tree-item.ts`: `builderFileResourceUri` now returns `vscode.Uri.from({ scheme: BUILDER_FILE_SCHEME, path: '/'+rel, query: 'wt='+encodeURIComponent(worktreePath) })` — synthetic path so Git's path-based `getRepository` returns undefined and it never decorates these rows. Doc comments rewritten to the real (path-based, not scheme-based) mechanism.
+- `builder-file-tree-item.test.ts`: replaced scheme-only assertions with ones that catch this bug class — path is NOT Git-resolvable (no worktree path), basename preserved (icon), worktree recoverable from query, unique per builder; plus a `BuilderFileDecorationProvider` suite asserting a defined color+badge per status.
+
+Verification (correct pnpm commands — porch's generic `npm run build`/`npm test` checks target the CLI package and fail at the monorepo root, unrelated to this change):
+- Fresh worktree had NO node_modules (no `worktree.postSpawn` configured) → `pnpm install` + build upstream `@cluesmith/codev-types`/`-core`.
+- `pnpm --filter codev-vscode compile` (check-types + lint + esbuild) ✓
+- `pnpm --filter codev-vscode test` → **105 passing**, incl. all #799 regression tests ✓
+
+Pausing at `dev-approval`. Reviewer's killer move: run the Extension Dev Host with the Git extension enabled and confirm builder file rows are stably colored (no flash-then-grey); the disable-Git-extension test on the OLD build confirms Git was the overrider.
