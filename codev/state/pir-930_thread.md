@@ -57,3 +57,13 @@ dev-approval approved (reviewer asked to move `[new]` before the `#id` — done 
 5ff73ac4). Wrote retrospective `codev/reviews/930-vscode-mark-recently-created-b.md`.
 No arch/lessons file changes (additive, follows existing conventions). Opening PR
 next; porch verify runs the single 3-way advisory consult.
+
+### Consultation (single pass)
+
+Verdicts: gemini=REQUEST_CHANGES, codex=REQUEST_CHANGES, claude=APPROVE.
+Both RC's = the `[new]` placement-before-id "deviates from plan". Not a defect —
+it was the reviewer's explicit dev-approval-gate request (5ff73ac4); Claude
+recognized it as gate-approved. Real kernel = plan↔code drift. Disposition: no
+code change; reconciled the plan to the shipped `[new] #id` order, and tightened
+the review's "How to Test Locally" with concrete EDH steps (codex's 2nd point).
+Escalating to human at pr gate.

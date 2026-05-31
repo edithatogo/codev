@@ -67,6 +67,28 @@ passed once core+types were built. This is pre-existing worktree build-ordering
 behavior (confirmed via `git stash` that the `status.ts`/`workspace.ts`/
 `terminal-adapter.ts` errors exist without this diff), not introduced here.
 
+## 3-Way Consultation Disposition (PIR single-pass)
+
+Verdicts: **gemini=REQUEST_CHANGES, codex=REQUEST_CHANGES, claude=APPROVE**
+(full text in `codev/projects/930-vscode-mark-recently-created-b/930-review-iter1-*.txt`).
+PIR consults once — this was not independently re-reviewed, so the human is the
+final check at the `pr` gate.
+
+- **`[new]` placement before `#id` (gemini + codex)** — *not a code defect.*
+  Both flagged that the shipped `[new] #<id> <title>` order deviates from the
+  plan's original `#<id> [new] <title>`. This was a **deliberate revision the
+  reviewer requested at the `dev-approval` gate** (commit `5ff73ac4`); Claude's
+  APPROVE explicitly recognized it as gate-approved. The legitimate kernel was
+  **plan↔code drift**: the approved plan still documented the old order. Fixed
+  by reconciling the plan to the shipped order (no code change — the placement
+  is the human's gate decision). Gemini's secondary note that leading the row
+  with `[new]` offsets the `#id` left-alignment for fresh rows is the inherent,
+  accepted tradeoff of the requested placement.
+- **"How to Test Locally" too generic for an extension UI change (codex)** —
+  *valid, addressed.* Rewrote that section with concrete Extension Development
+  Host steps (build subpath deps → `pnpm compile` → F5 → open Backlog tree)
+  instead of the web-oriented "Run Dev Server" instruction.
+
 ## Things to Look At During PR Review
 
 - **Marker coexists with the assignment icon** (`backlog.ts:124-130`): the
@@ -95,9 +117,21 @@ behavior (confirmed via `git stash` that the `status.ts`/`workspace.ts`/
 
 ## How to Test Locally
 
-- **View diff**: VSCode sidebar → right-click builder `pir-930` → **View Diff**
-- **Run dev server**: VSCode sidebar → **Run Dev Server**, or `afx dev pir-930`
-- **What to verify**:
+This is a VSCode **extension UI** change (the Backlog tree in the Codev
+sidebar), so verify it in the Extension Development Host rather than a web dev
+server:
+
+1. **View diff**: VSCode sidebar → right-click builder `pir-930` → **View Diff**.
+2. **Build the extension**: from the worktree, `pnpm --filter @cluesmith/codev-core build`
+   and `pnpm --filter @cluesmith/codev-types build` (subpath deps), then in
+   `packages/vscode` run `pnpm compile`.
+3. **Launch the Extension Development Host**: open `packages/vscode` in VSCode
+   and press **F5** (Run → Start Debugging), or pick the "Run Extension" launch
+   config. A second VSCode window opens with the dev build of the extension.
+4. **Open the Backlog tree**: in the EDH window, open the Codev sidebar and
+   expand the **Backlog** view (connect it to a Tower workspace if prompted, so
+   real backlog items load).
+5. **What to verify**:
   - A freshly-filed issue (< 24h) leads with `[new]` before its `#id`; hovering
     shows `Created <Xh ago>`.
   - A new issue **assigned to you** keeps its `account` icon **and** shows

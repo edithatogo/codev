@@ -29,14 +29,20 @@ clobbering the existing icon" problem:
 
 | #810 decision | #930 application |
 |---|---|
-| Bracket-text **prefix after the issue number** (`#<id> [<phase>] <title>`) | `#<id> [new] <title>` — `[new]` prefix after the id, before the title |
+| Bracket-text **prefix** (`#<id> [<phase>] <title>`) | `[new] #<id> <title>` — `[new]` leads the row label |
 | Prefix chosen because **truncation cuts the END, not the start** | `[new]` stays visible on narrow sidebars / long titles |
 | Prefix is **monochrome bracket text**; icons carry color | `[new]` is plain bracket text, no color |
 | **Icons untouched** where they already carry info | `account` / `issues` icons fully preserved |
 | Small **extracted, unit-tested helper with a fallback** | pure `recencyPrefix(createdAt, now)` → `'[new] '` or `''`, vitest-tested |
 
 The result coexists with assignment: a new+assigned row reads
-`👤 #911 [new] <title>  …  assigned to you` — account icon kept, `[new]` added.
+`👤 [new] #911 <title>  …  assigned to you` — account icon kept, `[new]` added.
+
+> **Revision (dev-approval gate):** the prefix was originally drafted to sit
+> *between* the id and title (`#911 [new] <title>`). At the `dev-approval` gate
+> the reviewer asked to move it to **lead the row** (`[new] #911 <title>`), so
+> the marker is the leftmost token. This plan, the implementation, and the
+> review file all reflect the leading-prefix placement.
 
 ## Proposed Change
 
@@ -70,10 +76,10 @@ deterministic — the existing `relativeTime` in `view-artifact.ts:135` hardcode
 Compute `const now = Date.now()` once per row (render-time "now", satisfying
 the "re-evaluated on every render" requirement). Then:
 
-- **Label**: insert the `[new]` prefix between the issue number and the title.
+- **Label**: lead the row with the `[new]` prefix (dev-approval-gate revision).
   Current label is
   `` `#${item.id} ${item.title}${author}` ``; becomes
-  `` `#${item.id} ${recencyPrefix(item.createdAt, now)}${item.title}${author}` ``.
+  `` `${recencyPrefix(item.createdAt, now)}#${item.id} ${item.title}${author}` ``.
   When not recent (or `createdAt` missing/malformed) `recencyPrefix` returns
   `''`, so the label is byte-identical to today.
 - **Icons unchanged**: keep `account` (assigned) / `issues` (otherwise). No
