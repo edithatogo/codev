@@ -6,12 +6,18 @@
   alongside the version bump.
 
   Per-PR architect workflow:
-    1. cd worktrees/changelog && git fetch && git rebase origin/main
+    1. cd worktrees/changelog                       # no fetch / no rebase — branches diverge by design
     2. Add the CHANGELOG entry to packages/vscode/CHANGELOG.md under [Unreleased]
        (add the [Unreleased] heading if it's missing — post-release state removes it)
     3. Add the matching release-notes entry to this file under the right section
        (substantive change → its own ## section; small item → Polish; non-vscode → Other fixes)
-    4. Commit both files together; push docs/vscode-changelog
+    4. Commit both files together; plain `git push` (fast-forward, no force)
+
+  Why no rebase: main moves with code merges, docs/vscode-changelog moves with
+  changelog/release-notes entries — neither branch touches the other's files
+  between releases, so they diverge intentionally and reconcile at release time
+  via merge (no conflicts expected). Rebasing on every PR merge rewrites this
+  branch's commit hashes and forces force-pushes — pointless churn.
 -->
 
 <!-- SUMMARY (filled at release time)
