@@ -1,0 +1,72 @@
+# Unreleased
+
+<!--
+  Scratch accumulator for the next release's notes. Renamed to
+  vX.Y.Z-<codename>.md at release time (via `git mv`), merged into main
+  alongside the version bump.
+
+  Per-PR architect workflow:
+    1. cd worktrees/changelog && git fetch && git rebase origin/main
+    2. Add the CHANGELOG entry to packages/vscode/CHANGELOG.md under [Unreleased]
+       (add the [Unreleased] heading if it's missing — post-release state removes it)
+    3. Add the matching release-notes entry to this file under the right section
+       (substantive change → its own ## section; small item → Polish; non-vscode → Other fixes)
+    4. Commit both files together; push docs/vscode-changelog
+-->
+
+<!-- SUMMARY (filled at release time)
+A one-paragraph framing of what shipped in this release. Lead with the biggest story.
+-->
+
+<!-- SUBSTANTIVE SECTIONS (added per PR as they land — one ## per significant change or themed cluster)
+
+Section template:
+
+  ## <Title> (#<issue>, PR #<pr>)
+
+  <One or two narrative paragraphs explaining what changed, why, and any
+  notable nuance. Use the v3.1.4 / v3.1.6 release notes as voice references.>
+
+-->
+
+## Polish
+
+<!--
+Smaller vscode items go here as bullets. Same shape as CHANGELOG bullets but
+with PR/issue citations and slightly more context:
+
+  - **<Short bold headline>** (#<issue>, PR #<pr>). <One paragraph of context.>
+
+Move out to its own ## section if the entry grows past ~3 sentences.
+-->
+
+## Other fixes (dashboard, porch, infrastructure)
+
+<!--
+Non-vscode work that ships in the npm release goes here. Same bullet shape
+as Polish above.
+-->
+
+## Breaking changes
+
+None.
+
+## Install
+
+```bash
+npm install -g @cluesmith/codev@X.Y.Z
+afx tower stop && afx tower start
+```
+
+The VS Code extension ships separately via the Marketplace — `Codev` extension by `cluesmith.codev`, version `X.Y.Z`.
+
+## Contributors
+
+<!--
+Filled at release time. Use the topic-first voice from v3.1.6:
+
+  - **<Name> (@<handle>)** — <topic>: <what they did across which PRs>.
+  - Builders working under AIR / BUGFIX / PIR / SPIR protocols across the PRs in this release.
+
+Source: git log v<prev>..HEAD --merges --pretty=format:"%h %an %s" tells you who landed what.
+-->
