@@ -27,3 +27,27 @@ Investigation findings:
 
 Plan written to `codev/plans/926-vscode-area-header-roll-up-ico.md`. Awaiting
 plan-approval gate.
+
+## Plan-gate discussion (resolved)
+
+Long design back-and-forth at the plan gate. Net outcome: **ship both views'
+rollups — the issue's original both-views design.**
+
+- Briefly descoped the Builders rollup as "redundant/noisy," then reversed:
+  those objections apply equally to the Backlog rollup we're keeping, so an
+  asymmetry (Backlog headers with dots, Builders without) would just look
+  unfinished. Consistency wins → both headers always carry a dot from the
+  shared icon vocabulary, computed per-view.
+- Confirmed the data model: issues with a builder are matched by `issueId`
+  (`overview.ts` `activeBuilderIssues`) and filtered out of the backlog by
+  `spawnableBacklog` (`!hasBuilder`). So the Backlog rollup must read
+  `data.builders` keyed by `.area`, not the visible issues (which are
+  builder-less by construction).
+- Filed **#948** (area/vscode): keep in-progress issues in the Backlog with the
+  builder's state icon instead of filtering them out — dissolves #926's known
+  limitation, but changes Backlog semantics + breaks dashboard parity, so it's
+  a deliberate follow-up, not folded into #926.
+- Backlog rollup stays binary (green/grey); Builders rollup is worst-of-three
+  (bell/comment-discussion/circle-filled). Tooltip carries counts in both.
+
+Plan rewritten to cover both views again.
