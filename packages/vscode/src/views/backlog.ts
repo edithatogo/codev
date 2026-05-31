@@ -6,6 +6,7 @@ import type { OverviewCache } from './overview-data.js';
 import { BacklogGroupTreeItem, BacklogTreeItem } from './backlog-tree-item.js';
 import { AreaGroupExpansionStore } from './area-group-expansion.js';
 import { filterMine, spawnableBacklog } from './backlog-filter.js';
+import { recencyPrefix, relativeAge } from './backlog-recency.js';
 
 // Re-export so existing call sites (extension.ts, src/test/backlog.test.ts)
 // keep their import path. The definition lives in `backlog-filter.ts` so
@@ -120,8 +121,15 @@ export class BacklogProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     const me = data.currentUser?.toLowerCase();
     const assigned = !!me && !!item.assignees?.some(a => a.toLowerCase() === me);
     const author = item.author ? ` @${item.author}` : '';
-    const ti = new BacklogTreeItem(item.id, item.url, item.title, `#${item.id} ${item.title}${author}`);
-    ti.tooltip = item.url;
+    // Render-time "now": items aging past the 24h window lose `[new]` on the
+    // next refresh, no persistent state (#930). The `[new]` prefix leads the
+    // row (before the issue number) and coexists with the assignment icon
+    // (following #810).
+    const now = Date.now();
+    const prefix = recencyPrefix(item.createdAt, now);
+    const ti = new BacklogTreeItem(item.id, item.url, item.title, `${prefix}#${item.id} ${item.title}${author}`);
+    const age = relativeAge(item.createdAt, now);
+    ti.tooltip = age ? `${item.url}\nCreated ${age}` : item.url;
     ti.contextValue = 'backlog-item';
     ti.iconPath = new vscode.ThemeIcon(assigned ? 'account' : 'issues');
     if (assigned) { ti.description = 'assigned to you'; }
