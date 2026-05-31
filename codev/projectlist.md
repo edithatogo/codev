@@ -233,6 +233,11 @@ Projects currently in development (conceived through committed), sorted by prior
 
 ```yaml
 releases:
+  - version: "v3.1.6"
+    name: "Jacobean"
+    status: released
+    target_date: "2026-05-31"
+    notes: "VSCode-extension-heavy release plus one substantive cross-package rework. VSCode Backlog UX overhaul: mine-only-by-default + show-all eye-icon toggle (#809/#910), title-count reflects what's visible (#911/#914), 'Codev: Search Backlog...' Quick Pick from the command palette (#918/#938), area/* grouping in Backlog and Builders trees with UPPERCASE headers (#811/#886, #818/#890, #885/#893, #895/#897), sidebar default order Backlog above Pull Requests (#932/#940), Reference Issue paste includes title (#808/#899). VSCode Builders tree clarity: [<phase>] prefix on every row, gate-specific icons (spec/plan/dev/PR/verify each get a unique glyph) on blocked builders (#810/#941); Open Spec / Open Review row actions (#793/#908). Cross-package: SPIR #927 / PR #928 Needs Attention surface rework keys PR-readiness on the universal pr gate across all protocols, retires pr_ready_for_human field + recentlyMergedIssueIds projection, adds verify-approval to shared GATE_LABELS (which lights up the verify-review icon in VSCode); prerequisite Bugfix #887 / PR #888 gave BUGFIX a pr gate to close the v3.1.4 timing gap. SCM colors on builder file rows fixed for real this time (#799/#942) — v3.1.4's fix shipped against the wrong theory (Git decorator gates on URI scheme — it doesn't, matches by repository path), new fix uses a synthetic resourceUri path Git's repository lookup ignores. Other fixes: dashboard styling for dev-approval (#931/#935), dashboard skips stale post-merge prReady rows (#901/#902), Dashboard E2E flake fix (#828/#917), codev doctor warns on missing pr gate (#943/#944), porch done idempotent (#904), parseArea helper extracted to codev-core (#819/#876), architect docs treat area/* as the organizing axis (#909/#912), gemini consult lane bumped (#878/#879), scaffolding gitignores .architect-role.md (#880/#881). v3.1.5 was tagged as a lockstep version bump but never published; v3.1.6 supersedes it."
   - version: "v3.1.4"
     name: "Jacobean"
     status: released
