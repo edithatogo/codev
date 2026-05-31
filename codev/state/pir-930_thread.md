@@ -50,3 +50,10 @@ status.ts/workspace.ts/terminal-adapter.ts errors exist without my diff), not
 caused by this change.
 
 Awaiting `dev-approval` gate.
+
+### Review phase
+
+dev-approval approved (reviewer asked to move `[new]` before the `#id` — done in
+5ff73ac4). Wrote retrospective `codev/reviews/930-vscode-mark-recently-created-b.md`.
+No arch/lessons file changes (additive, follows existing conventions). Opening PR
+next; porch verify runs the single 3-way advisory consult.
