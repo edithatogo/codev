@@ -34,14 +34,14 @@ but the rollup *function* differs per view because the children differ:
   green filled dot vs. grey outline dot.
 - **Builders children are builders** → worst-of-three rollup over the three
   builder-row states (blocked / idle / active), reusing the exact icons + color
-  tokens already on individual builder rows (`builders.ts:206-210`).
+  tokens already on individual builder rows (`builders.ts:202-206`).
 
 No new colors or glyphs are introduced — every icon keeps its single existing
 meaning. The detail (counts) lives in the header tooltip.
 
 This is purely a VSCode-extension, client-side change. The overview payload
-already carries `builders[]` (each with `.area`, `api.ts:182`) alongside
-`backlog[]` (each with `.area`, `api.ts:222`), so both rollups are computed in
+already carries `builders[]` (each with `.area`, `api.ts:197`) alongside
+`backlog[]` (each with `.area`, `api.ts:237`), so both rollups are computed in
 the tree providers from data already in the `OverviewCache`. No server /
 overview-payload change is needed.
 
@@ -69,18 +69,35 @@ targets.
 
 In `builders.ts`, the provider already knows each group's builders and already
 classifies `isBlocked` / `isIdle` per builder (via `isIdleWaiting`,
-`builders.ts:168`). Compute a `{ blocked, idle, active }` count triple per group
+`builders.ts:169`). Compute a `{ blocked, idle, active }` count triple per group
 and pass it into `BuilderGroupTreeItem`; the subclass picks the **worst** state
-present and reuses the row icons from `builders.ts:206-210`:
+present:
 
 | If the area has… | Icon | Color token |
 |---|---|---|
-| any **blocked** builder | `bell` | `notificationsWarningIcon.foreground` (yellow) |
+| any **blocked** builder | `bell` (generic "attention pending") | `notificationsWarningIcon.foreground` (yellow) |
 | else any **idle/silent** builder | `comment-discussion` | `notificationsInfoIcon.foreground` (blue) |
 | else (all active) | `circle-filled` | `testing.iconPassed` (green) |
 
-This matches the existing within-group sort order (blocked → idle → active), so
-the header icon always equals the topmost row's icon in the group.
+**Note on the blocked icon (drift caught at rebase):** individual *blocked rows*
+no longer use a fixed `bell` — `builders.ts:203` now calls
+`gateIconFor(b.blockedGate)` (`builder-row.ts:35`), which maps each gate to a
+distinct shape (`book` / `checklist` / `code` / `git-pull-request` / `verified`,
+`bell` fallback) while holding the color uniform warning-yellow ("shape = which
+review, color = the constant attention signal"). The **group header
+deliberately uses the generic `bell`**, not `gateIconFor` of any one builder: a
+group can hold several blocked builders at *different* gates, so surfacing one
+builder's gate shape on the header would misread (it'd look like the whole area
+needs a plan review when only one builder does). The yellow color is the
+group-level signal; the specific gate shapes live on the rows when expanded.
+Consequence: for a blocked group the header icon (`bell`) intentionally **does
+not** pixel-match the topmost row's gate-specific icon — that earlier "header
+equals the top row" claim is dropped. The idle (`comment-discussion`) and active
+(`circle-filled`) headers still match their rows exactly, since those row icons
+aren't per-builder-specific.
+
+The worst-of ordering still mirrors the within-group sort (blocked → idle →
+active), so the header's *severity* always matches the topmost row's severity.
 
 Tooltip: `"<b> blocked · <i> waiting · <a> active"` — all three segments shown
 (matching the issue's example) so the format is predictable regardless of which
@@ -93,48 +110,58 @@ the consistency the scope decision is built on.
 
 ### Rollup logic placement & testability
 
-Mirror the existing exported-pure-helper pattern (`orderForDisplay`,
-`spawnableBacklog`) that's unit-tested directly:
+Put each rollup as a **pure, vscode-free helper** in the existing
+vscode-free modules so it's unit-testable under the lighter vitest `__tests__/`
+harness — the established pattern (`backlog-filter.ts` and `builder-row.ts`
+exist for exactly this reason; `spawnableBacklog`, `gateIconFor`, and
+`builderRowLabel` already live there and are tested under
+`__tests__/backlog-filter.test.ts` / `__tests__/builder-row.test.ts`):
 
-- `backlog.ts` — add exported `activeBuilderCountByArea(builders): Map<string, number>`.
-- `builders.ts` — add exported `rollupGroupState(builders, now): { blocked: number; idle: number; active: number }` (reuses `isIdleWaiting`).
+- `backlog-filter.ts` — add `activeBuilderCountByArea(builders): Map<string, number>`.
+- `builder-row.ts` — add `rollupGroupState(builders, now): { blocked: number; idle: number; active: number }` (reuses `isIdleWaiting` from `@cluesmith/codev-core`, already vscode-free).
 
-The providers call these and feed the result into the subclass constructors. The
-**icon/tooltip assignment lives in the subclasses** (`BacklogGroupTreeItem`,
-`BuilderGroupTreeItem`), per the issue's explicit instruction — *not* in the
-shared `AreaGroupTreeItem` base, because the rollup differs per view.
+The providers (`backlog.ts`, `builders.ts`) import these and feed the result
+into the subclass constructors. The **icon/tooltip assignment lives in the
+subclasses** (`BacklogGroupTreeItem`, `BuilderGroupTreeItem`), per the issue's
+explicit instruction — *not* in the shared `AreaGroupTreeItem` base, because the
+rollup differs per view.
 
 Both providers' degenerate single-`Uncategorized` flatten branch renders no
 headers, so it needs no rollup and is untouched.
 
 ## Files to Change
 
+- `packages/vscode/src/views/backlog-filter.ts` (vscode-free)
+  - Add `activeBuilderCountByArea(builders: OverviewBuilder[]): Map<string, number>`.
 - `packages/vscode/src/views/backlog.ts`
-  - Add exported `activeBuilderCountByArea(builders: OverviewBuilder[]): Map<string, number>`.
-  - In `rootChildren()` (L96-102), compute the map once from `data.builders` and
-    pass each group's count into
+  - In `rootChildren()` (L96-103), call `activeBuilderCountByArea(data.builders)`
+    once and pass each group's count into
     `new BacklogGroupTreeItem(g.area, g.items.length, state, activeCount)`.
 - `packages/vscode/src/views/backlog-tree-item.ts`
   - `BacklogGroupTreeItem` constructor gains `activeBuilderCount: number`; sets
     `this.iconPath` (circle-filled/green vs circle-outline/grey) and
     `this.tooltip`.
+- `packages/vscode/src/views/builder-row.ts` (vscode-free)
+  - Add `rollupGroupState(builders: OverviewBuilder[], now: number): { blocked: number; idle: number; active: number }` (reuses `isIdleWaiting`).
 - `packages/vscode/src/views/builders.ts`
-  - Add exported `rollupGroupState(builders, now): { blocked; idle; active }`.
-  - In `rootChildren()` (L141-151), compute the triple per group and pass into
+  - In `rootChildren()` (L140-152), call `rollupGroupState(g.items, now)` per
+    group and pass the triple into
     `new BuilderGroupTreeItem(g.area, g.items.length, state, rollup)`.
 - `packages/vscode/src/views/builder-tree-item.ts`
   - `BuilderGroupTreeItem` constructor gains the rollup-counts param; sets
-    `this.iconPath` (worst-of bell/comment-discussion/circle-filled) and
-    `this.tooltip`.
+    `this.iconPath` (worst-of `bell`/`comment-discussion`/`circle-filled` — the
+    blocked case uses the generic `bell`, not `gateIconFor`; see the Builders
+    subsection) and `this.tooltip`.
 - `packages/vscode/src/views/area-group-tree-item.ts` — **no change** (rollup
   stays in subclasses, per the issue).
-- Tests:
-  - `packages/vscode/src/test/backlog.test.ts` — unit-test
+- Tests (vitest, under `src/__tests__/`):
+  - `packages/vscode/src/__tests__/backlog-filter.test.ts` — unit-test
     `activeBuilderCountByArea` (empty, single area, multi-area, multiple builders
     same area summed, Uncategorized).
-  - `packages/vscode/src/test/builders.test.ts` — unit-test `rollupGroupState`
-    (all-active → active; one idle → idle beats active; one blocked → blocked
-    beats idle+active; mixed → counts correct).
+  - `packages/vscode/src/__tests__/builder-row.test.ts` — unit-test
+    `rollupGroupState` (all-active → active; one idle → idle beats active; one
+    blocked → blocked beats idle+active; mixed → counts correct). This file
+    already exists (tests `gateIconFor` / `builderRowLabel`) — extend it.
 
 ## Risks & Alternatives Considered
 
@@ -172,21 +199,26 @@ headers, so it needs no rollup and is untouched.
 
 ## Test Plan
 
-- **Unit (the existing `src/test` suite):**
+- **Unit (vitest `__tests__/` harness):**
   - `activeBuilderCountByArea`: empty → empty map; two areas → correct per-area
     counts; multiple builders same area → summed; Uncategorized counted.
   - `rollupGroupState`: all active → `{0,0,n}`; one idle → idle beats active;
     one blocked → blocked beats idle+active; mix → counts correct.
-  - Run: `cd packages/vscode && pnpm test`.
-- **Build:** `pnpm --filter @cluesmith/codev-vscode build` (and `pnpm build`
-  from root) — confirm no TS errors from the new constructor params.
+  - Run: `cd packages/vscode && pnpm test:unit`.
+- **Type-check / compile:** `cd packages/vscode && pnpm check-types` (tsc
+  `--noEmit`) catches TS errors from the new constructor params; `pnpm compile`
+  additionally lints + esbuilds. (The vscode extension is its own package — it is
+  *not* part of the root `pnpm build`, which covers core/codev/dashboard.)
 - **Manual (at the `dev-approval` gate, in the VSCode Extension Host):**
   - Backlog: an area with a spawnable issue **and** a live builder → green
     filled dot; an area with only spawnable issues → grey outline dot. Hover →
     builder count.
-  - Builders: a group with a builder blocked at a gate → yellow bell; worst-idle
-    group → blue comment-discussion; all-active group → green filled dot. Header
-    icon matches the topmost row. Hover → "b blocked · i waiting · a active".
+  - Builders: a group with a builder blocked at a gate → yellow `bell` on the
+    header (generic), regardless of which gate; worst-idle group → blue
+    comment-discussion; all-active group → green filled dot. Hover → "b blocked ·
+    i waiting · a active". Note the header's blocked `bell` intentionally differs
+    from the expanded row's gate-specific shape (e.g. `checklist` for
+    plan-approval) — only the severity/color matches, by design.
   - Both: collapse/expand still works; single-`Uncategorized` repos render flat
     rows with no header (unchanged); both views' headers consistently carry a
     dot.

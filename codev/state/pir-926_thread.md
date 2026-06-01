@@ -51,3 +51,26 @@ rollups — the issue's original both-views design.**
   (bell/comment-discussion/circle-filled). Tooltip carries counts in both.
 
 Plan rewritten to cover both views again.
+
+## Rebase on main + accuracy pass
+
+Rebased onto origin/main (4 commits replayed clean; #920 + #791 had landed).
+Re-verified every plan reference against the rebased code and fixed drift:
+
+- **Blocked-row icon is no longer a hardcoded `bell`.** `builders.ts:203` now
+  calls `gateIconFor(b.blockedGate)` (`builder-row.ts:35`) → gate-specific shape
+  (book/checklist/code/git-pull-request/verified, bell fallback), color held
+  uniform yellow. Plan's Builders rollup updated: header uses the **generic
+  `bell`** for any-blocked (a group can hold builders at different gates;
+  surfacing one gate's shape would misread). Dropped the "header pixel-matches
+  the topmost row" claim — only severity/color matches for blocked.
+- **Pure helpers relocated to the vscode-free modules** matching the
+  established pattern: `activeBuilderCountByArea` → `backlog-filter.ts`,
+  `rollupGroupState` → `builder-row.ts`. Tested under vitest `__tests__/`
+  (`backlog-filter.test.ts`, `builder-row.test.ts`), not the Electron
+  `src/test/` suite.
+- **Fixed test/build commands**: unit = `pnpm test:unit` (vitest); type-check =
+  `pnpm check-types`. The bogus `pnpm --filter @cluesmith/codev-vscode build`
+  (no such script; pkg is `codev-vscode`, not part of root `pnpm build`) removed.
+- Refreshed shifted line refs (api.ts area fields → 197/237; builders icon →
+  202-206; rootChildren blocks → backlog 96-103 / builders 140-152).
