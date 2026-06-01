@@ -35,6 +35,20 @@ Section template:
 
 -->
 
+## Codev CLI preflight on extension activation (#791, PR #955)
+
+The extension now verifies, on every startup, that the `codev` CLI is installed on `PATH` and at a version at least as new as itself. The probe is fire-and-forget and bounded to 400ms so activation isn't blocked; the result caches for the session. Until #791 this dependency was implicit — a missing or out-of-date CLI surfaced only as a confusing "not connected to Tower" error from deep in the activation path, with no actionable guidance.
+
+Three outcomes branch the UX:
+
+- **OK** — no toast, no walkthrough. A new **Codev CLI** row in the sidebar's Status view shows the detected version with a green check.
+- **Missing** — the new `Get started with Codev` walkthrough opens automatically (once per workspace), with three steps: detect (`codev --version`), install (`npm install -g @cluesmith/codev`, with Node ≥20 prereq surfaced), and verify.
+- **Outdated** — a warning notification offers `Update via npm` (one-click install in an integrated terminal, with a re-verify that fires only when *that specific terminal* closes with a success exit code), `Open Install Docs`, or dismiss.
+
+The Status row carries a recheck button on `missing`/`outdated` states (intentionally not on the ≤400ms `pending` probe window — a recheck button there is meaningless and would risk a second concurrent `codev --version`). A new `Codev: Recheck CLI` command exposes the same recovery path from the palette. Dismissing the prompt leaves Codev commands registered but no-op'ing with a single "run setup" toast rather than crashing — guarded commands fall through cleanly until the CLI is sorted out.
+
+The walkthrough's Verify step completion keys off `onContext:codev.cliReady`, so a failed recheck doesn't falsely tick the step — only a genuinely successful preflight does.
+
 ## Polish
 
 <!--
