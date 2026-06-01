@@ -638,7 +638,7 @@
     "walkthroughs": [
       {
         "id": "codevGettingStarted",
-        "title": "Codev: Getting Started",
+        "title": "Get started with Codev",
         "description": "Install the Codev CLI and connect VS Code to Tower.",
         "steps": [
           {
@@ -658,7 +658,7 @@
             "title": "Verify the installation",
             "description": "Confirm the CLI is detected and at a compatible version.",
             "media": { "markdown": "walkthroughs/verify.md" },
-            "completionEvents": ["onCommand:codev.recheckCli"]
+            "completionEvents": ["onContext:codev.cliReady"]
           }
         ]
       }

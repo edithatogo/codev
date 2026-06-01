@@ -7,7 +7,7 @@
  * (the extension's own `package.json` `version` is the source of truth). The
  * result is cached for the session; the command guard in `extension.ts` reads
  * it via `isCliReady`. Depending on the outcome we either open the
- * `Codev: Getting Started` walkthrough (missing CLI), show an upgrade
+ * `Get started with Codev` walkthrough (missing CLI), show an upgrade
  * notification (outdated CLI), or do nothing (ok).
  *
  * A single `codev.recheckCli` command re-runs the whole flow; it is surfaced
@@ -129,6 +129,11 @@ async function performPreflight(): Promise<PreflightStatus> {
   cachedStatus = status;
   cachedVersion = cliVersion;
   changeEmitter.fire();
+
+  // Drives the `Get started with Codev` walkthrough's Verify step completion
+  // (`onContext:codev.cliReady`) — so the step ticks only when the CLI is
+  // genuinely OK, not merely when a recheck was attempted.
+  vscode.commands.executeCommand('setContext', 'codev.cliReady', status === 'ok');
 
   outputChannel.appendLine(
     `[${new Date().toISOString()}] [Preflight] status=${status} `

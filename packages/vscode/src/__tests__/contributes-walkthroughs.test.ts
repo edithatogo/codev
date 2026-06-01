@@ -1,5 +1,5 @@
 /**
- * Invariants for the `Codev: Getting Started` walkthrough contribution (#791):
+ * Invariants for the `Get started with Codev` walkthrough contribution (#791):
  * the walkthrough is declared, every step references a markdown file that
  * actually ships, and the recheck command the Verify step relies on exists.
  */
@@ -29,7 +29,7 @@ const commands: Array<{ command: string }> = PKG.contributes.commands;
 describe('codevGettingStarted walkthrough', () => {
   it('is contributed', () => {
     expect(gettingStarted).toBeDefined();
-    expect(gettingStarted!.title).toBe('Codev: Getting Started');
+    expect(gettingStarted!.title).toBe('Get started with Codev');
   });
 
   it('has detect / install / verify steps', () => {
@@ -45,10 +45,12 @@ describe('codevGettingStarted walkthrough', () => {
     }
   });
 
-  it('declares codev.recheckCli and wires it as the Verify completion event', () => {
+  it('declares codev.recheckCli and completes Verify on the cliReady context', () => {
     expect(commands.some((c) => c.command === 'codev.recheckCli')).toBe(true);
     const verify = gettingStarted!.steps.find((s) => s.id === 'verify');
-    expect(verify!.completionEvents).toContain('onCommand:codev.recheckCli');
+    // Completes only when the CLI is genuinely OK (preflight sets the context
+    // key), not merely when a recheck was attempted.
+    expect(verify!.completionEvents).toContain('onContext:codev.cliReady');
   });
 
   it('links the recheck command from the Verify step markdown', () => {
