@@ -2,6 +2,29 @@
 
 What's changed in the Codev VS Code extension, version by version, written for the developers who use it.
 
+## [3.1.6] - 2026-05-31
+
+### What's new
+
+- **Reference Issue paste includes the title.** Backlog row's "Reference Issue in Architect" action now pastes `#42 "<title>"` instead of just `#42`.
+- **Review-comment polish.** Input shows a Codev-specific prompt instead of VSCode's generic placeholder, and comments are attributed to your git identity instead of a hardcoded `@architect`.
+- **Open Spec / Open Review row actions.** New entries in the Builders right-click menu, alongside Open Plan. Each hides on protocols that don't produce that artifact.
+- **Backlog defaults to your assigned issues.** Title-bar eye icon toggles to show-all and back; choice persists across reloads.
+- **Backlog title-count reflects what's visible.** Reads `Backlog (3 of 47)` in mine-only mode, `Backlog (47)` in show-all.
+- **`Codev: Search Backlog...` Quick Pick.** New command-palette entry. Fuzzy-match any open backlog issue by id, title, area, or assignee.
+- **Backlog above Pull Requests in sidebar order.** User-reordered views keep their custom order.
+- **`[<phase>]` prefix on builder rows.** Appears right after the issue number — stays visible when long titles clip.
+- **Distinct icons per gate on blocked builders.** Spec, plan, dev, PR, and verify review each get a unique glyph instead of the universal bell.
+- **`area/*` grouping in Backlog and Builders trees.** UPPERCASE group headers match VSCode's panel-header convention. Repos without `area/*` labels collapse to a flat list.
+
+### Bug fixes
+
+- **SCM colors on changed-file rows.** Added in green, Modified in yellow, Deleted in red. The 3.1.4 fix shipped against a wrong theory about the Git decorator; new fix uses a synthetic `resourceUri` path that Git's repository lookup ignores.
+- **Cleaner Marketplace command titles.** Three entries disambiguated: palette `Codev: Open Builder Terminal...`, row-action `Codev: Open Builder Terminal`, internal `Codev (internal): Open Builder Terminal and Expand Row`.
+- **`Codev:` prefix on review-comment commands.** `Codev: Submit Review Comment` and `Codev: Delete Review Comment` — matching the prefix every other command uses.
+- **Removed the dead `codev.telemetry` setting.** No-op placeholder. Will reappear with a real consumer if telemetry is ever added.
+- **Builder cleanup closes the terminal tab again.** The 3.0.6 fix had silently regressed.
+
 ## [3.1.1] - 2026-05-23
 
 ### What's new

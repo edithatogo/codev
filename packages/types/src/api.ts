@@ -130,7 +130,22 @@ export interface OverviewBuilder {
   id: string;
   issueId: string | null;
   issueTitle: string | null;
+  /**
+   * Display phase. Collapsed: prefers the active plan sub-phase id
+   * (`current_plan_phase`, e.g. `phase_5`) over the protocol phase, so the
+   * dashboard can match it against `planPhases` to render sub-phase progress
+   * (`(1/4)`). NOT the coarse protocol phase — read `protocolPhase` for that.
+   */
   phase: string;
+  /**
+   * Coarse *protocol* phase — `plan` / `implement` / `review` (and `specify` /
+   * `verify` for SPIR/ASPIR). The raw `phase:` from `status.yaml`, before the
+   * `phase` field's sub-phase collapse. Surfaces the high-level phase for
+   * at-a-glance UIs (the VSCode builders-tree row prefix, #810) without leaking
+   * free-form plan sub-phase ids like `phase_0_rebase_onto_ci`. Empty string
+   * when no live status exists.
+   */
+  protocolPhase: string;
   mode: 'strict' | 'soft';
   gates: Record<string, string>;
   worktreePath: string;
