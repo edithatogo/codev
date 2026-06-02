@@ -47,62 +47,70 @@ function builder(overrides: Partial<OverviewBuilder>): OverviewBuilder {
 }
 
 describe('builderRowLabel', () => {
-  it('active builder: protocol-phase prefix after the issue number, no trailing state label', () => {
+  it('active builder: area prefix after the icon, before the issue number, no trailing state label', () => {
     const b = builder({
       issueId: '882',
       issueTitle: 'refactor extract',
-      protocolPhase: 'implement',
+      area: 'vscode',
     });
-    expect(builderRowLabel(b, false, NOW)).toBe('[implement] #882 refactor extract');
+    expect(builderRowLabel(b, false, NOW)).toBe('[vscode] #882 refactor extract');
   });
 
-  it('renders the coarse protocolPhase, NOT the collapsed sub-phase id in `phase`', () => {
-    // The defining case: a builder mid-implementation has `phase` overwritten
-    // with a plan sub-phase id, but the prefix must show the protocol phase.
+  it('phase does NOT appear in the row label (conveyed by the stage group header, #952)', () => {
+    // Regression for the axis swap: the row carries the area, not the phase —
+    // even though protocolPhase is set, no `[implement]` may leak into the label.
     const b = builder({
       issueId: '1190',
       issueTitle: 'Audit and unify',
       phase: 'phase_0_rebase_onto_ci',
       protocolPhase: 'implement',
+      area: 'tower',
     });
-    expect(builderRowLabel(b, false, NOW)).toBe('[implement] #1190 Audit and unify');
+    expect(builderRowLabel(b, false, NOW)).toBe('[tower] #1190 Audit and unify');
   });
 
-  it('blocked builder: phase prefix + trailing "blocked on <label> [<elapsed>]"', () => {
+  it('cross-cutting area is echoed verbatim (no shorthand)', () => {
+    const b = builder({ issueId: '900', issueTitle: 'multi-area', area: 'cross-cutting' });
+    expect(builderRowLabel(b, false, NOW)).toBe('[cross-cutting] #900 multi-area');
+  });
+
+  it('Uncategorized area: no "[...]" prefix (mirrors the old empty-phase omission)', () => {
+    // The default fixture area is `Uncategorized` — a builder whose issue has no
+    // `area/*` label. The prefix is omitted rather than rendering `[Uncategorized] `.
+    const b = builder({ issueId: '810', issueTitle: 'x' });
+    expect(builderRowLabel(b, false, NOW)).toBe('#810 x');
+  });
+
+  it('blocked builder: area prefix + trailing "blocked on <label> [<elapsed>]"', () => {
     const b = builder({
       issueId: '791',
       issueTitle: 'Startup preflight',
-      protocolPhase: 'plan',
+      area: 'core',
       blocked: 'plan review',
       blockedSince: TWELVE_MIN_AGO,
     });
     // isIdle is false: blocked takes precedence (caller computes !isBlocked && ...).
     expect(builderRowLabel(b, false, NOW)).toBe(
-      '[plan] #791 Startup preflight blocked on plan review [12m]',
+      '[core] #791 Startup preflight blocked on plan review [12m]',
     );
   });
 
-  it('idle builder: phase prefix + trailing "waiting on input [<elapsed> silent]"', () => {
+  it('idle builder: area prefix + trailing "waiting on input [<elapsed> silent]"', () => {
     const b = builder({
       issueId: '794',
       issueTitle: 'Notification refactor',
-      protocolPhase: 'implement',
+      area: 'vscode',
       blocked: null,
       lastDataAt: SIX_MIN_AGO,
     });
     expect(builderRowLabel(b, true, NOW)).toBe(
-      '[implement] #794 Notification refactor waiting on input [6m silent]',
+      '[vscode] #794 Notification refactor waiting on input [6m silent]',
     );
   });
 
-  it('empty protocolPhase: no "[] " literal prefix', () => {
-    const b = builder({ issueId: '810', issueTitle: 'x', protocolPhase: '' });
-    expect(builderRowLabel(b, false, NOW)).toBe('#810 x');
-  });
-
   it('falls back to id when issueId/issueTitle are null', () => {
-    const b = builder({ id: 'pir-999', issueId: null, issueTitle: null, protocolPhase: 'plan' });
-    expect(builderRowLabel(b, false, NOW)).toBe('[plan] #pir-999 ');
+    const b = builder({ id: 'pir-999', issueId: null, issueTitle: null, area: 'vscode' });
+    expect(builderRowLabel(b, false, NOW)).toBe('[vscode] #pir-999 ');
   });
 });
 
