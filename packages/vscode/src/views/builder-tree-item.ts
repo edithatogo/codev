@@ -25,29 +25,37 @@ export class BuilderTreeItem extends vscode.TreeItem {
 }
 
 /**
- * Area group header in the Builders tree. Thin subclass of
+ * Stage group header in the Builders tree. Thin subclass of
  * `AreaGroupTreeItem` so the per-view expand/collapse handler in
  * `extension.ts` can scope to builder groups via `instanceof`
  * (distinct from `BacklogGroupTreeItem`, which uses the same base).
  *
+ * The first constructor arg is the base's generic group key: for the Backlog
+ * view it's an `area/*` value, for this Builders view it's a canonical
+ * lifecycle *stage* (#952 — `specify`/`plan`/`implement`/`review`/`pr`/
+ * `verified`/`unknown`). The base field is named `areaName` and shared with the
+ * genuinely-area-keyed Backlog header; here it carries a stage.
+ *
  * Carries a worst-of-three roll-up icon (#926) over the group's
  * `{ blocked, idle, active }` counts (from `rollupGroupState`), reusing the
  * builder-row vocabulary: any blocked → yellow `bell`; else any idle → blue
- * `comment-discussion`; else green `circle-filled`. The blocked case uses a
- * GENERIC `bell` (not the row's gate-specific `gateIconFor` shape) because a
- * group can hold builders at different gates — the yellow color is the
+ * `comment-discussion`; else green `circle-filled`. This is a *state* rollup,
+ * orthogonal to the stage the header names: the label says where in the
+ * lifecycle, the icon says whether anyone here needs attention. The blocked
+ * case uses a GENERIC `bell` (not the row's gate-specific `gateIconFor` shape)
+ * because a group can hold builders at different gates — the yellow color is the
  * group-level "needs attention" signal. The triple is spelled out in the
  * tooltip. Set here in the subclass, not the shared base, because the Backlog
  * view rolls up differently.
  */
 export class BuilderGroupTreeItem extends AreaGroupTreeItem {
   constructor(
-    areaName: string,
+    stage: string,
     count: number,
     collapsibleState: vscode.TreeItemCollapsibleState,
     rollup: GroupRollup,
   ) {
-    super(areaName, 'builder', count, collapsibleState);
+    super(stage, 'builder', count, collapsibleState);
     const { icon, color } = BUILDER_STATE_GLYPH[worstBuilderState(rollup)];
     this.iconPath = new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
     this.tooltip = `${rollup.blocked} blocked · ${rollup.idle} waiting · ${rollup.active} active`;

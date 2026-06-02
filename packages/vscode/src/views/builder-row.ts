@@ -7,6 +7,7 @@
 
 import type { OverviewBuilder } from '@cluesmith/codev-types';
 import { isIdleWaiting } from '@cluesmith/codev-core/builder-helpers';
+import { UNCATEGORIZED_AREA } from '@cluesmith/codev-core/constants';
 
 /**
  * Blocked-gate → codicon name. Keyed off the CANONICAL gate name
@@ -122,29 +123,23 @@ export function timeSince(isoDate: string, now: number): string {
 }
 
 /**
- * The builder row's label. The phase leads the label, before the issue number
- * (`[<phase>] #<id> <title>`), so it sits at a FIXED offset right after the
- * row's icon — letting the eye scan the phase column straight down the tree
- * (issue ids vary in width, so an id-first order would make the phase bracket
- * jiggle row-to-row). It also survives end-truncation in a narrow sidebar and
- * shows across all three states — unlike the old trailing `[<phase>]` suffix
- * that only active rows carried and long titles clipped.
+ * The builder row's label. The `area/*` label leads the row
+ * (`[<area>] #<id> <title>`), sitting at a FIXED offset right after the row's
+ * icon. The *phase* no longer appears in the row — under stage-grouping (#952)
+ * it's implied by the row's containing group header, so the prefix carries the
+ * orthogonal domain signal instead. Area echoes the raw lowercase wire value
+ * (`[vscode]`, `[cross-cutting]`); the `Uncategorized` sentinel (a builder whose
+ * issue has no `area/*` label) omits the prefix entirely — the row reads
+ * `#<id> <title>` rather than carrying a literal `[Uncategorized] `.
  *
  * The state-dispatched suffix is preserved for blocked/idle duration:
  *  - blocked: ` blocked on <label> [<elapsed>]`
  *  - idle:    ` waiting on input [<elapsed> silent]`
- *  - active:  (empty — the phase prefix already covers it)
- *
- * The prefix uses the coarse `protocolPhase` (`plan` / `implement` / `review`),
- * NOT the collapsed `phase` field — `phase` prefers free-form plan sub-phase
- * ids (e.g. `phase_0_rebase_onto_ci`) which are too low-level for the row.
- * Empty `protocolPhase` (rare transient init state) omits the prefix entirely —
- * the row reads `#<id> <title>` rather than carrying a literal `[] `.
+ *  - active:  (empty)
  *
  * `isIdle` is injected by the caller (which already computes it via
  * `isIdleWaiting` for the icon + contextValue dispatch) rather than recomputed
- * here — keeps this helper pure (no `@cluesmith/codev-core` runtime import) and
- * unit-testable without a build step.
+ * here — keeps this helper pure and unit-testable without a build step.
  */
 export function builderRowLabel(b: OverviewBuilder, isIdle: boolean, now: number): string {
   const isBlocked = !!b.blocked;
@@ -155,6 +150,6 @@ export function builderRowLabel(b: OverviewBuilder, isIdle: boolean, now: number
     : isIdle
     ? ` waiting on input${idleTime}`
     : '';
-  const phasePrefix = b.protocolPhase ? `[${b.protocolPhase}] ` : '';
-  return `${phasePrefix}#${b.issueId ?? b.id} ${b.issueTitle ?? ''}${stateLabel}`;
+  const areaPrefix = b.area && b.area !== UNCATEGORIZED_AREA ? `[${b.area}] ` : '';
+  return `${areaPrefix}#${b.issueId ?? b.id} ${b.issueTitle ?? ''}${stateLabel}`;
 }
