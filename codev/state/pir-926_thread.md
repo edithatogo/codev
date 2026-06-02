@@ -91,3 +91,15 @@ Implemented both rollups per the plan:
 Verified (worktree needed `pnpm install` + core/types build first):
 `pnpm check-types` ✓, `pnpm lint` ✓, `pnpm test:unit` ✓ (207 tests, 10 new),
 `node esbuild.js` ✓. Awaiting go-ahead to commit + push, then dev-approval gate.
+
+## dev-approval gate feedback
+
+Reviewer feedback at the dev-approval gate: the Backlog's **green** filled dot
+overloaded "green" — on the Builders side green means "agent actively building,"
+but the Backlog isn't a per-agent-activity surface. Changed the Backlog rollup
+to **filled-grey (has builder) vs. outline-grey (open to spawn)** — both
+`disabledForeground`, differing only in fill. Green is now exclusive to the
+Builders view's active signal; Backlog stays a calm "where can I spawn" surface.
+Deviation from the approved plan (which specced green) — will be recorded in the
+review file. Re-verified: check-types/lint/test:unit (207)/esbuild all ✓.
+Builders worst-of-three header left as-is (reviewer: "looks good").
