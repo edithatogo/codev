@@ -104,15 +104,55 @@ All of the following was confirmed by installing and running the real CLI on mac
 - The Gemini consult lane invokes **`agy --print --sandbox --add-dir <repoRoot>`** (role folded into
   the prompt), reaching Gemini via the user's **subscription/OAuth** auth, with the reviewer still
   **reading the diff/repo from disk** (agentic behavior preserved).
-- The lane uses the **Pro** model class (mechanism per Open Questions).
-- Codev invokes the **real `agy` CLI deterministically**, never the IDE symlink.
-- A missing/unauthed/timed-out `agy` lane is a **non-blocking skip**: porch-orchestrated runs still
-  advance (Codex/Claude complete; Gemini reported skipped — not a blocking `REQUEST_CHANGES`/
-  `CONSULT_ERROR`).
+- The lane uses `agy`'s **default** model (no pinning, per architect decision — currently Gemini 3.5
+  Flash). The **model identifier stays `gemini`** everywhere (`MODEL_CONFIGS` key, `VALID_MODELS`,
+  `protocol-schema.json` enum, default model lists, user-facing config, the `pro` alias) — only the
+  *backend* changes; **no rename** to `agy`/`antigravity`.
+- Codev invokes the **real `agy` CLI deterministically**, never the IDE symlink; if it cannot resolve
+  a binary that satisfies the headless contract, it **skips the lane** (below) rather than launching
+  the IDE.
+- A missing/unauthed/timed-out/invalid-binary `agy` lane is a **non-blocking skip**: the lane emits
+  **`VERDICT: COMMENT` / `SUMMARY: Skipped (agy unavailable: <reason>)`**, which `verdict.ts` treats
+  as non-blocking (`allApprove` accepts `COMMENT`; verified `:54-59`). Porch-orchestrated runs still
+  advance (Codex/Claude complete; Gemini reported skipped — never a blocking `REQUEST_CHANGES`/
+  `CONSULT_ERROR` caused merely by unavailability).
 - Cost/usage rows **degrade gracefully** (no `NaN`; show e.g. "n/a (subscription)").
 - `codev doctor` checks for the real `agy` CLI + auth and gives correct, current setup guidance
   (official install script; one-time `agy` login). No API-key guidance.
 - Docs/skill reference the `agy` setup. Codex/Claude lanes unchanged.
+
+## Iteration-2 Decisions (resolved from 3-way re-consult, 2026-06-02)
+Concrete resolutions to reviewer feedback (Codex REQUEST_CHANGES, Gemini COMMENT, Claude
+REQUEST_CHANGES). These keep scope lean while removing ambiguity:
+- **Model identifier stays `gemini`** — no rename anywhere; only the backend changes. (Claude must-fix.)
+- **Non-blocking skip = C2 (decided, not deferred):** the lane's wrapper emits `VERDICT: COMMENT` +
+  a `SUMMARY: Skipped (...)` line when `agy` is unavailable. `verdict.ts` treats `COMMENT` as
+  non-blocking (verified `:42,:54-59`); a *missing* verdict would default to `REQUEST_CHANGES` and
+  block, so the explicit `COMMENT` is mandatory. (Gemini's concrete mechanism; resolves Codex's
+  "observable skip contract" ask.)
+- **Fast auth-skip:** an unauthed `agy --print` prints an OAuth URL and waits ~30s. The wrapper
+  **streams stdout/stderr and terminates the child early when the OAuth URL is detected**, emitting
+  the `COMMENT` skip — so an unauthed lane doesn't block the run for 30s. (Gemini.)
+- **Binary resolution + rejection rule:** prefer the known install path (`~/.local/bin/agy`), else a
+  PATH lookup that is **verified** to be the real headless CLI (responds to `--print`/`--version` as
+  the CLI, not the IDE Electron launcher). If no valid CLI is found (missing, or only the IDE
+  symlink/stub), treat the lane as **unavailable → `COMMENT` skip with actionable guidance** — never
+  launch the IDE. (Codex + Claude.)
+- **Timeout ownership:** Codev manages its **own** timeout and SIGTERMs the child if `agy` hangs
+  past it; it does not rely solely on `--print-timeout`. (Claude.)
+- **Output handling:** `agy --print` returns **plain text** = the review. `extractReviewText`'s
+  current `gemini` branch (`JSON.parse(output).response`) must be **adapted to return the raw output**
+  for the agy backend (else it throws on plain text); usage/cost extraction returns null → cost rows
+  degrade gracefully. (Claude.)
+- **Follow the `hermes` precedent** (`index.ts:39,651-668,1587`): a CLI model with `envVar:null`,
+  role folded into the prompt (`${role}\n\n---\n\n${query}`), and the **temp-file pattern when the
+  prompt exceeds `CLI_PROMPT_INLINE_MAX_CHARS` (100k)** — which also handles `E2BIG`/large-diff
+  inlining (Gemini's concern). The existing `buildPRQuery` already writes the diff to a temp file the
+  reviewer reads, so large content stays file-referenced. (Claude + Gemini.)
+- **`pro` alias:** kept **as-is** (historical name; resolves to the `gemini`/agy lane). No rename, no
+  deprecation warning — leanest. (Claude.)
+- **`harness.ts` `GEMINI_HARNESS` is explicitly untouched** and is a **separate concern** from the
+  consult `MODEL_CONFIGS.gemini` lane; this spec changes only the consult lane. (Claude.)
 
 ## Success Criteria
 - [ ] `consult -m gemini` runs through `agy --print` and returns a real review that **reflects file
@@ -156,17 +196,17 @@ All of the following was confirmed by installing and running the real CLI on mac
 - **RESOLVED (2026-06-02): model selection.** The architect decided **not to pin Pro** — the lane
   uses `agy`'s default model (currently Gemini 3.5 Flash). No model-selection work; no `--model`
   handling. (This removes what was the only critical open question.)
-### Important
-- [ ] **Binary resolution strategy:** pin `~/.local/bin/agy`, or search PATH then verify the binary
-      is the CLI (reject the IDE symlink)? Recommended: prefer the known install path, fall back to a
-      verified PATH lookup.
-- [ ] **`doctor` auth probe without hanging:** a smoke `agy --print` on an unauthed machine prints an
-      OAuth URL and waits ~30s. `doctor` must detect "needs login" quickly without blocking (short
-      timeout; treat the auth prompt as "not authed").
-- [ ] **`--print-timeout` tuning** for large/agentic reviews (default 5m) vs. consult's own timeouts.
-- [ ] **Skip mechanism** (carried from prior spec): C1 drop the lane from the *effective* model set
-      when unavailable, or C2 emit a defined neutral "skipped" artifact verdict logic treats as
-      non-blocking. Plan selects.
+### Important — mostly resolved by Iteration-2 Decisions
+- [x] Binary resolution strategy → **resolved** (prefer `~/.local/bin/agy`; else verified PATH CLI;
+      reject IDE stub → skip).
+- [x] `doctor`/consult auth probe without hanging → **resolved** (stream output, detect OAuth URL,
+      terminate early → `COMMENT` skip; `doctor` uses a short timeout and reports "needs login").
+- [x] Skip mechanism → **resolved** (C2: emit `VERDICT: COMMENT`).
+- [ ] **`--print-timeout` value + Codev's own timeout value** for large/agentic reviews — exact
+      numbers are a Plan detail (ownership is decided: Codev manages its own timeout).
+- [ ] **Confirm the precise `agy --print` prompt-delivery** (positional arg vs stdin) in the Plan, to
+      pick inline vs temp-file per the `hermes` precedent (empirically: positional arg works; large
+      content already goes via the diff temp file).
 
 ## Security Considerations
 - Auth tokens are managed by `agy` (OAuth), stored in the Antigravity app-support dir; Codev never
@@ -182,8 +222,12 @@ All of the following was confirmed by installing and running the real CLI on mac
 ### Functional
 1. **Happy path:** `consult -m gemini` → `agy --print --sandbox --add-dir <root>` returns a review
    that demonstrably used file contents (e.g., references a changed file's actual code).
-2. **Non-blocking skip:** no `agy` / not authed → porch 3-way **advances** (Codex+Claude complete;
-   Gemini skipped; no blocking verdict).
+2. **Non-blocking skip (unit):** no `agy` / not authed / IDE-stub-only → the lane emits
+   `VERDICT: COMMENT` (Skipped), and `allApprove` is not blocked by it.
+2b. **Non-blocking skip (porch-orchestrated, end-to-end):** in an actual porch SPIR run with `agy`
+   missing/unauthed, **phase progression continues** (the gate isn't blocked by the skipped Gemini
+   lane) — this is the core failure being prevented, so it must be exercised, not just unit-tested.
+   (Codex.)
 3. **`pro` alias:** `consult -m pro` resolves to the `agy` lane (note: the alias name is historical;
    the lane uses agy's default model, not necessarily "Pro").
 4. **Binary resolution:** with the IDE symlink first on PATH, Codev still invokes the real CLI.
@@ -222,8 +266,13 @@ All of the following was confirmed by installing and running the real CLI on mac
 access), Codex REQUEST_CHANGES (porch skip semantics, enterprise contradiction, doctor scope),
 Claude APPROVE. The porch-skip and graceful-cost findings are carried forward; the filesystem-access
 concern is now **moot** because Approach B preserves agentic file-reading by design.
-**Iteration 2 (pending):** re-consult the Approach-B spec (porch flow / architect to direct gate
-mechanics).
+**Iteration 2 (2026-06-02, on this Approach-B spec):** Codex **REQUEST_CHANGES**, Gemini **COMMENT**,
+Claude **REQUEST_CHANGES**. All substantive points addressed (see Iteration-2 Decisions + rebuttal
+`778-specify-iter2-rebuttals.md`): fixed the stale Desired-State "Pro" line (unanimous); stated the
+model id stays `gemini` (Claude); adopted the concrete `COMMENT`-verdict skip mechanism (Gemini,
+resolving Codex's observable-contract ask); added fast auth-skip, binary rejection rule, timeout
+ownership, `extractReviewText` adaptation, `hermes` precedent, `pro`-alias decision, harness
+distinction, and a porch-orchestrated progression test. Code claims verified against the tree.
 
 ## Approval
 - [ ] Architect review (spec-approval gate) — re-presented for Approach B

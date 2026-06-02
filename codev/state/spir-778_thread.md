@@ -98,3 +98,24 @@ cost from prior; preserved agentic file-reading prompts.
    touch porch state / approve).
 User wanted to "clarify" the file-access AskUserQuestion — now empirically answered (sandbox+add-dir,
 no dangerous flag). Held the outward consult-rerun + afx notify pending their return.
+
+## Iteration-2 3-way consult on Approach-B spec (2026-06-02) — architect chose "re-run consult"
+Porch couldn't re-consult from the gate (rollback rejected: already in specify; approve=human-only;
+done=would bypass gate). So ran the 3 consults MANUALLY (iter2 files), no porch state change.
+- **Codex REQUEST_CHANGES**: stale Pro line in Desired State; specify observable skip contract; add
+  porch-orchestrated progression test; binary-resolution rejection rule.
+- **Gemini COMMENT**: same stale Pro; concrete skip = emit `VERDICT: COMMENT` (verdict.ts treats as
+  non-blocking); auth-hang fast-skip (kill on OAuth URL); E2BIG → hermes temp-file pattern.
+- **Claude REQUEST_CHANGES**: stale Pro (must-fix); state model id stays `gemini` (must-fix);
+  extractReviewText JSON.parse throws on plain text; pro-alias decision; harness GEMINI_HARNESS
+  distinct; hermes precedent; timeout ownership.
+Root miss: when I applied "don't pin Pro" I updated everything EXCEPT the Desired-State bullet — all
+3 caught it. Verified verdict.ts (COMMENT non-blocking), extractReviewText (gemini JSON.parse),
+hermes (CLI/role-inlined/temp-file) before encoding.
+→ Spec revised (added Iteration-2 Decisions section; concrete COMMENT-skip; binary rejection rule;
+fast auth-skip; extractReviewText adaptation; hermes precedent; pro-alias kept; harness distinct;
+porch-orchestrated test 2b). Rebuttal: 778-specify-iter2-rebuttals.md. Committed.
+
+## ⏸ AWAITING ARCHITECT — gate decision after iter2
+Spec re-reviewed (iter2) + addressed. Porch still parked at unapproved spec-approval gate. Architect
+to decide: approve, or another round. I won't self-approve / touch porch state.
