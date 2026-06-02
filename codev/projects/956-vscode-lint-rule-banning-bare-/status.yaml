@@ -1,7 +1,7 @@
 id: '956'
 title: vscode-lint-rule-banning-bare-
 protocol: pir
-phase: implement
+phase: review
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -19,4 +19,4 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-06-02T00:02:08.542Z'
-updated_at: '2026-06-02T00:46:17.013Z'
+updated_at: '2026-06-02T00:46:30.976Z'
