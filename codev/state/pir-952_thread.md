@@ -27,3 +27,13 @@ Audited all 9 bundled protocols (no `tick` protocol.json ships). Confirmed exper
 - Gap A: `complete` (backward-compat terminal synonym of `verified`) would render as a stray COMPLETE group → fix: normalize complete→verified before bucketing.
 - Gap B: "custom phases alphabetical" scrambles experiment/research/bugfix natural sequences → fix: single curated PHASE_DISPLAY_ORDER (17 ids) keeping each protocol's natural order; unrecognized-future alphabetical; unknown(empty) last.
 Distinct buckets possible ≈ 19 (17 authored ids + verified + unknown, complete normalized away); realistically 1–7 live.
+
+## Plan revision 2 (architect: "reduce max groups" → closed canonical stage set)
+
+19 max groups defeats triage. Pivoted from one-group-per-phase to a CLOSED 6-stage set with a `PHASE_TO_STAGE` map folding all 17 phase ids in. Max groups now FIXED at 7 (6 stages + unknown) regardless of protocol count.
+- Stages: SPECIFY · PLAN · IMPLEMENT · REVIEW · PR · VERIFIED (+ UNKNOWN).
+- Architect calls: 6 stages (not 5); `investigate → plan`; PR & VERIFIED stay separate (PR = action-needed merge-triage query; VERIFIED = terminal).
+- verify/verified/complete → verified stage. Unmapped/empty → unknown.
+- Helper renamed groupByPhase → `groupByStage`; storage key → `codev.buildersStageGroupExpansion`.
+- Design call #7 (group header icons): KEEP #926 worst-of-state rollup icon unchanged (orthogonal to grouping axis — label=stage, icon=attention signal). Only cosmetic "area-group"→"stage-group" rename in builder-tree-item.ts.
+- Acceptance criteria delta documented: issue's "append protocol phases after VERIFIED" REPLACED by the closed-stage fold.
