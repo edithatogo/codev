@@ -1,41 +1,35 @@
-# Plan: Migrate the Gemini consult lane to dual backends (Antigravity `agy` + Gemini Developer API)
+# Plan: Migrate the Gemini consult lane to the Antigravity CLI (`agy`)
 
 ## Metadata
-- **ID**: plan-2026-06-02-778-gemini-antigravity-dual-backend
+- **ID**: plan-2026-06-02-778-gemini-antigravity-cli
 - **Status**: draft
-- **Specification**: `codev/specs/778-gemini-cli-antigravity-cli-jun.md` (APPROVED 2026-06-02 + Amendment A1)
+- **Specification**: `codev/specs/778-gemini-cli-antigravity-cli-jun.md` (APPROVED 2026-06-02, Approach B, single-agy)
 - **Created**: 2026-06-02
 
 ## Executive Summary
 The `gemini` consult lane currently shells out to the retiring Google **Gemini CLI** (`gemini
 --output-format json --model gemini-3.1-pro-preview`, role via `GEMINI_SYSTEM_MD`, prompt via stdin).
-Per the approved spec + Amendment A1, we replace it with **two co-equal backends** behind a selector,
-keeping the model identifier `gemini` everywhere (no rename — only the backend changes):
+Per the approved spec, we **swap the backend to the Antigravity CLI (`agy`)** — a lean
+**single-backend** change (no API key, no second backend, no selector; agy is **OAuth-only** as
+verified). The model identifier stays `gemini` everywhere (only the backend changes).
 
-- **`agy`** (Antigravity CLI, OAuth/subscription): agentic file-reading via
-  `agy --print --sandbox --add-dir`, `agy`'s **default** model (currently Flash), cheap. Plain-text
-  output → graceful (no-per-token) cost degradation. Non-blocking `COMMENT` skip when unavailable.
-- **`api`** (Gemini Developer API, `GEMINI_API_KEY`): single `@google/genai` `generateContent` call
-  with **`gemini-3.1-pro-preview`** (Pro), **inlined** review content (no agentic file-reading),
-  **real** cost rows from `usageMetadata`, env-var auth (CI-friendly, no interactive login).
-- **Selector** `consult.gemini.backend: agy | api | auto`. The `auto` precedence is a real
-  cost-vs-quality tradeoff and is **proposed and flagged for the architect** (Phase 3) — not silently
-  hard-coded.
-
-Both backends share: the `gemini` identifier, the non-blocking `COMMENT`-verdict skip when their
-backend is unavailable, role injection, and the existing large-prompt/temp-file handling. The
-combined design is reviewed by this Plan's 3-way consult per the architect.
+The lane invokes **`agy --print --sandbox --add-dir <repoRoot>`** with the reviewer role folded into
+the prompt, **preserving agentic file-reading** (the diff/repo are read from disk), using `agy`'s
+**default model** (currently Flash — no pro-pinning). Because `agy --print` returns plain text (no
+usage JSON) and authenticates via interactive OAuth, the plan also covers: **graceful cost
+degradation**, a **non-blocking `COMMENT` skip** when `agy` is missing/unauthed (so porch runs still
+advance — the CI/headless story), verified **binary resolution** (never launch the IDE symlink), and
+**doctor/docs** updates.
 
 ## Success Metrics
-- [ ] All spec success criteria met (both backends + selector; see spec, incl. Amendment A1).
-- [ ] `agy` backend: end-to-end review with agentic file-reading; `COMMENT`-skip when unavailable.
-- [ ] `api` backend: end-to-end review via `gemini-3.1-pro-preview`, real `usageMetadata` cost rows,
-      no interactive login (CI-friendly).
-- [ ] Selector routes `agy|api|auto` correctly; `auto` precedence deterministic + architect-approved.
-- [ ] Model identifier stays `gemini` across all config/schema/docs surfaces (no rename).
-- [ ] Porch-orchestrated run still advances when the chosen backend is unavailable (non-blocking skip).
-- [ ] No regression to Codex/Claude lanes; existing consult/doctor/config/porch tests pass; coverage
-      not reduced.
+- [ ] All spec success criteria met (single-agy; see spec).
+- [ ] `consult -m gemini` runs via `agy --print` and returns a review that used file contents
+      (agentic reading), verified end-to-end on a spec, a plan, and a PR.
+- [ ] Missing/unauthed/IDE-stub `agy` → non-blocking `COMMENT` skip; porch run still advances (2-way).
+- [ ] Cost/usage rows degrade gracefully (no `NaN`).
+- [ ] `codev doctor` reports the real `agy` CLI + auth accurately, with current guidance.
+- [ ] Model identifier stays `gemini` (no rename); `pro` alias kept; Codex/Claude lanes unchanged.
+- [ ] Existing consult/doctor/config/porch tests pass; coverage not reduced.
 
 ## Phases (Machine Readable)
 
@@ -44,40 +38,33 @@ combined design is reviewed by this Plan's 3-way consult per the architect.
 ```json
 {
   "phases": [
-    {"id": "agy_backend", "title": "Phase 1: agy backend (OAuth/subscription, agentic file-reading)"},
-    {"id": "api_backend", "title": "Phase 2: Gemini Developer API backend (Pro, inlined, usage data)"},
-    {"id": "backend_selector", "title": "Phase 3: Backend selector + config (agy|api|auto)"},
-    {"id": "docs_skeleton_e2e", "title": "Phase 4: Doctor + docs + skeleton consistency + e2e verification"}
+    {"id": "agy_backend", "title": "Phase 1: agy backend dispatch (OAuth, agentic file-reading, non-blocking skip)"},
+    {"id": "docs_skeleton_e2e", "title": "Phase 2: Doctor + docs + skeleton consistency + e2e verification"}
   ]
 }
 ```
 
 ## Cross-Cutting Implementation Contracts
-These shared mechanics are relied on by multiple phases — pinned here so the independent Phase 1/2
-work merges cleanly (addresses iter-1 plan review: Codex backend-routing, Claude dual-dispatch +
-config-key + migration):
+- **Single backend.** The dispatch stays keyed on `model === 'gemini'` (`consult/index.ts:~631`); no
+  backend sub-branching, no selector, no new config key. The `gemini`-CLI dispatch is **replaced** by
+  the `agy` invocation.
+- **Backend-aware parsing for plain text.** `extractReviewText`'s `gemini` branch
+  (`usage-extractor.ts`, currently `JSON.parse(output).response`) is adapted to return the **raw
+  output** (agy prints plain text); `extractGeminiUsage` returns **null** (no token JSON) → **graceful
+  cost degradation** (no `NaN`; e.g. "n/a (subscription)"). The old `stats.models` JSON path is removed.
+- **Model identifier stays `gemini`** everywhere (`MODEL_CONFIGS` key, `VALID_MODELS`,
+  `protocol-schema.json` enum, default model lists, user config); `pro` alias kept. **No rename.**
+- **No API key anywhere** (agy is OAuth-only; verified). CI/headless story = the non-blocking skip
+  (optionally a pre-provisioned OAuth token), not an API key.
 
-- **Backend-aware dispatch (not just model-aware).** Both backends share the model identifier
-  `gemini`, so the current single `if (model === 'gemini')` dispatch (`consult/index.ts:~631`) becomes
-  **backend-branched**: resolve the selected backend first (Phase 3), then route to the `agy` branch
-  (Phase 1) or the `api` branch (Phase 2). Phases 1 and 2 each implement their own branch behind this
-  split.
-- **Backend-aware parsing/metrics.** `extractReviewText` and `extractUsage`
-  (`consult/usage-extractor.ts`) currently branch on `model === 'gemini'` and assume the old CLI JSON
-  (`stats.models`). That is insufficient for two `gemini` backends. **Thread the resolved `backend`
-  into the extractor** (parameter or pre-parse in `index.ts` before recording metrics): `agy` → raw
-  text review + **null usage** (graceful cost degradation); `api` → SDK text + **`usageMetadata`** →
-  real cost. The old `stats.models`/`JSON.parse` gemini path is removed.
-- **New top-level `consult` config key.** `consult.gemini.backend` is a **new** top-level `consult`
-  section in `CodevConfig` (`lib/config.ts`) — **distinct** from the existing `porch.consultation.models`
-  (lane backend selection ≠ porch model lists). Do not nest it under `porch.consultation`.
-- **No config migration.** Existing `.codev/config.json` files lack the key; a **missing value falls
-  through to the default** (the `auto` selector) — no migration logic.
-- **Model identifier stays `gemini`** everywhere (no rename); `pro` alias kept.
+> **Test locations (canonical):** unit tests in `packages/codev/src/__tests__/` (`consult.test.ts`,
+> `doctor.test.ts`, `config.test.ts`); e2e in `packages/codev/src/__tests__/cli/`; `metrics.test.ts`
+> in `packages/codev/src/commands/consult/__tests__/`; `consultation-models.test.ts` in
+> `packages/codev/src/commands/porch/__tests__/`. **`packages/codev/tests/e2e|unit` do NOT exist.**
 
 ## Phase Breakdown
 
-### Phase 1: agy backend (OAuth/subscription, agentic file-reading)
+### Phase 1: agy backend dispatch (OAuth, agentic file-reading, non-blocking skip)
 **Dependencies**: None
 
 #### Objectives
@@ -86,7 +73,8 @@ config-key + migration):
 
 #### Implementation Details
 - **Files**: `packages/codev/src/commands/consult/index.ts` (dispatch + prompt assembly),
-  `packages/codev/src/commands/consult/usage-extractor.ts` (`extractReviewText`/usage).
+  `packages/codev/src/commands/consult/usage-extractor.ts` (`extractReviewText`/usage),
+  `packages/codev/src/commands/doctor.ts` (agy check).
 - **Binary resolution (verified, not PATH-trusting):** resolve the real CLI — prefer
   `~/.local/bin/agy`; else a PATH lookup **verified** to be the headless CLI (responds to
   `--version`/`--print` as the CLI, not the IDE Electron launcher). If none is valid (missing, or only
@@ -94,194 +82,91 @@ config-key + migration):
   never launch the IDE.
 - **Invocation:** `agy --print --sandbox --add-dir <workspaceRoot> [--print-timeout <N>]` with the
   reviewer **role folded into the prompt** (`${role}\n\n---\n\n${query}`, the `hermes` precedent at
-  `index.ts:651-668`). Keep the existing "read the diff / explore the filesystem" prompt builders
+  `index.ts:651-668`). **Keep** the existing "read the diff / explore the filesystem" prompt builders
   (agentic reading preserved); large content stays file-referenced (diff temp file + the >100k-char
   temp-file pattern) to avoid `E2BIG`.
-- **Output:** `--print` returns **plain text** = the review. Adapt `extractReviewText`'s `gemini`
-  branch (currently `JSON.parse(output).response`) to return the **raw output** for the agy backend;
-  usage extraction returns null → **cost rows degrade gracefully** (no `NaN`; e.g. "n/a (subscription)").
+- **Output:** `--print` returns **plain text** = the review → adapt `extractReviewText`'s `gemini`
+  branch to return raw output; `extractGeminiUsage` returns null → **cost rows degrade gracefully**
+  (see Cross-Cutting Contracts).
 - **Timeout ownership:** Codev manages its own timeout and SIGTERMs the child if `agy` hangs past it
   (does not rely solely on `--print-timeout`).
 - **Fast non-blocking skip:** stream stdout/stderr; if the **OAuth URL** appears (unauthed) or the
   binary is unavailable/invalid, terminate early and emit **`VERDICT: COMMENT` / `SUMMARY: Skipped
   (agy unavailable: <reason>)`** — `verdict.ts` treats `COMMENT` as non-blocking (`:42,:54-59`), so
-  porch advances rather than defaulting to a blocking `REQUEST_CHANGES`.
+  porch advances rather than defaulting to a blocking `REQUEST_CHANGES`. This is the CI/headless story.
 - **Doctor (agy):** update the gemini dependency/auth check (`doctor.ts:153-163,266-274`) to detect
   the real `agy` CLI + auth via a short-timeout probe (OAuth-URL ⇒ "needs login"); install hint →
-  official script `antigravity.google/cli/install.sh`.
+  official script `antigravity.google/cli/install.sh`; drop the `gemini`-CLI/`--yolo` check. Ensure the
+  "operational model" count treats an `agy`-usable setup as operational.
 
 #### Deliverables
-- [ ] agy dispatch + binary resolution + role-inlined prompt + plain-text handling.
+- [ ] agy dispatch + verified binary resolution + role-inlined prompt + plain-text handling.
 - [ ] Fast non-blocking `COMMENT` skip (unavailable/unauthed/invalid-binary).
-- [ ] Graceful cost degradation for the agy backend.
-- [ ] `doctor` agy presence/auth check + install hint.
-- [ ] Unit/integration tests (below).
+- [ ] Graceful cost degradation (no `NaN`).
+- [ ] `doctor` agy presence/auth check + install hint + operational counting.
+- [ ] Unit/integration tests.
 
 #### Acceptance Criteria
-- [ ] `consult -m gemini` (backend agy, authed) returns a review that used file contents.
-- [ ] Unauthed/missing/IDE-stub-only → `COMMENT` skip (no block), fast (no ~30s hang).
+- [ ] `consult -m gemini` (authed) returns a review that used file contents (agentic).
+- [ ] Unauthed/missing/IDE-stub-only → fast `COMMENT` skip (no ~30s hang, no block).
 - [ ] No `NaN` cost; `doctor` reports agy status correctly without hanging.
 - [ ] All tests pass.
 
 #### Test Plan
-- **Unit** (`consult.test.ts`): mock `spawn`/binary-resolver — agy invoked with
-  `--print --sandbox --add-dir`; binary rejection (IDE symlink ⇒ unavailable); OAuth-URL ⇒ early
-  `COMMENT` skip; plain-text → raw review; graceful cost.
-- **Integration**: a real `agy --print` smoke (guarded/skippable when unauthed in CI).
-- **Doctor** (`doctor.test.ts`): agy present+authed / present+unauthed / absent.
+- **Unit** (`packages/codev/src/__tests__/consult.test.ts`): mock `spawn`/binary-resolver — agy
+  invoked with `--print --sandbox --add-dir`; binary rejection (IDE symlink ⇒ unavailable); OAuth-URL
+  ⇒ early `COMMENT` skip; plain-text → raw review; graceful cost.
+- **Doctor** (`packages/codev/src/__tests__/doctor.test.ts`): agy present+authed / present+unauthed /
+  absent; operational counting.
+- **Integration**: a guarded real `agy --print` smoke (skippable when unauthed in CI).
 
 #### Risks
-- **Risk**: `agy` self-updates and changes flags. **Mitigation**: pin observed flags; e2e headline
-  test (Phase 4) catches drift.
+- **Risk**: Codev launches the IDE symlink instead of the CLI. **Mitigation**: verified binary
+  resolution + rejection → skip; binary-resolution test.
 - **Risk**: prompt delivery (positional vs stdin) hits arg limits. **Mitigation**: `hermes` temp-file
   pattern for large prompts; confirm delivery empirically in this phase.
+- **Risk**: `agy` self-updates and changes flags. **Mitigation**: pin observed flags; e2e (Phase 2)
+  catches drift.
 
 ---
 
-### Phase 2: Gemini Developer API backend (Pro, inlined content, real usage)
-**Dependencies**: None (independent of Phase 1; can proceed in parallel)
+### Phase 2: Doctor consolidation + docs + skeleton consistency + e2e verification
+**Dependencies**: Phase 1
 
 #### Objectives
-- Add a **Gemini Developer API** backend to the `gemini` lane: Pro-class model, real token usage,
-  CI-friendly env-var auth, with **inlined** review content (a single API call can't read files).
+- Make the docs and skeleton coherent for the agy backend, and verify the headline path end-to-end
+  (including porch progression on skip).
 
 #### Implementation Details
-- **Files**: `packages/codev/src/commands/consult/index.ts` (api dispatch + inlined-content prompt),
-  `packages/codev/src/commands/consult/usage-extractor.ts` (api usage/cost), possibly a small
-  `gemini-api.ts` helper. `@google/genai` (`^1.0.0`) is **already a dependency**.
-- **Call:** `@google/genai` `generateContent` with model **`gemini-3.1-pro-preview`**; reviewer role →
-  `systemInstruction`; auth from `GEMINI_API_KEY` (fallback `GOOGLE_API_KEY`).
-- **Inlined content (no agentic reading):** for this backend, build the prompt by **embedding** the
-  diff + spec/plan + relevant changed-file text directly, and **drop** the "read from disk / explore
-  filesystem" instructions (`index.ts:664,884,1042,1051,1154,1588` are agy/CLI-only). Reuse the
-  existing diff assembly; respect the API request-size limit (truncate-with-notice fallback for very
-  large diffs — deterministic, never a silent partial review).
-- **Real cost rows:** parse the response **`usageMetadata`** (`promptTokenCount`,
-  `candidatesTokenCount`, cached tokens) into the existing usage pipeline; keep/þadjust the
-  `gemini-3.1-pro` pricing key in `usage-extractor.ts`.
-- **Non-blocking skip:** no `GEMINI_API_KEY`/`GOOGLE_API_KEY` ⇒ emit the `COMMENT` skip (same contract
-  as Phase 1). No interactive login path (CI-friendly).
-- **Doctor (api):** report `GEMINI_API_KEY` presence + a minimal reachability check; surface the
-  June-19 unrestricted-key guidance (scope to the Generative Language API) without trying to detect it.
-
-#### Deliverables
-- [ ] API dispatch via `@google/genai` with `gemini-3.1-pro-preview` + `systemInstruction` role.
-- [ ] Inlined-content prompt path (no filesystem instructions) + large-input fallback.
-- [ ] Real cost rows from `usageMetadata`.
-- [ ] `COMMENT` skip when no key; `doctor` api check.
-- [ ] Unit/integration tests.
-
-#### Acceptance Criteria
-- [ ] backend=api + `GEMINI_API_KEY` → real review via Pro model with real cost rows, no login.
-- [ ] No key → `COMMENT` skip (non-blocking).
-- [ ] Large diff handled deterministically (no crash/silent truncation).
-- [ ] All tests pass.
-
-#### Test Plan
-- **Unit** (`consult.test.ts`, `metrics.test.ts`): mock `@google/genai` — model id, systemInstruction
-  role, inlined content (no "read from disk"), `usageMetadata`→cost, no-key `COMMENT` skip.
-- **Integration**: guarded live call when `GEMINI_API_KEY` present (skippable in CI without a key).
-
-#### Risks
-- **Risk**: API request-size limit < large PR diff. **Mitigation**: deterministic truncate/fallback
-  with notice; covered by a test.
-- **Risk**: model id / pricing key mismatch. **Mitigation**: pin `gemini-3.1-pro-preview`; usage-parity
-  test.
-
----
-
-### Phase 3: Backend selector + config (`agy | api | auto`)
-**Dependencies**: Phase 1, Phase 2
-
-#### Objectives
-- Route the `gemini` lane to the chosen backend via config + auto-detect, with the `auto` precedence
-  **proposed and flagged for the architect** (not silently hard-coded).
-
-#### Implementation Details
-- **Files**: `packages/codev/src/lib/config.ts` (config schema + default + types),
-  `packages/codev/src/commands/consult/index.ts` (selection logic).
-- **Config knob:** `consult.gemini.backend: "agy" | "api" | "auto"` (exact shape finalized here).
-  Default value is part of the auto-precedence decision below.
-- **`auto` precedence (PROPOSE + FLAG — do not silently hard-code):** document the proposed rule and
-  raise it for the architect at the plan-approval gate. **Proposed default:** prefer **`api`** when
-  `GEMINI_API_KEY`/`GOOGLE_API_KEY` is set (Pro quality + real usage + CI), else **`agy`** if a valid
-  authed CLI is present, else **skip** (`COMMENT`). Rationale + the cost-vs-quality tradeoff
-  (agy = cheap/Flash vs api = pricier/Pro) are written up for the architect to confirm or invert.
-- Both backends keep the `gemini` identifier; selection is internal to the lane (no new user-facing
-  model name).
-
-#### Deliverables
-- [ ] `consult.gemini.backend` config (schema, default, validation) + selection logic.
-- [ ] Written-up `auto` precedence proposal + explicit architect flag (in plan + surfaced at gate).
-- [ ] Tests for routing + auto precedence.
-
-#### Acceptance Criteria
-- [ ] `agy|api|auto` each route to the correct backend; invalid value errors clearly.
-- [ ] `auto` resolves deterministically per the (architect-approved) rule.
-- [ ] All tests pass.
-
-#### Test Plan
-- **Unit** (`config.test.ts`, `consultation-models.test.ts`, `consult.test.ts`): config parse/default;
-  routing for each backend value; `auto` precedence under {key present / absent} × {agy authed / not}.
-
-#### Risks
-- **Risk**: silent cost surprise if `auto` prefers `api` (paid) by default. **Mitigation**: flag the
-  precedence for the architect; document clearly; `doctor`/first-run note.
-
----
-
-### Phase 4: Doctor consolidation + docs + skeleton consistency + e2e verification
-**Dependencies**: Phase 1, Phase 2, Phase 3
-
-#### Objectives
-- Make `codev doctor`, the docs, and the skeleton coherent for the dual-backend lane, and verify the
-  headline paths end-to-end (including porch progression on skip).
-
-#### Implementation Details
-- **Files**: `packages/codev/src/commands/doctor.ts` (consolidated dual-backend reporting if not fully
-  done in P1/P2); docs — `CLAUDE.md`, `AGENTS.md`, `README.md`,
+- **Files**: docs — `CLAUDE.md`, `AGENTS.md`, `README.md`,
   `codev-skeleton/resources/commands/consult.md`, `.claude/skills/consult/SKILL.md` (+ skeleton copy),
-  `codev-skeleton/DEPENDENCIES.md`; tests — `packages/codev/src/__tests__/cli/` (e2e, e.g.
-  `consult.e2e.test.ts`/`doctor.e2e.test.ts`) + a porch-progression test (see Test locations note).
-- **Doctor operational-model counting (Codex iter-1):** `doctor.ts` has an "AI CLI dependencies"
-  section + an **operational-model count** that fails ("no model verifies") when none is found. Update
-  it so the Gemini lane counts as **operational when EITHER backend is usable** — an **API-only**
-  Gemini setup (no `agy`, but `GEMINI_API_KEY` set) must be reported operational, not failed.
+  `codev-skeleton/DEPENDENCIES.md`; tests — `packages/codev/src/__tests__/cli/` (e2e) + a
+  porch-progression test. (Any residual `doctor.ts` consolidation not done in Phase 1.)
+- **Docs:** agy setup — official install script + one-time interactive `agy` login (subscription);
+  remove dead references to the retiring `gemini` CLI auth flow. Note the model identifier stays
+  `gemini` and the `pro` alias is kept. Note that the Gemini-CLI **builder** harness
+  (`harness.ts:GEMINI_HARNESS`) is a **separate, untouched** concern (out of scope; will break for
+  affected tiers — follow-up issue).
 - **Model-identifier audit:** confirm `gemini` stays in `MODEL_CONFIGS`, `VALID_MODELS`
-  (`porch/next.ts:51`), `protocol-schema.json:155` enum, and all protocol-JSON default model lists —
-  **no rename**; `pro` alias kept. Keep skeleton ↔ `codev/` copies identical.
-- **`harness.ts` note:** docs note that the Gemini-CLI **builder** harness (`GEMINI_HARNESS`) is a
-  separate, untouched concern (out of scope; will break for affected tiers — follow-up issue).
-- **Docs:** dual-backend setup — `agy` install + one-time `agy` login (subscription), and
-  `GEMINI_API_KEY` for the api backend (incl. June-19 key-restriction note); the `consult.gemini.backend`
-  knob; remove dead references to the retiring `gemini` CLI auth flow.
-- **E2E / headline path:** run `consult -m gemini` for **both** backends on a spec, a plan, and a PR;
-  and a **porch-orchestrated** test proving phase progression continues when the chosen backend is
-  unavailable (the core failure prevented).
+  (`porch/next.ts:51`), the **skeleton** `protocol-schema.json:155` enum (the `codev/protocols` copy
+  has no model enum — distinct files), and all protocol-JSON default model lists. Keep skeleton ↔
+  `codev/` copies identical.
+- **E2E / headline path:** run `consult -m gemini` (via agy) on a spec, a plan, and a PR; and a
+  **porch-orchestrated** test proving phase progression continues when `agy` is unavailable
+  (`COMMENT` skip → 2-way) — the core failure prevented.
 
 #### Deliverables
-- [ ] `doctor` reports both backends accurately with current guidance.
 - [ ] Docs + skeleton updated and consistent; model-id-stays-`gemini` audit done.
-- [ ] E2E headline-path tests (both backends) + porch-progression test.
+- [ ] `harness.ts` separate-concern note; retiring-CLI references removed.
+- [ ] E2E headline-path test + porch-progression test.
 
 #### Acceptance Criteria
-- [ ] `doctor` correct under: agy authed/unauthed/absent; api key present/absent.
 - [ ] Docs reference only supported setup; skeleton ↔ codev consistent.
 - [ ] E2E + porch-progression tests green.
 
 #### Test Plan
-- **E2E** (`packages/codev/src/__tests__/cli/`): both backends headline path; porch run advances on skip.
-- **Consistency**: skeleton/codev schema+defaults; model-identifier audit assertion. Note the
-  **`protocol-schema.json` enum lives only in the skeleton copy** (`codev-skeleton/protocol-schema.json:155`
-  = `["gemini","codex","claude"]`); `codev/protocols/protocol-schema.json` has no model enum — the audit
-  covers both, but they are distinct files. (Claude iter-1.)
-
-> **Test locations (canonical — Codex/Claude iter-1 correction):** unit tests live in
-> `packages/codev/src/__tests__/` (`consult.test.ts`, `doctor.test.ts`, `config.test.ts`); e2e in
-> `packages/codev/src/__tests__/cli/`; `metrics.test.ts` in
-> `packages/codev/src/commands/consult/__tests__/`; `consultation-models.test.ts` in
-> `packages/codev/src/commands/porch/__tests__/`. **`packages/codev/tests/e2e|unit` do NOT exist** —
-> do not create them.
+- **E2E** (`packages/codev/src/__tests__/cli/`): agy headline path; porch run advances on skip.
+- **Consistency**: skeleton/codev schema+defaults; model-identifier audit assertion.
 
 #### Risks
 - **Risk**: doc/skeleton drift across the four-tier resolver. **Mitigation**: update both trees; a
@@ -289,65 +174,49 @@ config-key + migration):
 
 ## Dependency Map
 ```
-Phase 1 (agy) ─┐
-               ├─→ Phase 3 (selector) ─→ Phase 4 (doctor/docs/e2e)
-Phase 2 (api) ─┘
+Phase 1 (agy backend) ──→ Phase 2 (doctor/docs/skeleton/e2e)
 ```
-Phases 1 and 2 are independent (parallelizable). Phase 3 needs both. Phase 4 is the capstone.
 
 ## Risk Analysis
-### Technical Risks
 | Risk | Probability | Impact | Mitigation |
 |------|------------|--------|------------|
-| `agy` defaults to Flash (no `--model`) → weaker agy reviews | High | Low | Accepted (architect); the `api` backend provides Pro when a key is present. |
-| `auto` precedence causes unexpected paid-API cost | Med | Med | Proposed + flagged for architect; documented; `doctor`/first-run note. |
-| Codev launches IDE symlink instead of CLI | Med | High | Verified binary resolution + rejection → skip (Phase 1); binary-resolution test. |
-| API request-size limit < large diff | Med | Med | Deterministic truncate/fallback with notice (Phase 2). |
-| Skipped backend blocks porch | Med | High | `COMMENT`-verdict non-blocking skip, both backends; porch-progression test (Phase 4). |
-| skeleton/`codev` drift | Low | Med | Update both; consistency test (Phase 4). |
+| agy uses Flash (no `--model`) → reviews less deep than old Pro CLI | Med | Low | Accepted (architect: don't pro-pin; lean). |
+| Codev launches IDE symlink instead of CLI | Med | High | Verified binary resolution + rejection → skip (Phase 1); test. |
+| Unauthed/CI → blocks porch | Med | High | Non-blocking `COMMENT` skip (Phase 1); porch-progression test (Phase 2). |
+| First-run auth is interactive (can't run in CI) | Med | Med | Non-blocking skip = CI story; optional pre-provisioned OAuth token; doctor "needs login". |
+| No token usage → cost reporting breaks | High | Low | Graceful degradation (no `NaN`). |
+| skeleton/`codev` drift | Low | Med | Update both; consistency test (Phase 2). |
 
 ## Validation Checkpoints
-1. **After Phase 1**: agy review works + skips non-blockingly; doctor agy ok.
-2. **After Phase 2**: api review works via Pro with real usage; skips without a key.
-3. **After Phase 3**: selector + `auto` precedence (architect-confirmed).
-4. **Before done**: e2e both backends + porch progression on skip; docs/skeleton consistent.
+1. **After Phase 1**: agy review works + skips non-blockingly; doctor agy ok; graceful cost.
+2. **Before done**: e2e headline path + porch progression on skip; docs/skeleton consistent.
 
 ## Documentation Updates Required
-- [ ] `CLAUDE.md` / `AGENTS.md` (dual-backend; model id stays `gemini`).
+- [ ] `CLAUDE.md` / `AGENTS.md` (agy setup; model id stays `gemini`).
 - [ ] `README.md`, `codev-skeleton/resources/commands/consult.md`, consult `SKILL.md`,
       `codev-skeleton/DEPENDENCIES.md`.
 
 ## Expert Review
-**Date**: 2026-06-02 (iteration 1)
-**Models**: Gemini **APPROVE** · Codex **REQUEST_CHANGES** · Claude **COMMENT**
-**Key Feedback / Plan Adjustments** (all addressed; rebuttal `778-plan-iter1-rebuttals.md`):
-- Backend-aware dispatch + parsing/metrics (both backends are `gemini` → thread `backend` through;
-  `extractReviewText`/`extractUsage` no longer assume the old CLI JSON) — added **Cross-Cutting
-  Implementation Contracts**. (Codex #1, Claude #1)
-- `doctor` operational-model counting must treat an **API-only** Gemini setup as operational —
-  added to Phase 4. (Codex #2)
-- **Test paths corrected** to `packages/codev/src/__tests__/` (+ `…/cli/` e2e; `metrics.test.ts` in
-  `…/commands/consult/__tests__/`; `consultation-models.test.ts` in `…/commands/porch/__tests__/`);
-  `packages/codev/tests/e2e|unit` don't exist. (Codex #3, Claude #2)
-- `consult.gemini.backend` documented as a **new top-level `consult` key** (not under
-  `porch.consultation`); **no config migration** (missing → default); `protocol-schema.json` enum is
-  skeleton-only. (Claude)
+**Date**: 2026-06-02 (iteration 1 was on a since-superseded dual-backend draft; the API backend was
+dropped per architect — agy is OAuth-only, no API-key auth). The agy-relevant iter-1 findings are
+**retained** here: backend-aware plain-text parsing (`extractReviewText`/`extractGeminiUsage`),
+corrected test paths (`src/__tests__/…`), doctor operational-model counting, and the `COMMENT`-skip
+contract. A re-consult on this single-agy plan can be run at the architect's discretion.
 
 ## Approval
 - [ ] Architect review (plan-approval gate)
 - [ ] Expert AI consultation complete (3-way)
-- [ ] **Architect to confirm the `auto` backend precedence** (Phase 3 — flagged decision)
 
 ## Change Log
 | Date | Change | Reason |
 |------|--------|--------|
-| 2026-06-02 | Initial plan (dual-backend agy + api + selector) | Approved spec + Amendment A1 |
+| 2026-06-02 | Initial dual-backend plan | (superseded) |
+| 2026-06-02 | Reverted to **single-agy** plan; dropped API backend + selector | Architect: agy is OAuth-only (no API-key auth); API backend unwanted/unbuildable |
 
 ## Notes
-- **No time estimates** (per protocol). Phases ship as commits within a single PR (per builder PR
-  strategy), not separate PRs.
-- Each phase runs the SPIR I-D-E cycle (implement → defend/tests → evaluate) with its own consult.
-- **Lean by design:** scope is exactly "two backends + a selector" + the supporting doctor/docs/e2e;
+- **No time estimates** (per protocol). Phases ship as commits within a single PR.
+- Each phase runs the SPIR I-D-E cycle (implement → defend/tests → evaluate).
+- **Lean by design:** single backend swap + skip safety + doctor/docs/e2e; no API key, no selector,
   no generic gateway, no Codex/Claude-lane changes, `harness.ts` untouched.
 
 ---
