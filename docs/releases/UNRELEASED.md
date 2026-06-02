@@ -35,6 +35,23 @@ Section template:
 
 -->
 
+## Terminal reconnect overhaul + click-to-recover affordance (#936, #939, PR #962)
+
+A Codev terminal whose WebSocket dies — Tower restart, a forgotten session id, a transient network blip — used to fill the pane with `[Codev: Connection lost, reconnecting...]` lines in a tight loop. No backoff, no give-up, no actual reconnect — and the comment in the code claimed the terminal-manager handled reconnection while in fact nothing subscribed. The architect's real output kept flowing into a live Tower-side PTY, buried under the spam.
+
+This release rewires the terminal adapter to *own* its reconnect loop:
+
+- **Exponential backoff** (1s → 2s → 4s → 8s → 16s → 30s) instead of fire-as-fast-as-possible. The pane now shows one `[Codev: retrying in Ns (attempt n/6)]` line per interval, not several per second.
+- **Bounded retry**: after 6 attempts (~63s total under the backoff curve), the adapter stops and prints a red failure line. No more terminals stuck in an unbounded loop.
+- **Fast-give-up on stale-session**: when Tower's WebSocket close-frame indicates the session id is unknown (i.e. Tower restarted, the PTY is gone), the adapter recognises the case from the upgrade-error string and surfaces the red give-up immediately — no waiting through 6 retries for a hopeless retry chain.
+- **Stream-state isolation across reconnects**: the terminal's ANSI decoder and escape-sequence buffer are reset *before* each scheduled reconnect, so a half-received escape sequence from the dead socket can't corrupt the new one's output. An identity guard on the close handler also prevents the *old* socket's late-arriving `close` from scheduling a stray retry against a healthy reconnected socket — a class of bug that bit a prior attempt at this fix.
+
+On top of that give-up state, **#939** ships a recovery affordance: the red failure line carries a clickable `Reconnect` token (via a terminal link provider). One click starts a fresh retry chain from the same terminal — repeatable, so a "click → retry → fail again → click" cycle works every time. The user no longer needs to close the terminal tab and re-open via the sidebar / command palette to recover.
+
+Targeting works correctly across multiple terminals: the click reconnects the terminal whose line was clicked, not whichever terminal happens to be active.
+
+A follow-up (#961) tracks consolidating the four duplicated copies of the exponential-backoff curve (this adapter, the SSE connection-manager, the dashboard's web terminal, the tunnel client) into a single `@cluesmith/codev-core` policy — including the design call on whether the dashboard's web terminal should adopt the same 6-attempt give-up and stale-session fast-path it currently lacks.
+
 ## Area-header roll-up icons (#926, PR #959)
 
 The `area/*` group headers in the Backlog and Builders sidebar trees now carry a status glyph that summarises what's inside, so you can triage areas at a glance without expanding each group.
