@@ -52,6 +52,29 @@ combined design is reviewed by this Plan's 3-way consult per the architect.
 }
 ```
 
+## Cross-Cutting Implementation Contracts
+These shared mechanics are relied on by multiple phases — pinned here so the independent Phase 1/2
+work merges cleanly (addresses iter-1 plan review: Codex backend-routing, Claude dual-dispatch +
+config-key + migration):
+
+- **Backend-aware dispatch (not just model-aware).** Both backends share the model identifier
+  `gemini`, so the current single `if (model === 'gemini')` dispatch (`consult/index.ts:~631`) becomes
+  **backend-branched**: resolve the selected backend first (Phase 3), then route to the `agy` branch
+  (Phase 1) or the `api` branch (Phase 2). Phases 1 and 2 each implement their own branch behind this
+  split.
+- **Backend-aware parsing/metrics.** `extractReviewText` and `extractUsage`
+  (`consult/usage-extractor.ts`) currently branch on `model === 'gemini'` and assume the old CLI JSON
+  (`stats.models`). That is insufficient for two `gemini` backends. **Thread the resolved `backend`
+  into the extractor** (parameter or pre-parse in `index.ts` before recording metrics): `agy` → raw
+  text review + **null usage** (graceful cost degradation); `api` → SDK text + **`usageMetadata`** →
+  real cost. The old `stats.models`/`JSON.parse` gemini path is removed.
+- **New top-level `consult` config key.** `consult.gemini.backend` is a **new** top-level `consult`
+  section in `CodevConfig` (`lib/config.ts`) — **distinct** from the existing `porch.consultation.models`
+  (lane backend selection ≠ porch model lists). Do not nest it under `porch.consultation`.
+- **No config migration.** Existing `.codev/config.json` files lack the key; a **missing value falls
+  through to the default** (the `auto` selector) — no migration logic.
+- **Model identifier stays `gemini`** everywhere (no rename); `pro` alias kept.
+
 ## Phase Breakdown
 
 ### Phase 1: agy backend (OAuth/subscription, agentic file-reading)
@@ -218,7 +241,12 @@ combined design is reviewed by this Plan's 3-way consult per the architect.
 - **Files**: `packages/codev/src/commands/doctor.ts` (consolidated dual-backend reporting if not fully
   done in P1/P2); docs — `CLAUDE.md`, `AGENTS.md`, `README.md`,
   `codev-skeleton/resources/commands/consult.md`, `.claude/skills/consult/SKILL.md` (+ skeleton copy),
-  `codev-skeleton/DEPENDENCIES.md`; tests — `packages/codev/tests/e2e/` (+ a porch-progression test).
+  `codev-skeleton/DEPENDENCIES.md`; tests — `packages/codev/src/__tests__/cli/` (e2e, e.g.
+  `consult.e2e.test.ts`/`doctor.e2e.test.ts`) + a porch-progression test (see Test locations note).
+- **Doctor operational-model counting (Codex iter-1):** `doctor.ts` has an "AI CLI dependencies"
+  section + an **operational-model count** that fails ("no model verifies") when none is found. Update
+  it so the Gemini lane counts as **operational when EITHER backend is usable** — an **API-only**
+  Gemini setup (no `agy`, but `GEMINI_API_KEY` set) must be reported operational, not failed.
 - **Model-identifier audit:** confirm `gemini` stays in `MODEL_CONFIGS`, `VALID_MODELS`
   (`porch/next.ts:51`), `protocol-schema.json:155` enum, and all protocol-JSON default model lists —
   **no rename**; `pro` alias kept. Keep skeleton ↔ `codev/` copies identical.
@@ -242,8 +270,18 @@ combined design is reviewed by this Plan's 3-way consult per the architect.
 - [ ] E2E + porch-progression tests green.
 
 #### Test Plan
-- **E2E** (`tests/e2e/`): both backends headline path; porch run advances on skip.
-- **Consistency**: skeleton/codev schema+defaults; model-identifier audit assertion.
+- **E2E** (`packages/codev/src/__tests__/cli/`): both backends headline path; porch run advances on skip.
+- **Consistency**: skeleton/codev schema+defaults; model-identifier audit assertion. Note the
+  **`protocol-schema.json` enum lives only in the skeleton copy** (`codev-skeleton/protocol-schema.json:155`
+  = `["gemini","codex","claude"]`); `codev/protocols/protocol-schema.json` has no model enum — the audit
+  covers both, but they are distinct files. (Claude iter-1.)
+
+> **Test locations (canonical — Codex/Claude iter-1 correction):** unit tests live in
+> `packages/codev/src/__tests__/` (`consult.test.ts`, `doctor.test.ts`, `config.test.ts`); e2e in
+> `packages/codev/src/__tests__/cli/`; `metrics.test.ts` in
+> `packages/codev/src/commands/consult/__tests__/`; `consultation-models.test.ts` in
+> `packages/codev/src/commands/porch/__tests__/`. **`packages/codev/tests/e2e|unit` do NOT exist** —
+> do not create them.
 
 #### Risks
 - **Risk**: doc/skeleton drift across the four-tier resolver. **Mitigation**: update both trees; a
@@ -280,9 +318,20 @@ Phases 1 and 2 are independent (parallelizable). Phase 3 needs both. Phase 4 is 
       `codev-skeleton/DEPENDENCIES.md`.
 
 ## Expert Review
-**Date**: (pending — porch runs the Plan's 3-way consult on `porch done`)
-**Models**: Gemini, Codex, Claude
-**Key Feedback / Plan Adjustments**: (to be filled after consultation)
+**Date**: 2026-06-02 (iteration 1)
+**Models**: Gemini **APPROVE** · Codex **REQUEST_CHANGES** · Claude **COMMENT**
+**Key Feedback / Plan Adjustments** (all addressed; rebuttal `778-plan-iter1-rebuttals.md`):
+- Backend-aware dispatch + parsing/metrics (both backends are `gemini` → thread `backend` through;
+  `extractReviewText`/`extractUsage` no longer assume the old CLI JSON) — added **Cross-Cutting
+  Implementation Contracts**. (Codex #1, Claude #1)
+- `doctor` operational-model counting must treat an **API-only** Gemini setup as operational —
+  added to Phase 4. (Codex #2)
+- **Test paths corrected** to `packages/codev/src/__tests__/` (+ `…/cli/` e2e; `metrics.test.ts` in
+  `…/commands/consult/__tests__/`; `consultation-models.test.ts` in `…/commands/porch/__tests__/`);
+  `packages/codev/tests/e2e|unit` don't exist. (Codex #3, Claude #2)
+- `consult.gemini.backend` documented as a **new top-level `consult` key** (not under
+  `porch.consultation`); **no config migration** (missing → default); `protocol-schema.json` enum is
+  skeleton-only. (Claude)
 
 ## Approval
 - [ ] Architect review (plan-approval gate)
