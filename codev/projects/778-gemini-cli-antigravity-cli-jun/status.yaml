@@ -1,9 +1,15 @@
 id: '778'
 title: gemini-cli-antigravity-cli-jun
 protocol: spir
-phase: plan
-plan_phases: []
-current_plan_phase: null
+phase: implement
+plan_phases:
+  - id: agy_backend
+    title: 'Phase 1: agy backend dispatch (OAuth, agentic file-reading, non-blocking skip)'
+    status: in_progress
+  - id: docs_skeleton_e2e
+    title: 'Phase 2: Doctor + docs + skeleton consistency + e2e verification'
+    status: pending
+current_plan_phase: agy_backend
 gates:
   spec-approval:
     status: approved
@@ -18,7 +24,7 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history: []
 started_at: '2026-06-02T01:16:31.004Z'
-updated_at: '2026-06-02T20:33:37.525Z'
+updated_at: '2026-06-02T20:34:21.328Z'
