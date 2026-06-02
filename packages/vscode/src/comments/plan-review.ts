@@ -117,6 +117,7 @@ export function activateReviewComments(
 
   // Command: submit a new review comment from an empty thread.
   context.subscriptions.push(
+    // eslint-disable-next-line no-restricted-syntax -- intentionally unguarded: CLI-independent command (edits local review markers), so no regCli guard is wanted (#791)
     vscode.commands.registerCommand(
       'codev.submitReviewComment',
       async (reply: vscode.CommentReply) => {
@@ -128,6 +129,7 @@ export function activateReviewComments(
   // Command: delete an inline review comment (removes the `<!-- REVIEW... -->`
   // line from the file).
   context.subscriptions.push(
+    // eslint-disable-next-line no-restricted-syntax -- intentionally unguarded: CLI-independent command (edits local review markers), so no regCli guard is wanted (#791)
     vscode.commands.registerCommand(
       'codev.deleteReviewComment',
       async (thread: vscode.CommentThread) => {
