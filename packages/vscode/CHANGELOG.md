@@ -15,6 +15,7 @@ What's changed in the Codev VS Code extension, version by version, written for t
 
 ### Bug fixes
 
+- **Blocked-builder inline action button no longer reads as "approve."** The `✓` glyph on the inline button (which appears for every blocked builder regardless of which gate they're at) is now a neutral `→` arrow. Behaviour is unchanged — clicking still opens the approve flow — but the icon no longer over-promises "approve" on rows whose underlying gate action is View Plan, Run Dev, etc. Per-gate triage continues to live on the row's leading icon.
 - **`Open Builder Terminal` and `Send Message` Quick Picks show issue # + title.** Both palette commands used to label rows with the internal builder name (e.g. `pir-1333`), while the seven other builder pickers in the extension already showed `#909 architect: treat area/*...`. The two outliers now match the established format.
 
 ## [3.1.6] - 2026-05-31
