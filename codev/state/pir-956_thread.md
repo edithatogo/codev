@@ -30,4 +30,28 @@ core+codev only). Reviewer confirmed lint-only enforcement is enough — NO CI j
 Enforcement = local `pnpm lint` + VSIX packaging/publish gate (`pnpm package` runs lint).
 Documented as deliberate scope boundary in the plan's "Enforcement scope" section.
 
-Awaiting plan-approval gate.
+Plan-approval gate: APPROVED.
+
+## Implement phase
+
+Applied 3 edits per plan:
+- `eslint.config.mjs` — `no-restricted-syntax` rule (`error` severity), selector on
+  `vscode.commands.registerCommand`, message names reg/regCli + cites #791.
+- `extension.ts:484-489` — 2 `eslint-disable-next-line ... -- this IS the reg/regCli helper (#791)`.
+- `comments/plan-review.ts` — 2 `eslint-disable-next-line ... -- CLI-independent review-comment command in a separate module`.
+
+Verification:
+- `pnpm lint` → clean (exit 0) with all 4 exemptions.
+- Negative probe (transient temp file, removed): bare `registerCommand` → 1 error at the
+  call site with the #791 message. Positive probe `reg(...)` → clean. Confirms the rule bites
+  only unjustified bare calls.
+- `pnpm check-types` → clean (after building core+types first; the fresh-worktree failures
+  were all pre-existing `@cluesmith/codev-core/workspace` missing-module + implicit-any in
+  `views/*.ts`, none in files I touched — NOT my change).
+- `node esbuild.js` → bundle builds clean. No bundle content change (comments + lint config
+  don't ship).
+
+Note for porch checks: root `npm run build` / `npm test` target core+codev, not vscode, so
+they pass independent of this change. The real verification for this change is vscode `pnpm lint`.
+
+Awaiting dev-approval gate.
