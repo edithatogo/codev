@@ -16,3 +16,23 @@
 - #939: Shape 1 confirmed by architect / reconnect resets attempt counter to 0 / default VSCode link styling / link works every cycle.
 
 Launched investigation workflow (wf_0df35ed1-fc8): Tower close-frame semantics, terminal-manager wiring, Vitest test patterns, registerTerminalLinkProvider integration, config conventions.
+
+## Plan approved → Implement phase (2026-06-02)
+
+Plan-approval gate approved by human; porch advanced to `implement`. Plan committed at 59bf52b6.
+
+**Empirical confirmation (ws 8.20.0):** a rejected WS upgrade fires `error` with message `"Unexpected server response: <code>"` then `close` with code `1006`. So 4xx upgrade rejection (Tower's session-not-found = 404) is detectable client-side. Decision: fast-give-up on `/Unexpected server response: 4\d\d/` (any client error → retry won't help); 5xx/network stay on backoff.
+
+**Implement decisions locked:**
+- Shared marker constant `RECONNECT_LINK_TEXT = 'Click here to reconnect'` exported from terminal-adapter, imported by the link provider (prevents drift — plan risk mitigation).
+- #939 link carries `context.terminal` threaded through the link object (VSCode returns same instance to handleTerminalLink) → reconnect the clicked terminal, not activeTerminal.
+- Worktree had NO node_modules (postSpawn didn't install); ran `pnpm install` in worktree.
+
+**Implementation complete (3 commits):**
+- adapter (terminal-adapter.ts): MAX_RECONNECT_ATTEMPTS=6, MAX_RECONNECT_DELAY=30000, exported `RECONNECT_LINK_TEXT`; `scheduleReconnect()`/`giveUp()`/`resetStreamState()`; identity-guarded close; 4xx error fast-give-up; reset-on-open; `reconnect()` resets budget+gaveUp; `close()` clears timer.
+- #939 wiring: `terminal-manager.reconnectByTerminal(terminal)`, `ReconnectTerminalLinkProvider` (threads `ctx.terminal` through the link), registered in extension.ts.
+- Tests: `__tests__/terminal-adapter.test.ts` (8 cases, mocks vscode/ws/escape-buffer/codev-types, fake timers, drives real close-loop) + `__tests__/reconnect-link-provider.test.ts` (3 cases).
+
+**Verification:** had to `pnpm --filter codev-types build` + `codev-core build` first (unbuilt dist broke vitest module resolution — even mocked deps must resolve). Then: vitest 208/208 pass (11 new), `check-types` clean, `lint` clean, esbuild bundle OK.
+
+Next: push, `porch done 936`, dev-approval gate (human runs worktree via `afx dev pir-936`).
