@@ -1,7 +1,7 @@
 id: '952'
 title: vscode-builders-tree-should-gr
 protocol: pir
-phase: implement
+phase: review
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -19,4 +19,4 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-06-02T02:26:28.948Z'
-updated_at: '2026-06-02T23:55:44.618Z'
+updated_at: '2026-06-02T23:56:52.245Z'
