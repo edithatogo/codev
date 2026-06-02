@@ -122,15 +122,22 @@ export function timeSince(isoDate: string, now: number): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
+/** Which axis the Builders tree currently groups by (#952). */
+export type BuildersGroupBy = 'stage' | 'area';
+
 /**
- * The builder row's label. The `area/*` label leads the row
- * (`[<area>] #<id> <title>`), sitting at a FIXED offset right after the row's
- * icon. The *phase* no longer appears in the row — under stage-grouping (#952)
- * it's implied by the row's containing group header, so the prefix carries the
- * orthogonal domain signal instead. Area echoes the raw lowercase wire value
- * (`[vscode]`, `[cross-cutting]`); the `Uncategorized` sentinel (a builder whose
- * issue has no `area/*` label) omits the prefix entirely — the row reads
- * `#<id> <title>` rather than carrying a literal `[Uncategorized] `.
+ * The builder row's label. The prefix carries whichever axis is NOT the active
+ * group header — the group conveys one dimension, the prefix the other (#952):
+ *  - `groupBy: 'stage'` → groups are lifecycle stages, so the prefix is the
+ *    `area/*` label: `[<area>] #<id> <title>`. The `Uncategorized` sentinel
+ *    (issue has no `area/*` label) omits the prefix — `#<id> <title>`.
+ *  - `groupBy: 'area'` → groups are `area/*` labels, so the prefix is the coarse
+ *    `protocolPhase` (the original #810 behavior): `[<phase>] #<id> <title>`.
+ *    Empty `protocolPhase` (transient init) omits the prefix.
+ *
+ * The prefix sits at a FIXED offset right after the row's icon. The phase uses
+ * the coarse `protocolPhase` (`plan`/`implement`/`review`), NOT the collapsed
+ * `phase` field (which prefers free-form plan sub-phase ids).
  *
  * The state-dispatched suffix is preserved for blocked/idle duration:
  *  - blocked: ` blocked on <label> [<elapsed>]`
@@ -141,7 +148,12 @@ export function timeSince(isoDate: string, now: number): string {
  * `isIdleWaiting` for the icon + contextValue dispatch) rather than recomputed
  * here — keeps this helper pure and unit-testable without a build step.
  */
-export function builderRowLabel(b: OverviewBuilder, isIdle: boolean, now: number): string {
+export function builderRowLabel(
+  b: OverviewBuilder,
+  isIdle: boolean,
+  now: number,
+  groupBy: BuildersGroupBy,
+): string {
   const isBlocked = !!b.blocked;
   const waitTime = isBlocked && b.blockedSince ? ` [${timeSince(b.blockedSince, now)}]` : '';
   const idleTime = isIdle && b.lastDataAt ? ` [${timeSince(b.lastDataAt, now)} silent]` : '';
@@ -150,6 +162,8 @@ export function builderRowLabel(b: OverviewBuilder, isIdle: boolean, now: number
     : isIdle
     ? ` waiting on input${idleTime}`
     : '';
-  const areaPrefix = b.area && b.area !== UNCATEGORIZED_AREA ? `[${b.area}] ` : '';
-  return `${areaPrefix}#${b.issueId ?? b.id} ${b.issueTitle ?? ''}${stateLabel}`;
+  const prefix = groupBy === 'area'
+    ? (b.protocolPhase ? `[${b.protocolPhase}] ` : '')
+    : (b.area && b.area !== UNCATEGORIZED_AREA ? `[${b.area}] ` : '');
+  return `${prefix}#${b.issueId ?? b.id} ${b.issueTitle ?? ''}${stateLabel}`;
 }
