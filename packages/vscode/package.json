@@ -78,7 +78,7 @@
       {
         "command": "codev.approveGate",
         "title": "Codev: Approve Gate",
-        "icon": "$(check)"
+        "icon": "$(arrow-right)"
       },
       {
         "command": "codev.cleanupBuilder",
