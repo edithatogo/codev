@@ -25,4 +25,9 @@ Plan file: `codev/plans/956-vscode-lint-rule-banning-bare-.md` (exact name requi
 
 `pnpm install` run (node_modules was missing in fresh worktree) so implement phase can run lint.
 
+**CI check**: confirmed no workflow lints/builds/packages `packages/vscode` (test.yml covers
+core+codev only). Reviewer confirmed lint-only enforcement is enough — NO CI job added.
+Enforcement = local `pnpm lint` + VSIX packaging/publish gate (`pnpm package` runs lint).
+Documented as deliberate scope boundary in the plan's "Enforcement scope" section.
+
 Awaiting plan-approval gate.

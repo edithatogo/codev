@@ -77,6 +77,20 @@ The `--` suffix on each disable comment is ESLint's built-in description syntax,
 
 No production logic changes. No bundle change (comments and lint config don't ship). Net diff well under 50 LOC.
 
+## Enforcement scope (decided)
+
+CI does **not** lint `packages/vscode` today — none of the four workflows
+(`test.yml`, `e2e.yml`, `dashboard-e2e.yml`, `post-release-e2e.yml`) run `pnpm lint`,
+build, or package the extension; they cover only `packages/core` and `packages/codev`.
+A bare `registerCommand` therefore will **not** fail a GitHub PR check.
+
+This is an accepted, deliberate boundary for #956 (confirmed with the reviewer): the rule
+is enforced via **`pnpm lint` locally and at VSIX packaging / publish time** — `pnpm package`
+(and `vscode:prepublish` → `pnpm package`) runs `check-types && lint && esbuild`, so a bare
+call blocks the extension from being packaged or published. Adding a vscode lint job to CI
+is explicitly **out of scope** here (would be a separate issue). The acceptance criterion
+"fails `pnpm lint`" is fully met.
+
 ## Risks & Alternatives Considered
 
 - **Risk — selector misses aliased forms.** The selector only matches the `vscode.commands.registerCommand(...)` member-expression. A contributor who does `const { registerCommand } = vscode.commands; registerCommand(...)` is not caught. Mitigation: accepted as out of scope — that form is contrived and unidiomatic in this codebase (zero instances today); the rule targets the realistic copy-paste regression. Documented here so it's a known limit, not a surprise.
