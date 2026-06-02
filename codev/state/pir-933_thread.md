@@ -28,3 +28,10 @@ Plan approved. One-line change: `codev.approveGate` icon `$(check)` →
 `$(arrow-right)` in `packages/vscode/package.json`. No code, no behavior change.
 Checks (worktree): check-types ✓, lint ✓, test:unit 197/197 ✓.
 Committed, pushed. `porch done` → awaiting `dev-approval`.
+
+## Review (2026-06-02)
+
+Review file written, PR #963 opened (body = review). 3-way consult (single
+advisory pass): gemini/codex/claude all APPROVE, HIGH, no issues. (Gemini's
+first run hit a transient exit-1; rerun succeeded.) `pr` gate pending —
+notified architect (all-clear), awaiting human merge + gate approval.
