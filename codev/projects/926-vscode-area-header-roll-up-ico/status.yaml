@@ -1,0 +1,32 @@
+id: '926'
+title: vscode-area-header-roll-up-ico
+protocol: pir
+phase: verified
+plan_phases: []
+current_plan_phase: null
+gates:
+  plan-approval:
+    status: approved
+    requested_at: '2026-05-29T23:18:30.622Z'
+    approved_at: '2026-06-02T00:00:00.276Z'
+  dev-approval:
+    status: approved
+    requested_at: '2026-06-02T00:28:22.507Z'
+    approved_at: '2026-06-02T00:55:06.695Z'
+  pr:
+    status: approved
+    requested_at: '2026-06-02T01:13:29.307Z'
+    approved_at: '2026-06-02T01:14:46.594Z'
+iteration: 1
+build_complete: true
+history: []
+started_at: '2026-05-29T23:15:30.202Z'
+updated_at: '2026-06-02T01:15:07.063Z'
+pr_history:
+  - phase: review
+    pr_number: 959
+    branch: builder/pir-926
+    created_at: '2026-06-02T00:56:51.014Z'
+    merged: true
+    merged_at: '2026-06-02T01:15:07.062Z'
+pr_ready_for_human: false
