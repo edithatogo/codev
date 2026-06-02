@@ -1,7 +1,7 @@
 id: '961'
 title: core-extract-transport-agnosti
 protocol: pir
-phase: plan
+phase: implement
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -17,4 +17,4 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-06-02T06:39:55.914Z'
-updated_at: '2026-06-02T07:00:09.945Z'
+updated_at: '2026-06-02T07:00:16.798Z'
