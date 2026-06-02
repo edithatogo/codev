@@ -1,477 +1,237 @@
-# Specification: Survive the Gemini CLI Retirement (June 18, 2026)
+# Specification: Migrate the Gemini consult lane to the Antigravity CLI (`agy`)
 
 ## Metadata
-- **ID**: spec-2026-06-01-778-gemini-cli-retirement
-- **Status**: draft (revised after 3-way consultation, iteration 1)
+- **ID**: spec-2026-06-01-778-gemini-antigravity-cli
+- **Status**: draft (rewritten to Approach B per architect directive 2026-06-02)
 - **Created**: 2026-06-01
 - **Issue**: #778
-- **Deadline**: 2026-06-18 (17 days from spec authoring)
+- **Deadline**: 2026-06-18 (Gemini CLI subscription serving retires)
 
-## Clarifying Questions Asked
+## Architect Directive (supersedes prior draft)
+The first draft recommended pivoting the Gemini lane to the Gemini **Developer API** (Approach A).
+The architect **rejected** that at the spec-approval gate and directed **Approach B — swap the lane's
+backend from the `gemini` CLI to the Antigravity CLI (`agy`)** — with these fixed priorities:
+1. **Preserve agentic file-reading.** `agy` is an agent that reads files from disk like the old
+   `gemini` CLI. Do **not** inline-and-strip filesystem access (that was an A-path quality
+   regression). Keep the existing "read the diff / explore the filesystem" reviewer prompts.
+2. **Keep the Pro model** (gemini-3.1-pro-class). Pro ≫ flash for code-review quality; do not let
+   reviews default to flash.
+3. **Subscription / OAuth auth** (AI Ultra) — ~3× cheaper than per-token API for our volume. **Not**
+   an API key.
+4. **Keep it lean.** This is fundamentally a backend swap (`cli:'gemini'` → `agy` + flags) + auth +
+   the skip safety, **not** a redesign.
 
-No spec pre-existed and the issue contains no "Baked Decisions" section, so the builder did not
-block on clarifying questions (per SPIR strict-mode flow, the architect decides at the
-spec-approval gate). The builder resolved the open questions through research and a codebase audit,
-and surfaces the one genuinely architectural fork (Open Questions → Critical) for the architect to
-settle at the gate.
-
-Questions the builder answered through research (sources in **References**):
-
-1. **What precisely is retired on June 18, 2026, and for whom?**
-   The *subscription / OAuth serving path* through the **Gemini CLI** and **Gemini Code Assist
-   IDE extensions** stops serving requests for **Google AI Pro**, **Google AI Ultra**, and **free
-   "Gemini Code Assist for individuals"** users. Gemini Code Assist for GitHub is also affected
-   (no new org installs on June 18; existing requests stop in the following weeks). **Enterprise**
-   customers (Standard / Enterprise licenses, Google Cloud access) are *unaffected* and may keep
-   using the Gemini CLI.
-
-2. **Is the Gemini API itself retired?**
-   **No.** The Gemini **Developer API** (via `GEMINI_API_KEY`, Google AI Studio) and **Vertex AI**
-   remain fully operational; the API is explicitly *not* deprecated. Separately, from **June 19,
-   2026** Google blocks *unrestricted* API keys — keys must be scoped to the **Generative Language
-   API** in Cloud Console or they stop working with Gemini. This is a configuration note for
-   API-key users, not a deprecation.
-
-3. **Is "Antigravity CLI" a drop-in replacement for our usage?**
-   **Not currently.** Antigravity CLI (binary reportedly `agy`, written in Go) is an *agent-first,
-   asynchronous, multi-agent* terminal product. Its non-interactive / JSON / model-flag contract is
-   **unconfirmed**, and as of late May 2026 `agy` was **not published to any public package
-   manager**. The official migration guide page carried no extractable technical detail at spec
-   time.
+The prior draft's two good catches are **retained**: (a) a dead/unavailable lane must be a
+**porch-safe NON-BLOCKING skip** (porch's verdict parser defaults missing/short output to
+`REQUEST_CHANGES`, which would otherwise block phase progression); (b) usage/cost handling must
+**degrade gracefully** (subscription credits aren't per-token). The Gemini-API approach is now
+**out of scope** (see Out of Scope).
 
 ## Problem Statement
+Codev's `consult` tool uses the Google **Gemini CLI** (`gemini`) as one of three default reviewer
+lanes (with Codex and Claude). On **June 18, 2026**, the Gemini CLI / Code Assist subscription
+serving stops for Google AI Pro/Ultra/free-individual users. Because `gemini` is a *default* model
+and porch's verdict parser blocks on a missing/error review, the dead lane would not just reduce
+review coverage — it would **block** SPIR/ASPIR/BUGFIX/AIR/PIR/MAINTAIN phase progression for
+affected users on a hard deadline. Codev must move the "Gemini perspective" onto Google's
+replacement, the **Antigravity CLI (`agy`)**, using the user's subscription auth.
 
-Codev's multi-agent consultation system (`consult`) treats **Gemini** as one of three default
-reviewer "lanes" (alongside Codex and Claude). The Gemini lane works by shelling out to the
-Google **Gemini CLI** binary (`gemini`). For the large class of Codev users authenticated through
-the free / Pro / Ultra **subscription path**, that binary stops serving requests on **June 18,
-2026**.
+## Verified `agy` Contract (empirical, 2026-06-01)
+All of the following was confirmed by installing and running the real CLI on macOS (darwin_arm64):
 
-When that happens, every Codev workflow that runs a 3-way review — SPIR/ASPIR/MAINTAIN spec, plan,
-and PR consultations; BUGFIX/AIR/PIR PR consultations; ad-hoc `consult -m gemini` — will have its
-Gemini lane **fail at runtime** for affected users. Because `gemini` is in the *default* model list
-for these protocols, this is not an opt-in feature that quietly no-ops; it is a default code path
-that breaks. Worse, in porch-orchestrated protocols a failing lane does not merely drop out: porch's
-verdict parser **defaults missing/short/error output to `REQUEST_CHANGES`** (`verdict.ts:27,46-47`)
-and treats `CONSULT_ERROR`/`REQUEST_CHANGES` as approval-blocking — so a dead Gemini lane will
-**block phase progression**, not just reduce review coverage. The failure is *silent-until-invoked*:
-nothing surfaces today, then on June 18 a core review path starts erroring (and blocking) for a major
-user segment, on a hard calendar deadline.
+- **The real CLI is a standalone binary, distinct from the IDE.** `which agy` resolves to
+  `~/.antigravity/antigravity/bin/agy`, which is a **symlink to the Antigravity IDE Electron binary**
+  (`/Applications/Antigravity.app/.../bin/antigravity`) — *not* the headless CLI. The real CLI is a
+  ~142 MB native Go binary, **v1.0.4**, installed via the official Unix script
+  `https://antigravity.google/cli/install.sh` (SHA512-verified) to **`~/.local/bin/agy`**. The
+  installer prepends `~/.local/bin` to PATH (`.zshrc`/`.zprofile`), so fresh shells resolve the real
+  CLI — but Codev must **not trust PATH** (stale shells / the IDE symlink shadow it). → **Footgun:
+  Codev must invoke the real CLI deterministically** (pin path and/or verify the resolved binary is
+  the CLI, e.g. it answers `--print`, not the IDE launcher).
+- **Headless mode:** `agy --print` (aliases `-p`, `--prompt`) — "run a single prompt
+  non-interactively and print the response." `--print-timeout <dur>` (default 5m).
+- **File access (preserves agentic reading):** `agy --print --sandbox --add-dir <dir> "<prompt>"`
+  reads files from `<dir>` non-interactively **without** `--dangerously-skip-permissions` —
+  verified end-to-end (the reviewer read a planted file and returned its contents). `--sandbox`
+  ("terminal restrictions enabled") auto-grants read access to `--add-dir` paths without a TTY
+  prompt. This is the **recommended, more-constrained** mechanism; the broader
+  `--dangerously-skip-permissions` (auto-approve *all* tool requests) is **not needed** and was
+  (rightly) flagged as a risk — avoid it.
+- **Auth = OAuth / subscription** (matches priority #3): first run prints a Google OAuth URL (scopes
+  `cloud-platform`, `userinfo.email/profile`, `openid`) and accepts a browser sign-in or a pasted
+  auth code; the token then persists (under `~/Library/Application Support/Antigravity`) and
+  subsequent `--print` runs need no re-auth. No API key. **Caveat:** the first-run auth wait is short
+  (~30s) and **interactive** — it cannot be completed head-less in CI.
+- **No `--model` flag.** Model is tier/config-based (binary exposes `GetModelTier`/`GetPlanModel`/
+  `GetFlashLite`/`customModels`), not a CLI argument. → **Pinning Pro is an open question** (below).
+  A self-identification probe **timed out**, so model id is not reliably introspectable via `--print`.
+- **No JSON / usage output.** `--print` returns plain text only — no token-usage stats. → cost rows
+  must degrade gracefully.
+- **No system-prompt/role flag** (no `GEMINI_SYSTEM_MD` equivalent). → fold the reviewer role into
+  the `--print` prompt text.
+- **Instruction-following works** in `--print` (a constrained "reply with only X" task returned
+  exactly X).
 
-This spec defines WHAT Codev must do to keep its "Gemini perspective" working past June 18, 2026,
-and to stop steering users toward a serving path that is going away — WITHOUT depending on a
-product (Antigravity CLI) that does not yet expose the contract Codev requires.
-
-## Current State
-
-Codev depends on the `gemini` CLI binary at these surfaces (audited 2026-06-01, line numbers
-verified):
-
-**Consultation dispatch (the load-bearing dependency)**
-- `packages/codev/src/commands/consult/index.ts:37-40` — `MODEL_CONFIGS.gemini = { cli: 'gemini',
-  args: ['--model', 'gemini-3.1-pro-preview'], envVar: 'GEMINI_SYSTEM_MD' }`.
-- `index.ts:43` — `SDK_MODELS = ['claude', 'codex']` (these lanes already use SDKs, not CLIs).
-- The Gemini lane spawns the `gemini` subprocess with `--output-format json`, passes the reviewer
-  **role** via `GEMINI_SYSTEM_MD` (a temp file path), delivers the **prompt over stdin** (avoiding
-  `E2BIG` / V8 heap exhaustion on large PR diffs — bugfix #680), bumps `NODE_OPTIONS` heap, and
-  parses a JSON result with token/usage stats.
-- `index.ts:54-58` — alias `pro → gemini`.
-
-**The Gemini lane relies on the reviewer being a filesystem-capable AGENT (critical — see Approach A)**
-- The PR/impl review prompts assume the reviewer can read files from disk:
-  - `index.ts:884` — "**Read the diff file** from `${diffPath}` ..." (`buildPRQuery` writes the full
-    diff to a temp file and points the model at the path).
-  - `index.ts:885,1042,1154` — "**full filesystem access** — read project files from disk ...".
-  - `index.ts:1051` — "**Explore the filesystem** to find and review the implementation changes."
-  - `index.ts:664,1588` — "You have file access. Read files directly from disk to review code."
-- The retiring `gemini` CLI is an **agent** (it reads files itself; doctor even uses `--yolo`). A
-  plain single-shot Gemini Developer API `generateContent` call **cannot read files from disk**.
-  This is the single most important constraint on the migration and is addressed head-on in
-  Approach A below.
-
-**Defaults & schema (why the breakage is a default, not opt-in)**
-- `packages/codev/src/lib/config.ts:88` — default consult models = `['gemini', 'codex', 'claude']`.
-- `codev-skeleton/protocols/{spir,aspir,maintain}/protocol.json` — phases default to
-  `["gemini", "codex", "claude"]`; `{air,pir,bugfix}/protocol.json` default to `["gemini", "codex"]`.
-- `codev-skeleton/protocol-schema.json:155` — consultation model enum = `["gemini","codex","claude"]`.
-- `packages/codev/src/commands/porch/next.ts:51` — `VALID_MODELS = ['gemini','codex','claude','hermes']`
-  (note: `hermes` is valid in porch but **absent** from the schema enum — a pre-existing precedent
-  that the two lists can diverge).
-
-**Porch gate semantics (why a skipped lane is not free)**
-- `packages/codev/src/commands/porch/verdict.ts:27,46-47` — missing / unparseable / short consult
-  output defaults to `REQUEST_CHANGES`; `CONSULT_ERROR` and `REQUEST_CHANGES` block approval (`:55`).
-  Therefore "skip Gemini" must be given **explicit non-blocking semantics**, not left implicit.
-
-**Health checks & cost**
-- `packages/codev/src/commands/doctor.ts:153-163` — `gemini` presence check (`required: false`),
-  install hint → `github.com/google-gemini/gemini-cli`.
-- `doctor.ts:266-274` — auth verification runs `gemini --yolo 'Reply with just OK'`; hint: "Run:
-  gemini (interactive) then /auth, or set GOOGLE_API_KEY".
-- `packages/codev/src/commands/consult/usage-extractor.ts` — pricing entry keyed `gemini-3.1-pro`.
-
-**Other Gemini-touching surfaces (scoped explicitly under "Scope" below)**
-- `packages/codev/src/agent-farm/utils/harness.ts:114,240` — a **Gemini-CLI builder harness**
-  (`GEMINI_HARNESS`): Codev can spawn a *builder agent* that uses the `gemini` CLI as its coding
-  agent. This path also breaks for affected tiers.
-- `packages/codev/src/commands/generate-image.ts` — uses the Gemini **API** (`GEMINI_API_KEY`)
-  already; **unaffected** by the CLI retirement.
-- `packages/codev/src/agent-farm/commands/bench.ts` — benchmarking defaults reference `gemini`.
-- `cli.ts` references (flag wiring); docs in `CLAUDE.md`, `AGENTS.md`, `README.md`,
-  `codev-skeleton/resources/commands/consult.md`, the consult skill, `DEPENDENCIES.md`.
-
-**Tests**: ~60 cases across `consult.test.ts`, `consult.e2e.test.ts`, `metrics.test.ts`,
-`consultation-models.test.ts`, `doctor.test.ts`, `config.test.ts`.
-
-**Net assessment**: the *behavioral* dependency is concentrated in the consult Gemini dispatch and
-its prompt builders; everything else is configuration, gate semantics, health-checks, naming, docs,
-and tests that orbit it. The migration is **narrow in behavior, wide in surface** — with one sharp
-correctness constraint (filesystem access) that shapes the whole design.
+## Current State (Codev's `gemini` surface — audited 2026-06-01)
+- `packages/codev/src/commands/consult/index.ts:37-40` — `MODEL_CONFIGS.gemini = { cli:'gemini',
+  args:['--model','gemini-3.1-pro-preview'], envVar:'GEMINI_SYSTEM_MD' }`; spawns with
+  `--output-format json`, role via `GEMINI_SYSTEM_MD` temp file, prompt via stdin (heap handling for
+  >500 KB diffs, bugfix #680), parses JSON usage. Alias `pro → gemini` (`:54-58`).
+- Prompt builders rely on **agentic file-reading** (to be PRESERVED): `:884` "Read the diff file from
+  `${diffPath}`", `:1051` "Explore the filesystem", `:885/1042/1154/664/1588` "full filesystem
+  access". `buildPRQuery` writes the diff to a temp file and points the reviewer at it.
+- `packages/codev/src/lib/config.ts:88` — default consult models `['gemini','codex','claude']`.
+- `codev-skeleton/protocols/{spir,aspir,maintain}/protocol.json` default `["gemini","codex","claude"]`;
+  `{air,pir,bugfix}` default `["gemini","codex"]`. `protocol-schema.json:155` enum includes `gemini`;
+  `porch/next.ts:51` `VALID_MODELS` includes `gemini`.
+- `packages/codev/src/commands/porch/verdict.ts:27,46-47,55` — missing/short/error verdict → defaults
+  to `REQUEST_CHANGES`; `CONSULT_ERROR`/`REQUEST_CHANGES` block approval. (Why the skip must be
+  explicitly non-blocking.)
+- `packages/codev/src/commands/doctor.ts:153-163` (presence check, hint → gemini-cli github) and
+  `:266-274` (auth check `gemini --yolo 'Reply with just OK'`).
+- `packages/codev/src/commands/consult/usage-extractor.ts` — pricing key `gemini-3.1-pro`.
+- Other surfaces (scoped below): `agent-farm/utils/harness.ts:114,240` (Gemini-CLI *builder*
+  harness), `generate-image.ts` (Gemini **API**, unaffected), `bench.ts` (benchmark defaults), docs.
+- ~60 tests across `consult.test.ts`, `consult.e2e.test.ts`, `metrics.test.ts`,
+  `consultation-models.test.ts`, `doctor.test.ts`, `config.test.ts`.
 
 ## Desired State
-
-After June 18, 2026:
-- A Codev user running any 3-way consultation still gets a **working Gemini perspective**, OR a
-  **clear, graceful, non-blocking degradation** if they have not configured a working Gemini
-  credential — never a silent failure and never a porch-blocking `REQUEST_CHANGES`/`CONSULT_ERROR`
-  caused merely by the lane being unavailable.
-- The default Gemini lane reaches Gemini through a surface Google has stated will keep working (the
-  Gemini Developer API), and the reviewer receives **enough review content to do its job without
-  relying on filesystem access** (see Approach A).
-- **Enterprise / CLI users are not regressed by Codev**: the legacy `gemini` CLI remains available
-  as an **explicitly-selectable optional backend** for those whose CLI still works; the **API path
-  is the new default** for the `gemini` lane.
-- `codev doctor` reflects how the default Gemini lane now authenticates (API credential), stops
-  pointing users solely at the soon-dead OAuth setup, and surfaces the June 19 key-restriction
-  caveat as guidance.
-- Docs (`CLAUDE.md`, `AGENTS.md`, `README.md`, skeleton consult docs, consult skill) describe the
-  current, supported Gemini setup.
-- No regression to the **Codex** and **Claude** lanes.
-
-## Stakeholders
-- **Primary Users**: Codev users on Google AI Pro / Ultra / free Gemini Code Assist who currently
-  use `consult`'s Gemini lane via the subscription-authenticated `gemini` CLI.
-- **Secondary Users**: All Codev users running SPIR/ASPIR/BUGFIX/AIR/PIR/MAINTAIN consultations
-  (Gemini is a default reviewer); enterprise Gemini-CLI users.
-- **Technical Team**: Codev maintainers (consult, doctor, porch, skeleton, docs).
-- **Business Owners**: @waleedkadous, @amrmelsayed (issue stakeholders).
+- The Gemini consult lane invokes **`agy --print --sandbox --add-dir <repoRoot>`** (role folded into
+  the prompt), reaching Gemini via the user's **subscription/OAuth** auth, with the reviewer still
+  **reading the diff/repo from disk** (agentic behavior preserved).
+- The lane uses the **Pro** model class (mechanism per Open Questions).
+- Codev invokes the **real `agy` CLI deterministically**, never the IDE symlink.
+- A missing/unauthed/timed-out `agy` lane is a **non-blocking skip**: porch-orchestrated runs still
+  advance (Codex/Claude complete; Gemini reported skipped — not a blocking `REQUEST_CHANGES`/
+  `CONSULT_ERROR`).
+- Cost/usage rows **degrade gracefully** (no `NaN`; show e.g. "n/a (subscription)").
+- `codev doctor` checks for the real `agy` CLI + auth and gives correct, current setup guidance
+  (official install script; one-time `agy` login). No API-key guidance.
+- Docs/skill reference the `agy` setup. Codex/Claude lanes unchanged.
 
 ## Success Criteria
-- [ ] Running a 3-way consultation (e.g. SPIR PR review) after June 18 either returns a real Gemini
-      review **with adequate context** (diff + relevant files) or degrades gracefully — verified
-      **end-to-end** by actually running `consult -m gemini` on a spec, a plan, and a PR (per the
-      "headline path" lesson), not solely by mocked unit tests.
-- [ ] The **default** Gemini lane works for a user who has only a Gemini **API key** configured
-      (no Gemini CLI installed, no OAuth login).
-- [ ] The Gemini-API reviewer produces a usable review **without** depending on filesystem access:
-      review content (PR diff, impl diffs, spec/plan, changed-file context) is delivered to the model
-      by Codev, and the prompt no longer instructs the API reviewer to "read files from disk".
-- [ ] When no working Gemini credential is present, **porch-orchestrated** consultations still
-      advance: the skipped lane does **not** produce a blocking `REQUEST_CHANGES`/`CONSULT_ERROR`,
-      and the remaining lanes (Codex, Claude) complete. The user is told why Gemini was skipped.
-- [ ] Enterprise/CLI users retain a functional path: the legacy `gemini` CLI is still selectable as
-      an optional backend; nothing forces them off it.
-- [ ] `codev doctor` reports the default Gemini lane's real status (credential present / reachable /
-      absent) and gives correct, current setup guidance, including the June 19 key-restriction note.
-- [ ] Token/usage accounting and cost reporting still work for the Gemini-API lane (no `NaN`/missing
-      cost rows; pricing key resolves).
-- [ ] Docs and the consult skill reference only supported setup; no dangling instructions to a dead
-      path.
-- [ ] All existing consult/doctor/config/porch tests pass; new tests cover the API path, the
-      no-credential non-blocking degradation, the `pro` alias, and (if retained) optional CLI backend
-      selection. Coverage does not regress.
-- [ ] No behavioral regression for the Codex and Claude lanes.
+- [ ] `consult -m gemini` runs through `agy --print` and returns a real review that **reflects file
+      contents it read** (diff/repo), verified **end-to-end** on a spec, a plan, and a PR (headline-
+      path lesson — not just mocked unit tests).
+- [ ] The lane uses the **Pro** model class (not flash) — verified by the agreed mechanism.
+- [ ] Auth is **subscription/OAuth**; no API key is required or used by the lane.
+- [ ] Codev resolves and runs the **standalone CLI**, not the IDE symlink (a stale-PATH / IDE-symlink
+      environment does not cause Codev to launch the Electron app).
+- [ ] A missing/unauthed `agy` does **not** block porch runs: the lane is skipped non-blockingly and
+      the user is told why; Codex/Claude still complete.
+- [ ] Cost/usage reporting degrades gracefully for the lane (no `NaN`/crash; clear "no per-token
+      data" indication).
+- [ ] `codev doctor` reports real `agy` CLI presence + auth status with correct setup guidance.
+- [ ] Existing consult/doctor/config/porch tests pass; new tests cover the `agy` dispatch, the
+      non-blocking skip, the `pro` alias, and graceful cost degradation. Coverage does not regress.
+- [ ] No regression to the Codex/Claude lanes.
 
 ## Constraints
+- **Deadline 2026-06-18.** `agy` is available and verified today (v1.0.4), so the swap is buildable now.
+- **Lean scope:** backend swap + auth + non-blocking skip + cost degradation. No redesign, no new
+  abstraction layer, no changes to the Codex/Claude lanes beyond keeping the 3-way coherent.
+- **Preserve** the agentic file-reading prompt builders (do not inline-and-strip).
+- **First-run auth is interactive** (browser/code) and cannot be automated head-less — treat as a
+  one-time user setup step (like the old `gemini /auth`), surfaced by `doctor`/docs.
+- Keep skeleton ↔ `codev/` copies consistent across the four-tier resolver.
 
-### Technical Constraints
-- **Hard deadline**: behavior must be correct by **2026-06-18**. Solutions depending on an external
-  artifact that does not yet exist publicly (e.g. an `agy` package with a documented headless
-  contract) carry unacceptable schedule risk.
-- **Filesystem-access reality**: the PR/impl review prompts currently assume an agentic, file-reading
-  reviewer. Any non-agentic backend must be *fed* the content it needs (the design must change the
-  prompt construction for that backend), or implement a tool-use loop. This is a first-class design
-  requirement, not an afterthought.
-- **Porch gate semantics**: a skipped/unavailable lane must be made explicitly non-blocking (verdict
-  parser defaults to `REQUEST_CHANGES`).
-- Must preserve token/usage extraction so cost reporting keeps working (`usage-extractor.ts`).
-- The four-tier resolver means skeleton protocol JSONs and any `codev/` copies must stay consistent;
-  any model-name/default change touches both trees.
-- `@google/genai` (`^1.0.0`) is **already a dependency** in `packages/codev/package.json` (it backs
-  `generate-image`), so the API client is available without adding a new package.
-
-### Business Constraints
-- The free subscription quota that made the Gemini CLI attractive goes away for affected tiers; an
-  API-key requirement is acceptable but must **degrade gracefully** when no key is set.
-- Keep the 3-way review's *diversity value* (a genuinely independent Gemini perspective) wherever
-  feasible — silently dropping Gemini permanently is a last resort, not the goal.
-
-## Assumptions
-- The Gemini **Developer API** (`GEMINI_API_KEY` / Google AI Studio) remains available past
-  June 18, 2026 (Google's stated position as of spec time).
-- An official, headless-capable, package-managed Antigravity CLI is **not** reliably available
-  before the deadline. (If false before implementation, Approach B re-enters consideration.)
-- Codev maintainers and most affected users can obtain a Gemini API key (free-tier keys exist via
-  AI Studio).
-- `gemini-3.1-pro-preview` maps to an available API model id; the exact id + matching pricing key is
-  a Plan-phase verification (flagged in Open Questions).
-- For the deadline fix, **inlining review content** into the Gemini-API prompt gives sufficient
-  review quality for spec/plan/PR review; a tool-use loop is a later fidelity upgrade if needed.
-
-## Solution Approaches
-
-### Approach A: Default the Gemini lane to the Gemini Developer API; keep the CLI as an optional backend (RECOMMENDED)
-**Description**: Make the `gemini` consult lane reach Gemini through the **Developer API** (via the
-already-present `@google/genai` SDK) using `GEMINI_API_KEY` (fallback `GOOGLE_API_KEY`), joining the
-existing SDK-based Claude/Codex lanes. **Crucially**, because a single API call cannot read files,
-the lane must *deliver the review content to the model*:
-
-- **A1 (recommended for the deadline) — Inline content**: for the API backend, change prompt
-  construction so the PR diff, per-phase impl diffs, and relevant spec/plan/changed-file text are
-  **embedded directly in the request** instead of being written to a temp file with a "read this
-  path" instruction; drop the "you have filesystem access / explore the filesystem" instructions for
-  this backend. Large inputs are sent in the request body (verify against the Gemini API input-size
-  limit in the Plan; the #680 stdin work already assembles large inline prompts).
-- **A2 (optional fidelity upgrade / future) — Tool-use loop**: implement a Gemini function-calling
-  loop exposing read-only file tools (read/glob/grep), mirroring the Claude SDK lane
-  (`CLAUDE_MAX_TURNS`), so the reviewer can explore surrounding context. Higher complexity; explicit
-  future enhancement unless the architect wants it now.
-
-Map `GEMINI_SYSTEM_MD` (role file) → API `systemInstruction`; parse token usage from the API
-response into the existing usage/cost pipeline (pricing key `gemini-3.1-pro`).
-
-**Enterprise/CLI retention**: keep the existing CLI dispatch code as an **optional backend** that
-users can explicitly select (mechanism is a Plan detail — e.g. a `consult.gemini.backend: api|cli`
-config knob, or a distinct selectable model id). The lane **defaults to API**. This honors the
-"don't regress unaffected enterprise users" goal without steering anyone toward a dying default. It
-is a single conditional, not a generic multi-provider gateway (which stays out of scope).
-
-**Pros**:
-- Targets a surface Google says is **not** retiring — robust past June 18.
-- Architecturally consistent with the existing SDK-based Claude/Codex lanes.
-- No new dependency (`@google/genai` already present).
-- Buildable today against a stable API; no reliance on an unreleased CLI.
-- Enterprise users keep a working path (optional CLI backend).
-
-**Cons**:
-- Requires a Gemini **API key**; the free OAuth subscription quota is no longer the default path.
-- Re-implements role-injection + usage parsing for the API shape, and **requires reworking prompt
-  construction** so the reviewer gets content without filesystem access (A1) — non-trivial because
-  the PR/impl reviews are diff-and-context heavy.
-- A1 means the Gemini reviewer sees only what Codev inlines (no free-form repo exploration) unless A2
-  is later added.
-- Must surface the June 19 unrestricted-key caveat in docs/doctor.
-
-**Estimated Complexity**: Medium (A1) / High (A2)
-**Risk Level**: Low (A1) / Medium (A2)
-
-### Approach B: Adopt Antigravity CLI (`agy`) as the Gemini lane backend
-**Description**: Swap the lane's CLI from `gemini` to `agy` and translate Codev's contract onto
-whatever non-interactive mode `agy` exposes. Matches the issue's literal framing.
-
-**Pros**: follows the vendor's recommended migration and the issue title; could reuse subscription
-auth if `agy` supports it.
-
-**Cons**: `agy` is agent-first/async/multi-agent (poor fit for one-shot review); **no confirmed**
-headless/`--prompt`/stdin/`--output-format json`/`--model` contract; **not on any public package
-manager** (late May 2026) → not a reliable `doctor`/CI dependency; "no 1:1 parity at launch."
-Schedule + correctness risk against a hard date.
-
-**Estimated Complexity**: High (partly **blocked** on external availability)
-**Risk Level**: High
-
-### Approach C: Graceful degradation as the universal safety net (adopted as part of A)
-**Description**: Treat a missing/non-working Gemini credential as a defined **skip** with explicit
-porch-safe semantics, rather than a failure. Two acceptable mechanisms (Plan selects):
-- **C1**: exclude the uncredentialed lane from the **effective model set** for that run, so porch
-  never expects a Gemini review file for it; or
-- **C2**: emit a defined non-blocking "skipped" artifact that `verdict.ts`/gate logic treat as
-  neutral (neither APPROVE nor blocking).
-This is **not** a standalone strategy — it is the required fallback behavior layered onto Approach A.
-
-**Pros**: guarantees nothing hard-breaks or blocks on June 18; sensible regardless of primary path.
-**Cons**: when triggered, reduces the 3-way to 2-way for that run (acceptable for no-key users).
-**Estimated Complexity**: Low–Medium (porch semantics need care)
-**Risk Level**: Low
-
-### Recommendation
-**Adopt Approach A1 (API default + inlined review content) with Approach C (porch-safe graceful
-skip) as its built-in fallback, and retain the legacy CLI as an optional backend.** Treat A2
-(tool-use loop) as a future fidelity upgrade. Keep Approach B (Antigravity CLI) explicitly out of
-scope for this deadline, revisitable once `agy` is packaged with a documented headless contract.
-
-This diverges from the issue's literal title ("Gemini CLI > Antigravity CLI"): research shows the
-Antigravity path is the *higher-risk* one for our use case right now, and the robust way to honor the
-issue's intent ("keep working past the retirement") is the API pivot. **This divergence is flagged to
-the architect for the spec-approval gate.**
+## Out of Scope
+- **The Gemini Developer API pivot (former Approach A) — rejected by the architect.**
+- A generic multi-provider gateway / model-router.
+- The `harness.ts` Gemini-CLI **builder** path: out-of-scope-but-acknowledged (a *builder* using the
+  `gemini` CLI as its coding agent also breaks for affected tiers; recommend a docs note + follow-up
+  issue, not a rebuild here).
+- `generate-image.ts` (already Gemini **API**, unaffected) — intentionally unchanged.
+- `bench.ts` benchmark defaults — naming only if needed.
+- `--dangerously-skip-permissions` (unnecessary given `--sandbox --add-dir` works).
 
 ## Open Questions
-
-### Critical (Blocks Progress — architect decides at the gate)
-- [ ] **Strategy choice**: Approve Approach A1 + C (+ optional CLI backend), or does the architect
-      want Antigravity-CLI adoption (B) despite the schedule/contract risk, or A2 (tool-use loop) now
-      instead of later?
-
-### Important (Affects Design)
-- [ ] Exact API model id replacing `gemini-3.1-pro-preview`, and confirmation the pricing key
-      `gemini-3.1-pro` still matches its billing. *(Plan verifies.)*
-- [ ] Default-list policy is **decided** (keep `gemini` in defaults; see Decisions) — but confirm
-      whether the optional CLI backend is exposed via a config knob vs a distinct model id.
-- [ ] Depth of Vertex AI support this round (ADC/project auth) — recommended: document as optional,
-      do not build enterprise Vertex auth flows now.
-
-### Nice-to-Know (Optimization)
-- [ ] A config knob to pick the Gemini model id (future-proofing against renames).
-- [ ] Whether to later add A2 (tool-use loop) for repo-exploration parity.
-
-## Decisions (resolved from iteration-1 consultation; previously open)
-- **Filesystem access**: the API lane will be **fed inlined review content** (A1); the "read from
-  disk / explore filesystem" instructions are removed for the API backend. (Resolves Gemini's fatal
-  finding.)
-- **Enterprise contradiction**: the contradictory "no behavioral change for enterprise" goal is
-  **dropped**. Replaced with: API is the default; the legacy CLI is **retained as an optional
-  backend** so enterprise/CLI users are not regressed. (Resolves Gemini + Codex finding.)
-- **Default model lists**: **keep `gemini` in the defaults**, paired with porch-safe graceful skip
-  (C) when uncredentialed — so key-holders keep the 3-way and no-key users get a clean, non-blocking
-  2-way with a one-line notice (rather than silently dropping Gemini for everyone). (Resolves the
-  default-list question both reviewers raised.)
-- **Porch degradation semantics**: a skipped lane MUST be non-blocking via C1 or C2 (Plan selects);
-  it must not surface as `REQUEST_CHANGES`/`CONSULT_ERROR`. (Resolves Codex's fatal finding.)
-- **Doctor**: do **not** attempt to proactively detect unrestricted-key status (not reliably
-  detectable locally). Doctor reports credential presence + reachability and surfaces the June 19
-  restriction as guidance / on auth-failure hint. (Resolves Codex's over-specification finding.)
-
-## Scope
-
-**In scope (must fix for the deadline)**
-- The consult **Gemini lane**: API-default dispatch (A1), porch-safe graceful skip (C), optional CLI
-  backend retention, usage/cost parity.
-- Orbiting surfaces required for correctness: default model lists + schema/`VALID_MODELS`
-  consistency, `doctor` Gemini check + auth guidance, `consult` docs + skill, `DEPENDENCIES.md`,
-  `CLAUDE.md`/`AGENTS.md`/`README.md` Gemini setup text.
-- Tests for all of the above.
-
-**Separate surfaces — explicitly addressed**
-- `harness.ts` **Gemini-CLI builder harness** (`GEMINI_HARNESS`): **out of scope** for the deadline
-  fix, but **acknowledged** — spawning a *builder* that uses the `gemini` CLI as its coding agent
-  will stop working for affected tiers. Recommend a docs note (use Claude/Codex builders, or the
-  enterprise CLI) and a follow-up issue rather than rebuilding the builder harness on the API now.
-- `generate-image.ts`: **intentionally unchanged** — already uses the Gemini **API**; unaffected.
-- `bench.ts`: benchmarking defaults — update naming only if a model id changes; **not** behavior
-  critical.
-
-**Out of scope**
-- Building/shipping an Antigravity CLI (`agy`) backend (future).
-- A generic multi-provider gateway / model-router abstraction.
-- Changes to Codex/Claude lanes beyond keeping the 3-way run coherent.
-- Enterprise Vertex AI auth flows beyond optional documentation.
-
-## Performance Requirements
-- Gemini-lane latency comparable to today's CLI path (single API call; no perceptible regression).
-- Must handle large review payloads (PR diffs > 500 KB) — verify against the Gemini API request-size
-  limit; if the limit is exceeded, define deterministic behavior (e.g. truncate-with-notice or fall
-  back to diffstat + changed-file inlining), never a silent partial review.
+### Critical (architect decides)
+- [ ] **Pro-pinning mechanism.** `agy` has no `--model` flag. How do we guarantee the lane uses the
+      Pro class, not flash? Candidates to investigate in Plan: (a) the subscription tier (AI Ultra)
+      defaults `--print` to Pro server-side; (b) an `agy`/Antigravity settings file or plugin that
+      sets the model; (c) an env var. **Architect input wanted** (AI Ultra + product knowledge).
+      Acceptance must include a way to *confirm* Pro is in use.
+### Important
+- [ ] **Binary resolution strategy:** pin `~/.local/bin/agy`, or search PATH then verify the binary
+      is the CLI (reject the IDE symlink)? Recommended: prefer the known install path, fall back to a
+      verified PATH lookup.
+- [ ] **`doctor` auth probe without hanging:** a smoke `agy --print` on an unauthed machine prints an
+      OAuth URL and waits ~30s. `doctor` must detect "needs login" quickly without blocking (short
+      timeout; treat the auth prompt as "not authed").
+- [ ] **`--print-timeout` tuning** for large/agentic reviews (default 5m) vs. consult's own timeouts.
+- [ ] **Skip mechanism** (carried from prior spec): C1 drop the lane from the *effective* model set
+      when unavailable, or C2 emit a defined neutral "skipped" artifact verdict logic treats as
+      non-blocking. Plan selects.
 
 ## Security Considerations
-- API key handling: read from environment (`GEMINI_API_KEY` / `GOOGLE_API_KEY`); never log/echo the
-  key; never write it into committed files or status artifacts.
-- Document the **June 19, 2026** unrestricted-key block: guide users to scope keys to the Generative
-  Language API in Cloud Console.
-- Transport changes from local CLI to a direct HTTPS API call; ensure parity in *what* is
-  transmitted (prompt + role + inlined review content) and that nothing extra leaks.
+- Auth tokens are managed by `agy` (OAuth), stored in the Antigravity app-support dir; Codev never
+  reads/logs them.
+- Prefer `--sandbox --add-dir <scoped dirs>` over `--dangerously-skip-permissions` to limit the
+  agent's tool surface during reviews.
+- Codev must execute the **verified** CLI binary (not an arbitrary PATH `agy`), avoiding accidental
+  launch of the IDE or a shadowed binary.
+- The reviewer transmits the same content as today (diff + role + repo files it reads) to Google over
+  the subscription session; ensure parity (no extra data).
 
 ## Test Scenarios
-### Functional Tests
-1. **Happy path (API)**: Gemini-API lane with a valid key returns a real review with parsed token
-   usage and a correct cost row.
-2. **No credential (non-blocking skip)**: with no `GEMINI_API_KEY`/`GOOGLE_API_KEY`, a
-   porch-orchestrated 3-way consult **advances** (Codex + Claude complete; Gemini reported skipped;
-   no blocking `REQUEST_CHANGES`/`CONSULT_ERROR`).
-3. **Inlined content / no-filesystem reviewer**: a PR review via the API backend produces a usable
-   verdict from inlined diff + context, with the "read from disk" instruction absent for that
-   backend.
-4. **Large payload**: a >500 KB PR diff is handled per the defined behavior (success or
-   deterministic truncate/fallback with notice) — no crash, no silent empty review.
-5. **Role injection**: the reviewer role/system instruction is honored (verdict format parses, e.g.
-   APPROVE/REQUEST_CHANGES).
-6. **`pro` alias**: `consult -m pro` resolves to the Gemini-API lane (Claude's note).
-7. **Optional CLI backend** (if retained): explicitly selecting the CLI backend still spawns the
-   `gemini` subprocess as before.
-8. **End-to-end headline path**: actually run `consult -m gemini` on a spec, a plan, and a PR.
-
-### Non-Functional Tests
-1. Cost/usage extraction parity (no `NaN`; pricing key resolves).
-2. `codev doctor` reports correct Gemini status under: key present, key absent; surfaces June 19
-   guidance.
-3. No regression in Codex/Claude lanes (existing consult e2e green).
-4. Schema/`VALID_MODELS`/protocol-JSON consistency across skeleton and `codev/` trees.
+### Functional
+1. **Happy path:** `consult -m gemini` → `agy --print --sandbox --add-dir <root>` returns a review
+   that demonstrably used file contents (e.g., references a changed file's actual code).
+2. **Non-blocking skip:** no `agy` / not authed → porch 3-way **advances** (Codex+Claude complete;
+   Gemini skipped; no blocking verdict).
+3. **Pro model in use:** confirm the lane runs the Pro class (per agreed mechanism).
+4. **`pro` alias:** `consult -m pro` resolves to the `agy` lane.
+5. **Binary resolution:** with the IDE symlink first on PATH, Codev still invokes the real CLI.
+6. **End-to-end headline path:** run on a spec, a plan, and a real PR.
+### Non-Functional
+1. Cost/usage degradation (no `NaN`; clear "no per-token data").
+2. `doctor` reports agy presence + auth (authed / needs-login) without hanging.
+3. No regression in Codex/Claude lanes; skeleton ↔ `codev/` schema/defaults consistent.
 
 ## Dependencies
-- **External Services**: Gemini Developer API (Google AI Studio).
-- **Internal Systems**: `consult` dispatch + prompt builders, `usage-extractor` pricing/parsing,
-  `porch` verdict/gate + consultation config, `doctor`, skeleton protocol JSONs, four-tier resolver.
-- **Libraries/Frameworks**: `@google/genai` (already a dependency).
+- **External:** Antigravity CLI (`agy`, v1.0.4+) + a Google subscription (AI Ultra) login.
+- **Internal:** `consult` dispatch + (preserved) prompt builders, `usage-extractor`, `porch`
+  verdict/gate + consultation config, `doctor`, skeleton protocol JSONs, four-tier resolver.
 
 ## References
-- Issue #778.
-- Google Developers Blog — *Transitioning Gemini CLI to Antigravity CLI*:
+- Issue #778. Google blog (Gemini CLI → Antigravity CLI):
   https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/
-- Antigravity migration guide (no extractable technical detail at spec time):
-  https://antigravity.google/docs/gcli-migration
-- The Register coverage (`agy`, Go, agentic/async, availability):
-  https://www.theregister.com/ai-ml/2026/05/20/bye-bye-gemini-cli-google-nudges-devs-toward-antigravity/
-- Gemini Developer API vs. Enterprise / API not deprecated:
-  https://ai.google.dev/gemini-api/docs/migrate-to-cloud
-- Prior related work: bugfix #680 (large-prompt heap handling), bugfix #878 (gemini lane model id).
+- Official CLI install: `https://antigravity.google/cli/install.sh` (Unix) — verified v1.0.4.
+- Docs (JS-rendered; not extractable via fetch at spec time): antigravity.google/docs/cli-install,
+  /cli-using, /cli-reference. Contract above established **empirically** instead.
+- Prior related work: #680 (large-prompt handling), #878 (gemini lane model id).
 
 ## Risks and Mitigation
-| Risk | Probability | Impact | Mitigation Strategy |
-|------|------------|--------|---------------------|
-| Antigravity-only path can't be built in time | High | High | Choose Approach A (API), buildable today against a stable surface. |
-| API reviewer lacks context without filesystem access | High | High | A1: inline diff + spec/plan + changed-file content; drop "read from disk" for API backend; A2 tool-loop as future upgrade. |
-| Skipped lane blocks porch via default REQUEST_CHANGES | Med | High | Define non-blocking skip semantics (C1/C2); add porch test scenario #2. |
-| Enterprise/CLI users regressed by removing CLI | Med | Med | Retain CLI as optional backend; API is default only. |
-| Users lack an API key on June 18 | Med | High | Graceful non-blocking skip + clear doctor/docs guidance. |
-| June 19 unrestricted-key block breaks new keys | Med | Med | Document Generative Language API restriction; surface in doctor guidance. |
-| Gemini API request-size limit < large PR diffs | Med | Med | Verify limit in Plan; define deterministic truncate/fallback behavior. |
-| Model id / pricing key mismatch | Med | Med | Pin model id + verify pricing key in Plan; usage-parity test. |
-| Skeleton vs `codev/` config drift | Low | Med | Update both trees; schema/config consistency test. |
-| Scope creep into a generic gateway | Med | Med | Keep to the Gemini lane; optional CLI backend is one conditional, not a gateway. |
+| Risk | P | I | Mitigation |
+|---|---|---|---|
+| Can't guarantee Pro (no `--model`) | Med | High | Resolve Pro-pinning in Plan w/ architect; acceptance requires confirming Pro is used. |
+| Codev launches IDE symlink instead of CLI | Med | High | Pin/verify the real binary; binary-resolution test (#5). |
+| Unauthed users block porch | Med | High | Non-blocking skip (C1/C2); doctor + docs guide one-time `agy` login. |
+| First-run auth can't run in CI | Med | Med | Treat as one-time user setup; doctor detects "needs login" fast; skip in CI. |
+| No token usage → cost reporting breaks | High | Low | Degrade cost rows gracefully (no NaN). |
+| `agy` self-updates / contract drifts | Low | Med | Pin observed flags; e2e headline test catches breakage. |
+| skeleton/`codev` config drift | Low | Med | Update both; consistency test. |
 
 ## Expert Consultation
-**Date**: 2026-06-01 (iteration 1, via porch 3-way)
-**Models Consulted**: Gemini, Codex, Claude
-**Verdicts**: Gemini REQUEST_CHANGES · Codex REQUEST_CHANGES · Claude APPROVE
-
-**Sections Updated in response**:
-- **Current State / Approach A / Risks** — added the **filesystem-access** constraint (Gemini, fatal):
-  the API lane must inline review content (A1) or run a tool-use loop (A2); removed the incorrect
-  "single-shot, no agentic behavior needed" framing.
-- **Decisions / Desired State / Success Criteria** — resolved the **enterprise contradiction**
-  (Gemini + Codex): dropped "no behavioral change for enterprise"; API is default, CLI retained as
-  optional backend.
-- **Problem Statement / Approach C / Decisions / Test #2** — specified **porch-safe non-blocking
-  skip** semantics (Codex, fatal), citing `verdict.ts` default-to-REQUEST_CHANGES behavior.
-- **Decisions / Success Criteria / Non-Functional Test #2** — **relaxed doctor** unrestricted-key
-  detection to guidance (Codex).
-- **Scope** — added explicit in-scope vs separate-surface vs out-of-scope, covering `harness.ts`,
-  `generate-image.ts`, `bench.ts`, and the `hermes` schema/`VALID_MODELS` precedent (Codex + Claude).
-- **Constraints / Approach A** — noted `@google/genai` is **already a dependency** (Claude),
-  lowering A1 cost; added **`pro` alias** test (Claude) and **API request-size** risk/behavior
-  (Claude).
+**Iteration 1 (2026-06-01, on the prior Approach-A draft):** Gemini REQUEST_CHANGES (filesystem
+access), Codex REQUEST_CHANGES (porch skip semantics, enterprise contradiction, doctor scope),
+Claude APPROVE. The porch-skip and graceful-cost findings are carried forward; the filesystem-access
+concern is now **moot** because Approach B preserves agentic file-reading by design.
+**Iteration 2 (pending):** re-consult the Approach-B spec (porch flow / architect to direct gate
+mechanics).
 
 ## Approval
-- [ ] Architect review (spec-approval gate)
-- [x] Expert AI Consultation Complete — iteration 1 (Gemini/Codex/Claude); revised herein
+- [ ] Architect review (spec-approval gate) — re-presented for Approach B
+- [ ] Expert AI consultation on the Approach-B spec (iteration 2)
 
 ## Notes
-**Narrow in behavior, wide in surface**, with one sharp correctness constraint (filesystem access).
-Plan sequencing: (1) Gemini-API dispatch + inlined-content prompt construction + porch-safe skip
-(the behavioral core); (2) optional CLI backend retention; (3) defaults/schema/doctor/docs/tests,
-keeping skeleton and `codev/` copies in lockstep.
+Architect noted the work was "over-scoped as full SPIR" — this rewrite is deliberately lean (backend
+swap + auth + skip safety + cost degradation). Plan sequencing: (1) `agy` dispatch in the gemini lane
+(real-binary resolution, `--print --sandbox --add-dir`, role inlined, Pro-pinning) + non-blocking
+skip; (2) graceful cost/usage degradation; (3) doctor + docs + tests; keep skeleton/`codev` in lockstep.
 
 ---
 
 ## Amendments
-
 <!-- TICK amendments, if any, recorded here. -->
