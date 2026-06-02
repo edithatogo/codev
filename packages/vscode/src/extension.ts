@@ -482,8 +482,10 @@ export async function activate(context: vscode.ExtensionContext) {
 			return undefined;
 		};
 	const reg = <A extends unknown[]>(id: string, handler: (...args: A) => unknown) =>
+		// eslint-disable-next-line no-restricted-syntax -- this IS the reg helper (#791)
 		vscode.commands.registerCommand(id, handler);
 	const regCli = <A extends unknown[]>(id: string, handler: (...args: A) => unknown) =>
+		// eslint-disable-next-line no-restricted-syntax -- this IS the regCli helper (#791)
 		vscode.commands.registerCommand(id, guard(handler));
 
 	// Commands
