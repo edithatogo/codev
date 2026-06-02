@@ -35,3 +35,11 @@ Review file written, PR #963 opened (body = review). 3-way consult (single
 advisory pass): gemini/codex/claude all APPROVE, HIGH, no issues. (Gemini's
 first run hit a transient exit-1; rerun succeeded.) `pr` gate pending —
 notified architect (all-clear), awaiting human merge + gate approval.
+
+## Merge blocked on branch protection (2026-06-02)
+
+porch pr-gate approved + protocol complete (phase: verified), but `gh pr merge 963 --merge`
+rejected: base branch policy. mergeStateStatus=BLOCKED, mergeable=MERGEABLE,
+reviewDecision=REVIEW_REQUIRED. Blockers: (1) required GitHub PR review approval
+(I'm author, can't self-approve); (2) 6 CI checks pending. Asked architect how to
+proceed (approve+merge / --auto / --admin). Holding.
