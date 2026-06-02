@@ -46,112 +46,48 @@ function builder(overrides: Partial<OverviewBuilder>): OverviewBuilder {
   } as OverviewBuilder;
 }
 
-// In stage-grouping mode the group header is the stage, so the row prefix
-// carries the complementary axis — the `area/*` label.
-describe('builderRowLabel (groupBy: stage → area prefix)', () => {
-  it('active builder: area prefix after the icon, before the issue number, no trailing state label', () => {
-    const b = builder({
-      issueId: '882',
-      issueTitle: 'refactor extract',
-      area: 'vscode',
-    });
-    expect(builderRowLabel(b, false, NOW, 'stage')).toBe('[vscode] #882 refactor extract');
+// builderRowLabel is now a pure formatter: it prepends the prefix the active
+// grouping strategy computed (axis selection is tested in builder-grouping.test.ts)
+// and appends the blocked/idle state suffix. These cases pin the formatting.
+describe('builderRowLabel', () => {
+  it('prepends the supplied prefix, before the issue number, no trailing state label when active', () => {
+    const b = builder({ issueId: '882', issueTitle: 'refactor extract' });
+    expect(builderRowLabel(b, false, NOW, '[vscode] ')).toBe('[vscode] #882 refactor extract');
   });
 
-  it('phase does NOT appear in the row label (conveyed by the stage group header, #952)', () => {
-    // Regression for the axis swap: the row carries the area, not the phase —
-    // even though protocolPhase is set, no `[implement]` may leak into the label.
-    const b = builder({
-      issueId: '1190',
-      issueTitle: 'Audit and unify',
-      phase: 'phase_0_rebase_onto_ci',
-      protocolPhase: 'implement',
-      area: 'tower',
-    });
-    expect(builderRowLabel(b, false, NOW, 'stage')).toBe('[tower] #1190 Audit and unify');
-  });
-
-  it('cross-cutting area is echoed verbatim (no shorthand)', () => {
-    const b = builder({ issueId: '900', issueTitle: 'multi-area', area: 'cross-cutting' });
-    expect(builderRowLabel(b, false, NOW, 'stage')).toBe('[cross-cutting] #900 multi-area');
-  });
-
-  it('Uncategorized area: no "[...]" prefix (mirrors the old empty-phase omission)', () => {
-    // The default fixture area is `Uncategorized` — a builder whose issue has no
-    // `area/*` label. The prefix is omitted rather than rendering `[Uncategorized] `.
+  it('empty prefix → row starts at the issue number', () => {
     const b = builder({ issueId: '810', issueTitle: 'x' });
-    expect(builderRowLabel(b, false, NOW, 'stage')).toBe('#810 x');
+    expect(builderRowLabel(b, false, NOW, '')).toBe('#810 x');
   });
 
-  it('blocked builder: area prefix + trailing "blocked on <label> [<elapsed>]"', () => {
+  it('blocked builder: prefix + trailing "blocked on <label> [<elapsed>]"', () => {
     const b = builder({
       issueId: '791',
       issueTitle: 'Startup preflight',
-      area: 'core',
       blocked: 'plan review',
       blockedSince: TWELVE_MIN_AGO,
     });
     // isIdle is false: blocked takes precedence (caller computes !isBlocked && ...).
-    expect(builderRowLabel(b, false, NOW, 'stage')).toBe(
+    expect(builderRowLabel(b, false, NOW, '[core] ')).toBe(
       '[core] #791 Startup preflight blocked on plan review [12m]',
     );
   });
 
-  it('idle builder: area prefix + trailing "waiting on input [<elapsed> silent]"', () => {
+  it('idle builder: prefix + trailing "waiting on input [<elapsed> silent]"', () => {
     const b = builder({
       issueId: '794',
       issueTitle: 'Notification refactor',
-      area: 'vscode',
       blocked: null,
       lastDataAt: SIX_MIN_AGO,
     });
-    expect(builderRowLabel(b, true, NOW, 'stage')).toBe(
+    expect(builderRowLabel(b, true, NOW, '[vscode] ')).toBe(
       '[vscode] #794 Notification refactor waiting on input [6m silent]',
     );
   });
 
   it('falls back to id when issueId/issueTitle are null', () => {
-    const b = builder({ id: 'pir-999', issueId: null, issueTitle: null, area: 'vscode' });
-    expect(builderRowLabel(b, false, NOW, 'stage')).toBe('[vscode] #pir-999 ');
-  });
-});
-
-// In area-grouping mode the group header is the area, so the row prefix flips
-// to the complementary axis — the coarse protocolPhase (the original #810 form).
-describe('builderRowLabel (groupBy: area → phase prefix)', () => {
-  it('active builder: phase prefix, area does NOT appear in the row', () => {
-    const b = builder({ issueId: '882', issueTitle: 'refactor extract', protocolPhase: 'implement', area: 'vscode' });
-    expect(builderRowLabel(b, false, NOW, 'area')).toBe('[implement] #882 refactor extract');
-  });
-
-  it('renders the coarse protocolPhase, NOT the collapsed sub-phase id in `phase`', () => {
-    const b = builder({
-      issueId: '1190',
-      issueTitle: 'Audit and unify',
-      phase: 'phase_0_rebase_onto_ci',
-      protocolPhase: 'implement',
-      area: 'tower',
-    });
-    expect(builderRowLabel(b, false, NOW, 'area')).toBe('[implement] #1190 Audit and unify');
-  });
-
-  it('empty protocolPhase: no "[] " literal prefix', () => {
-    const b = builder({ issueId: '810', issueTitle: 'x', protocolPhase: '', area: 'vscode' });
-    expect(builderRowLabel(b, false, NOW, 'area')).toBe('#810 x');
-  });
-
-  it('blocked builder: phase prefix + trailing state label', () => {
-    const b = builder({
-      issueId: '791',
-      issueTitle: 'Startup preflight',
-      protocolPhase: 'plan',
-      area: 'core',
-      blocked: 'plan review',
-      blockedSince: TWELVE_MIN_AGO,
-    });
-    expect(builderRowLabel(b, false, NOW, 'area')).toBe(
-      '[plan] #791 Startup preflight blocked on plan review [12m]',
-    );
+    const b = builder({ id: 'pir-999', issueId: null, issueTitle: null });
+    expect(builderRowLabel(b, false, NOW, '[vscode] ')).toBe('[vscode] #pir-999 ');
   });
 });
 
