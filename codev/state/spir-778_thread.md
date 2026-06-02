@@ -59,4 +59,13 @@ architect since my research says the literal Antigravity path is the higher-risk
 ## Status
 - [x] Specify: research + ground-truth map done
 - [x] Specify: spec drafted, 3-way consult iter-1, REVISED addressing all REQUEST_CHANGES
-- [ ] Specify: re-consult (iter-2) → spec-approval gate (HUMAN)
+- [x] Specify: rebuttal written (778-specify-iter1-rebuttals.md)
+- [x] **GATE: spec-approval REQUESTED (2026-06-01) — WAITING FOR HUMAN**. Architect notified.
+- [ ] After approval → Plan phase
+
+## ⏸ AWAITING ARCHITECT at spec-approval gate
+Key decision for the architect: the issue title says "Gemini CLI > Antigravity CLI", but research
+says adopting `agy` now is the higher-risk path (agentic/async, no confirmed headless contract, not
+packaged). Spec recommends **pivot the gemini consult lane to the Gemini Developer API (A1) + keep
+the CLI as an optional backend + porch-safe graceful skip**. Architect should confirm this direction
+(vs. Antigravity-B, vs. doing the tool-use loop A2 now) before Plan.
