@@ -122,31 +122,29 @@ export function timeSince(isoDate: string, now: number): string {
 }
 
 /**
- * The builder row's label. The phase leads the label, before the issue number
- * (`[<phase>] #<id> <title>`), so it sits at a FIXED offset right after the
- * row's icon — letting the eye scan the phase column straight down the tree
- * (issue ids vary in width, so an id-first order would make the phase bracket
- * jiggle row-to-row). It also survives end-truncation in a narrow sidebar and
- * shows across all three states — unlike the old trailing `[<phase>]` suffix
- * that only active rows carried and long titles clipped.
+ * The builder row's label: `<prefix>#<id> <title><stateLabel>`.
+ *
+ * `prefix` is supplied by the active grouping strategy (`BuilderGrouping.rowPrefix`,
+ * #952) — it carries whichever axis is NOT the group header (area when grouping by
+ * stage, phase when grouping by area), already bracketed with a trailing space (or
+ * `''` when omitted). Keeping prefix selection in the strategy lets this helper stay
+ * a pure formatter that knows nothing about the grouping axis.
  *
  * The state-dispatched suffix is preserved for blocked/idle duration:
  *  - blocked: ` blocked on <label> [<elapsed>]`
  *  - idle:    ` waiting on input [<elapsed> silent]`
- *  - active:  (empty — the phase prefix already covers it)
- *
- * The prefix uses the coarse `protocolPhase` (`plan` / `implement` / `review`),
- * NOT the collapsed `phase` field — `phase` prefers free-form plan sub-phase
- * ids (e.g. `phase_0_rebase_onto_ci`) which are too low-level for the row.
- * Empty `protocolPhase` (rare transient init state) omits the prefix entirely —
- * the row reads `#<id> <title>` rather than carrying a literal `[] `.
+ *  - active:  (empty)
  *
  * `isIdle` is injected by the caller (which already computes it via
  * `isIdleWaiting` for the icon + contextValue dispatch) rather than recomputed
- * here — keeps this helper pure (no `@cluesmith/codev-core` runtime import) and
- * unit-testable without a build step.
+ * here — keeps this helper pure and unit-testable without a build step.
  */
-export function builderRowLabel(b: OverviewBuilder, isIdle: boolean, now: number): string {
+export function builderRowLabel(
+  b: OverviewBuilder,
+  isIdle: boolean,
+  now: number,
+  prefix: string,
+): string {
   const isBlocked = !!b.blocked;
   const waitTime = isBlocked && b.blockedSince ? ` [${timeSince(b.blockedSince, now)}]` : '';
   const idleTime = isIdle && b.lastDataAt ? ` [${timeSince(b.lastDataAt, now)} silent]` : '';
@@ -155,6 +153,5 @@ export function builderRowLabel(b: OverviewBuilder, isIdle: boolean, now: number
     : isIdle
     ? ` waiting on input${idleTime}`
     : '';
-  const phasePrefix = b.protocolPhase ? `[${b.protocolPhase}] ` : '';
-  return `${phasePrefix}#${b.issueId ?? b.id} ${b.issueTitle ?? ''}${stateLabel}`;
+  return `${prefix}#${b.issueId ?? b.id} ${b.issueTitle ?? ''}${stateLabel}`;
 }
