@@ -35,6 +35,21 @@ Section template:
 
 -->
 
+## Builders tree group-by-stage (action axis) with stage/area toggle (#952, PR #970)
+
+The Builders sidebar tree used to group by `area/*` label — the same axis the Backlog tree uses. That's the right grouping for Backlog ("what should I pick up next?" → domain) but wrong for Builders, where the real question is "what's blocking me right now?" → action. With area-grouping you had to expand every group and scan each row's `[<phase>]` prefix to find the builders needing your attention.
+
+This release swaps the axes for Builders specifically: the group rows are now the builder's lifecycle stage (`SPECIFY → PLAN → IMPLEMENT → REVIEW → PR → VERIFIED`, in lifecycle order, empty stages hidden), and each row reads `[<area>] #<id> <title>`. "Show me everything blocked at plan-approval" is now one group expand instead of an N-row scan.
+
+The grouping is **toggleable** for reviewers who prefer the domain view: a title-bar button (`$(tag)` shows when in stage mode, `$(milestone)` shows when in area mode) flips both the group axis *and* the row prefix. Setting: `codev.buildersGroupBy` (`"stage"` default, or `"area"`). Per-mode collapse state is independent and persists across reloads — collapsing the IMPLEMENT group in stage mode doesn't collapse `area/vscode` in area mode.
+
+Two implementation details worth a conscious nod:
+
+- **A closed canonical 6-stage set** caps the group count at 7 (the 6 named stages plus `UNKNOWN`) regardless of how many protocols Codev adds. New phases that aren't in the `PHASE_TO_STAGE` map degrade gracefully to `UNKNOWN` rather than spawning a new top-level group. Adding a real bucket for a future phase is one map entry.
+- **PIR/SPIR builders awaiting merge sit under `REVIEW`, not `PR`.** Only AIR and BUGFIX model `pr` as a *phase* (so they appear under `PR`); PIR and SPIR model it as a *gate on the review phase*. The grouping is faithful to each protocol's own phase model — a PIR builder you've just approved sits in `REVIEW` until it advances to `verified`.
+
+Backlog grouping is unaffected by all of this — it remains area-grouped because "domain" really is the right axis for "what should I pick up?".
+
 ## Terminal reconnect overhaul + click-to-recover affordance (#936, #939, PR #962)
 
 A Codev terminal whose WebSocket dies — Tower restart, a forgotten session id, a transient network blip — used to fill the pane with `[Codev: Connection lost, reconnecting...]` lines in a tight loop. No backoff, no give-up, no actual reconnect — and the comment in the code claimed the terminal-manager handled reconnection while in fact nothing subscribed. The architect's real output kept flowing into a live Tower-side PTY, buried under the spam.
