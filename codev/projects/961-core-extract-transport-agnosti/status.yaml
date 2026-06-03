@@ -1,7 +1,7 @@
 id: '961'
 title: core-extract-transport-agnosti
 protocol: pir
-phase: review
+phase: verified
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -21,7 +21,7 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-06-02T06:39:55.914Z'
-updated_at: '2026-06-03T00:14:00.261Z'
+updated_at: '2026-06-03T00:14:06.637Z'
 pr_history:
   - phase: review
     pr_number: 972
