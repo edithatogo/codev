@@ -23,6 +23,11 @@ Stale test, not a code regression. The warn diagnostic was intentionally removed
 user-facing mitigation lives in `Terminal.tsx` (still intact: lines ~252 WebGL,
 ~343-355 ESC[3J block, ~418 EscapeBuffer).
 
+## Status (PR phase)
+- PR #977 opened; `Fixes #974`. Net diff: test-only (+24/-11 in scrollController.test.ts).
+- 3-way CMAP review: Gemini / Codex / Claude all **APPROVE / HIGH**, zero issues.
+- porch `pr` gate REQUESTED — waiting for human `porch approve bugfix-974 pr`.
+
 ## Fix shape
 Update the test to pin current correct behavior: scroll-to-top is accepted (state
 updated to viewportY=0), NOT auto-corrected (no scrollToLine/scrollToBottom), and NOT
