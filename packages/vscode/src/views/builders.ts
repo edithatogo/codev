@@ -108,8 +108,8 @@ export class BuildersProvider implements vscode.TreeDataProvider<vscode.TreeItem
   constructor(
     private cache: OverviewCache,
     private readonly diffCache: BuilderDiffCache,
-    workspaceState: vscode.Memento,
     private readonly connectionManager: ConnectionManager,
+    workspaceState: vscode.Memento,
   ) {
     this.groupings = {
       stage: stageGrouping(new AreaGroupExpansionStore(workspaceState, 'codev.buildersStageGroupExpansion')),
