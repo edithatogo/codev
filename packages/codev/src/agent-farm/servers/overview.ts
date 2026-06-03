@@ -54,6 +54,19 @@ interface ParsedStatus {
    * value and the v3.1.3 fallback derivation.
    */
   prReadyForHuman: boolean | null;
+  /**
+   * Whether the PR tied to the current `pr` gate has already been merged
+   * (Issue #966). Read from the LAST entry of porch's `pr_history` list — the
+   * most-recent PR is the one the current `pr` gate was requested for. The
+   * last-entry semantics handle SPIR/PIR checkpoint workflows where an earlier
+   * PR merged but a later PR is still open and awaiting review.
+   *
+   * `derivePrReady` consults this so a merged-but-gate-still-pending builder
+   * (porch left the gate pending after an out-of-band merge — see #966) no
+   * longer reads as a PR awaiting human review. Defaults to `false` when
+   * `pr_history` is absent or its last entry has no `merged: true`.
+   */
+  merged: boolean;
 }
 
 /**
@@ -73,10 +86,11 @@ export function parseStatusYaml(content: string): ParsedStatus {
     planPhases: [],
     startedAt: '',
     prReadyForHuman: null,
+    merged: false,
   };
 
   const lines = content.split('\n');
-  let section: 'none' | 'gates' | 'plan_phases' = 'none';
+  let section: 'none' | 'gates' | 'plan_phases' | 'pr_history' = 'none';
   let currentGate = '';
   let currentPlanPhase: Partial<PlanPhase> | null = null;
 
@@ -116,6 +130,12 @@ export function parseStatusYaml(content: string): ParsedStatus {
 
     if (/^plan_phases:\s*$/.test(line)) {
       section = 'plan_phases';
+      continue;
+    }
+
+    if (/^pr_history:\s*$/.test(line)) {
+      if (currentPlanPhase) { pushPlanPhase(result, currentPlanPhase); currentPlanPhase = null; }
+      section = 'pr_history';
       continue;
     }
 
@@ -173,6 +193,30 @@ export function parseStatusYaml(content: string): ParsedStatus {
       const itemStatusMatch = line.match(/^\s{4}status:\s*(\S+)/);
       if (itemStatusMatch && currentPlanPhase) {
         currentPlanPhase.status = itemStatusMatch[1];
+        continue;
+      }
+    }
+
+    // pr_history section (#966). Each list item is one PR/stage. We only need the
+    // merged status of the LAST entry (the PR the current `pr` gate was requested
+    // for). On a new list item we reset to its default (`false`); a `merged: true`
+    // line within the entry flips it. The final value therefore reflects the last
+    // entry — so an earlier merged checkpoint PR followed by a later still-open PR
+    // correctly reads as not-merged.
+    if (section === 'pr_history') {
+      const itemStartMatch = line.match(/^\s{2}-\s+(.*)$/);
+      if (itemStartMatch) {
+        result.merged = false;
+        // The dash line carries the entry's first key/value; handle the (unusual)
+        // case where that first key is `merged` itself.
+        const firstKv = itemStartMatch[1].match(/^merged:\s*(true|false)\s*$/);
+        if (firstKv) result.merged = firstKv[1] === 'true';
+        continue;
+      }
+
+      const mergedMatch = line.match(/^\s{4}merged:\s*(true|false)\s*$/);
+      if (mergedMatch) {
+        result.merged = mergedMatch[1] === 'true';
         continue;
       }
     }
@@ -362,9 +406,18 @@ export function detectBlockedSince(parsed: ParsedStatus): string | null {
  * rollback hazard from #919) nor the old `bugfix && phase === 'verified'`
  * fallback (a crutch for a gateless BUGFIX variant — gateless PR-producing
  * protocols do not surface PR rows, by design).
+ *
+ * The `!parsed.merged` conjunct (#966) handles the case where porch left the
+ * `pr` gate `pending` after the PR already merged (an out-of-band GitHub merge
+ * plus a resume can scramble the ordering). A merged PR lives in
+ * `recentlyClosed`, never `pendingPRs`, so a stale `prReady: true` would
+ * suppress the builder's row in NeedsAttentionList without ever emitting a PR
+ * row — making the builder vanish. Once merged, it is no longer "a PR awaiting
+ * human review": derivePrReady returns false, and the still-pending `pr` gate
+ * surfaces the builder via the gate-row path instead.
  */
 export function derivePrReady(parsed: ParsedStatus): boolean {
-  return parsed.gates['pr'] === 'pending' && !!parsed.gateRequestedAt['pr'];
+  return parsed.gates['pr'] === 'pending' && !!parsed.gateRequestedAt['pr'] && !parsed.merged;
 }
 
 /**
