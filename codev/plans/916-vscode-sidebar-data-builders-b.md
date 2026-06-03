@@ -12,16 +12,16 @@ despite an active fleet of pir-952 / pir-961 / spir-945).
 
 The four data-views share a single `OverviewCache` (`packages/vscode/src/views/overview-data.ts`),
 injected into `BuildersProvider`, `BacklogProvider`, `PullRequestsProvider`, `RecentlyClosedProvider`.
-Each provider short-circuits to an empty list on a falsy cache read (e.g. `builders.ts:138-143`,
-`backlog.ts:68-70`, `pull-requests.ts:16-18`, `recently-closed.ts:16-18` all do `if (!data) return [];`).
+Each provider short-circuits to an empty list on a falsy cache read (e.g. `builders.ts:182-185`,
+`backlog.ts:69-70`, `pull-requests.ts:17-18`, `recently-closed.ts:17-18` all do `if (!data) return [];`).
 
 `OverviewCache.refresh()` **discards last-known-good data and emits `null`** on a transient read, via
 two paths:
 
 1. `overview-data.ts:44-48` — when `getState() !== 'connected'` (or no client), it sets
    `this.data = null` and fires `onDidChange`. A transient SSE drop puts the connection manager into
-   `disconnected`/`reconnecting` (`connection-manager.ts:228-235`, `scheduleReconnect` →
-   `setState('reconnecting')` at `:176`), so any `refresh()` racing that window nulls the cache.
+   `disconnected`/`reconnecting` (SSE-lost handler at `connection-manager.ts:235`, `scheduleReconnect` →
+   `setState('reconnecting')` at `:177`), so any `refresh()` racing that window nulls the cache.
 2. `overview-data.ts:52-54` — `const result = await client.getOverview(...) ?? null; this.data = result;`
    On a failed HTTP request `getOverview()` returns `null` (`tower-client.ts:314-318`:
    `return result.ok ? result.data! : null`), so a single failed/timed-out fetch commits `this.data = null`.

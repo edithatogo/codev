@@ -39,3 +39,15 @@ Vitest unit test (`src/__tests__/`) mocking `vscode` (FakeEventEmitter, establis
 refresh does NOT empty `getData()` once it has been populated.
 
 Plan written → awaiting `plan-approval` gate.
+
+## Rebase on main (2026-06-03)
+Rebased onto origin/main (was 79 behind). Re-verified plan accuracy against updated code:
+- **`overview-data.ts` (the fix file): byte-identical** — all exact line refs (`:44-48`, `:52-54`,
+  `:16-21`, `:58-60`) still correct. Null-emit mechanism unchanged.
+- All four providers still `if (!data) { return []; }` (line numbers shifted: builders.ts grew ~40
+  lines → guards now `:182-185` / `:219`; backlog `:69-70` / `:109`; pull-requests `:18`; recently-closed `:18`).
+- `tower-client.ts:314` getOverview unchanged (null only on failure).
+- `connection-manager.ts`: only a backoff refactor to shared `backoffDelayMs` (#961); reconnect-state
+  semantics identical. `setState('reconnecting')` now `:177`, SSE-lost `:235`.
+- `backlog.ts`: only an `areaName`→`groupName` param rename; null guard untouched.
+Plan substantively unchanged; updated only the drifted evidence line-numbers. Force-pushed rebased branch.
