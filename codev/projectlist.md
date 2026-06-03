@@ -233,6 +233,11 @@ Projects currently in development (conceived through committed), sorted by prior
 
 ```yaml
 releases:
+  - version: "v3.1.7"
+    name: "Jacobean"
+    status: released
+    target_date: "2026-06-03"
+    notes: "VSCode-extension-heavy Jacobean patch plus npm-side fixes. VSCode What's new: Codev CLI preflight on startup with 'Get started with Codev' walkthrough (#791/#955), Builders tree group-by-stage default with stage/area toggle on title-bar AND group header (#952/#970), area-header roll-up status icons on Backlog and Builders trees (#926/#959), Search Backlog editor-tab webview (#920/#957), [new] prefix on freshly-created backlog rows (#930/#949), click-to-reconnect affordance on terminal give-up (#939 + #936/#962). Bug fixes: terminal reconnect no longer spams 'Connection lost' indefinitely — bounded retry + give-up after 6 attempts + stale-session fast-path (#936/#962), sidebar no longer blanks empty during transient connection blips — overview cache holds last-known-good (#916/#976), Run/Stop Dev Server entries hide when worktree.devCommand isn't configured across menu + keybindings + palette (#975/#978), blocked-builder inline action button neutral arrow instead of misleading checkmark (#933/#963), Open Builder Terminal + Send Message Quick Picks now show '#<id> <title>' (#925/#951). Cross-package: transport-agnostic reconnect-policy extracted to @cluesmith/codev-core, web dashboard terminal adopts 6-attempt give-up (was 50) + true reconnect on refresh button (#961/#972), Overview wire types consolidated into @cluesmith/codev-types (#875/#973), worktree.symlinks supports directory entries via trailing-slash opt-in (#805/#947), SPIR/ASPIR review iteration ceiling lowered 8→3 (#964). Internal: lint rule banning bare vscode.commands.registerCommand (#956/#958), scrollController test realigned with the v3.0.0-rc.6 mitigation (bugfix-974/#977)."
   - version: "v3.1.6"
     name: "Jacobean"
     status: released
