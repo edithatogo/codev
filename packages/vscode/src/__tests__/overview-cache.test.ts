@@ -152,27 +152,45 @@ describe('OverviewCache last-known-good retention (#916)', () => {
     expect(getOverview).not.toHaveBeenCalled();
   });
 
-  it('freshens on reconnect: an onStateChange("connected") triggers a refresh', async () => {
-    getOverview.mockResolvedValue(overview(1));
-    const { cm, fireState } = makeFakeConnectionManager(getOverview);
-    new OverviewCache(cm);
+  // The no-flicker contract: a transient read must not fire onDidChange, so
+  // providers are not asked to re-render an empty list mid-blip. A successful
+  // commit must fire it so the views update.
+  it('does NOT fire onDidChange on a not-connected refresh', async () => {
+    getOverview.mockResolvedValue(overview(3));
+    const { cm, setState } = makeFakeConnectionManager(getOverview);
+    const cache = new OverviewCache(cm);
+    await cache.refresh();
 
-    expect(getOverview).not.toHaveBeenCalled();
-    fireState('connected');
-    // Allow the fire-and-forget refresh() microtask to settle.
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(getOverview).toHaveBeenCalledTimes(1);
+    const onChange = vi.fn();
+    cache.onDidChange(onChange);
+
+    setState('reconnecting');
+    await cache.refresh();
+    expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('does not refresh on non-connected state transitions', async () => {
-    getOverview.mockResolvedValue(overview(1));
-    const { cm, fireState } = makeFakeConnectionManager(getOverview);
-    new OverviewCache(cm);
+  it('does NOT fire onDidChange when a connected fetch fails (null result)', async () => {
+    getOverview.mockResolvedValueOnce(overview(3)).mockResolvedValueOnce(null);
+    const { cm } = makeFakeConnectionManager(getOverview);
+    const cache = new OverviewCache(cm);
+    await cache.refresh();
 
-    fireState('reconnecting');
-    fireState('disconnected');
-    await Promise.resolve();
-    expect(getOverview).not.toHaveBeenCalled();
+    const onChange = vi.fn();
+    cache.onDidChange(onChange);
+
+    await cache.refresh();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('fires onDidChange on a successful commit', async () => {
+    getOverview.mockResolvedValue(overview(2));
+    const { cm } = makeFakeConnectionManager(getOverview);
+    const cache = new OverviewCache(cm);
+
+    const onChange = vi.fn();
+    cache.onDidChange(onChange);
+
+    await cache.refresh();
+    expect(onChange).toHaveBeenCalledTimes(1);
   });
 });

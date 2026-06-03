@@ -15,6 +15,12 @@ import type { ConnectionManager } from '../connection-manager.js';
  * keeps the views stable across the blip. A genuinely empty workspace still
  * renders empty: `TowerClient.getOverview()` returns null only on request
  * failure, never for a valid-but-empty overview.
+ *
+ * Freshen-on-reconnect is handled by the extension's own
+ * `connectionManager.onStateChange('connected') -> overviewCache.refresh()`
+ * wiring (see `extension.ts`), so this class only needs to react to SSE
+ * events — it does not subscribe to state changes itself, to avoid a duplicate
+ * refresh on every reconnect.
  */
 export class OverviewCache {
   private data: OverviewData | null = null;
@@ -26,17 +32,9 @@ export class OverviewCache {
   private readonly subscriptions: vscode.Disposable[] = [];
 
   constructor(private connectionManager: ConnectionManager) {
+    // Refresh on every non-heartbeat SSE event.
     this.subscriptions.push(
-      // Refresh on every non-heartbeat SSE event.
       connectionManager.onSSEEvent(() => { this.refresh(); }),
-      // Re-sync the moment the connection is (re)established. With last-known-
-      // good retention the cache holds stale data across a disconnect; this
-      // freshens it promptly on reconnect instead of waiting for the next SSE
-      // event (heartbeats are filtered, so an idle Tower would otherwise leave
-      // the views stale for a while).
-      connectionManager.onStateChange((state) => {
-        if (state === 'connected') { this.refresh(); }
-      }),
     );
   }
 
