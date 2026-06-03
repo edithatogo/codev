@@ -13,7 +13,7 @@ Codev is a Human-Agent Software Development Operating System. This repository se
 
 **To understand a specific subsystem:**
 - **Agent Farm**: Start with the Architecture Overview diagram in this document, then `packages/codev/src/agent-farm/`
-- **Shared Runtime**: `packages/core/` — TowerClient, auth, workspace encoding, EscapeBuffer
+- **Shared Runtime**: `packages/core/` — TowerClient, auth, workspace encoding, EscapeBuffer, ReconnectPolicy
 - **VS Code Extension**: `packages/vscode/` — thin client over Tower API
 - **Dashboard**: `packages/dashboard/` — React SPA served by Tower
 - **Consult Tool**: See `packages/codev/src/commands/consult/` and `codev/roles/consultant.md`
@@ -993,7 +993,7 @@ The repository uses pnpm workspaces with the following packages:
 | Package | npm Name | Purpose |
 |---------|----------|---------|
 | `packages/codev` | `@cluesmith/codev` | CLI + Tower server (published to npm) |
-| `packages/core` | `@cluesmith/codev-core` | Shared runtime: TowerClient, auth, workspace encoding, EscapeBuffer (published to npm) |
+| `packages/core` | `@cluesmith/codev-core` | Shared runtime: TowerClient, auth, workspace encoding, EscapeBuffer, ReconnectPolicy (published to npm) |
 | `packages/types` | `@cluesmith/codev-types` | Shared TypeScript types: WebSocket protocol, API shapes, SSE events (dev dependency only) |
 | `packages/config` | `@cluesmith/config` | Shared tsconfig base (cross-project) |
 | `packages/dashboard` | `@cluesmith/codev-dashboard` | React dashboard SPA (built into codev package) |
