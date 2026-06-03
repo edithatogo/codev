@@ -59,3 +59,7 @@ Architect flagged that per-mode logic was smeared across ~5 provider branch-poin
 - Group-by-Phase toggle icon changed `$(list-ordered)` → `$(milestone)` (architect pick); area stays `$(tag)`.
 - Toggle STYLE: architect chose to KEEP the two-command swap (distinct per-target icons, house pattern) rather than VS Code's single-button `toggled` (pressed-state) property. Reason the single button was raised: it shows current state on one fixed button — but it's one icon only (would drop the milestone/tag distinction) and reads as on/off rather than two equal modes.
 - Asked architect (via afx send) to file a SEPARATE area/vscode item to explore standardizing the toggle concept across the whole extension (buildersFileViewAsTree, backlogShowAll, buildersGroupBy) — out of scope for #952, not filing myself per direction.
+
+## REVIEW phase (dev-approval APPROVED)
+
+Wrote review `codev/reviews/952-*.md`; no arch.md change (view-layer feature, no module boundary); added 3 lessons-learned ([From #952]: bound-the-enum closed-set mapping, two-equal-modes toggle pattern, strategy-per-mode). Opened PR #970 (Fixes #952), recorded with porch. Running `porch done` → 3-way consult (single advisory pass, max_iterations:1). Awaiting verdicts → pr gate.
