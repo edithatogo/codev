@@ -39,8 +39,25 @@ has already merged*. A merged PR lives in `recentlyClosed`, not `pendingPRs`, so
 - This will block porch's `fix`-phase `tests` check. Needs CLT reinstall (user/sudo) or a
   node downgrade. Escalating to architect rather than bypassing.
 
+## Environment UNBLOCKED (architect-authorized)
+- Bumped better-sqlite3 ^12.5.0 → ^12.10.0 (commit 45da56b7). 12.10.0 ships a node-26
+  ABI-147 prebuilt → `pnpm install` downloads it (prebuild-install, no compile, no CLT).
+- `porch check`: build ✓, tests ✓ (full suite green under node 26, incl. my 8 #966 tests).
+
+## PR
+- PR #980 opened (Fixes #966). Net diff ~ overview.ts (57) + tests (152) + bump/lockfile.
+- Running 3-way CMAP (gemini/codex/claude --protocol bugfix --type pr).
+
+## CMAP (3-way) — all APPROVE / HIGH / no key issues
+- Gemini ✅, Codex ✅, Claude ✅. One non-blocking note (Claude): test comment named an
+  external adopter → scrubbed in 61333c38 per anonymization policy.
+
 ## Status
 - [x] Investigate / root cause
 - [x] Implement fix
 - [x] Tests (8 new #966 tests pass; tsc clean)
-- [ ] PR (pending environment / porch check resolution)
+- [x] Environment unblocked (better-sqlite3 bump)
+- [x] PR #980 created
+- [x] CMAP review (all APPROVE) + scrub
+- [x] porch done → pr gate requested; architect notified
+- [ ] AWAITING human pr-gate approval (do not self-approve / self-merge)
