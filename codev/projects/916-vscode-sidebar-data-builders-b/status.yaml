@@ -1,7 +1,7 @@
 id: '916'
 title: vscode-sidebar-data-builders-b
 protocol: pir
-phase: review
+phase: verified
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -21,7 +21,7 @@ iteration: 1
 build_complete: true
 history: []
 started_at: '2026-06-02T22:53:54.850Z'
-updated_at: '2026-06-03T01:02:12.581Z'
+updated_at: '2026-06-03T01:02:21.750Z'
 pr_history:
   - phase: review
     pr_number: 976
