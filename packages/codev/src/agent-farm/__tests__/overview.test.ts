@@ -912,8 +912,8 @@ describe('overview', () => {
     });
 
     it('repro #966: merged-but-gate-pending builder surfaces via the gate row, not as PR-ready', () => {
-      // Full chain on the real repro shape (shannon spir-2019 / PR #2030): porch
-      // recorded merged: true but left the pr gate pending. The builder must NOT
+      // Full chain on the real #966 repro shape: porch recorded
+      // merged: true but left the pr gate pending. The builder must NOT
       // read as PR-ready (else NeedsAttentionList suppresses its row while no PR
       // row exists — it vanishes). It must instead surface as a blocked "PR review"
       // gate row, since the pr gate is genuinely still pending. This is why fixing
