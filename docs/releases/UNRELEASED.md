@@ -35,6 +35,16 @@ Section template:
 
 -->
 
+## Sidebar stops flickering empty during transient connection blips (#916, PR #976)
+
+The Codev sidebar's four data-bearing views (Builders, Backlog, Pull Requests, Recently Closed) used to all blank simultaneously — while the Workspace view stayed populated — then recover on their own after some unknown interval. The bug was intermittent, hard to reproduce on demand, and rendered the architect's daily-driver surface untrustworthy at exactly the moments (network blip, Tower restart, SSE reconnect) when the user most wanted to see what was actually happening.
+
+Root cause: the shared overview cache that backs those four views was overwriting populated data with `null` on a *transient* read — when the extension wasn't currently `connected` or when a `/api/overview` fetch failed. Every provider treats a falsy cache read as an empty list, so a single null commit blanked all four views at once. The Workspace view stayed populated because it reads from different sources (it doesn't depend on `/api/overview`), which was the discriminating signal that ruled out the obvious-but-wrong theory ("Tower must be sending empty data").
+
+The fix is straightforward once the diagnosis lands: the cache now holds **last-known-good** data. Transient reads no longer clobber the cache; only a successful fetch commits a new value; and a dedicated reconnect refresh re-syncs the moment the connection is re-established. The no-flicker invariant is pinned at the event level too — `onDidChange` only fires on a successful commit, never on a transient/failed read, so providers aren't even asked to re-render mid-blip.
+
+Trade-off by design: a *long* Tower outage now shows **stale** fleet data rather than blanking. The issue's acceptance explicitly chose stale-over-blank — a distinct "disconnected" visual treatment for the data-views is a separate concern, deliberately out of scope here. The cache continues to hold the last value it saw until either a successful fetch commits a fresher one or the user explicitly refreshes.
+
 ## Builders tree group-by-stage (action axis) with stage/area toggle (#952, PR #970)
 
 The Builders sidebar tree used to group by `area/*` label — the same axis the Backlog tree uses. That's the right grouping for Backlog ("what should I pick up next?" → domain) but wrong for Builders, where the real question is "what's blocking me right now?" → action. With area-grouping you had to expand every group and scan each row's `[<phase>]` prefix to find the builders needing your attention.
