@@ -16,10 +16,10 @@ gates:
   pr:
     status: pending
 iteration: 1
-build_complete: false
+build_complete: true
 history: []
 started_at: '2026-06-03T00:16:23.970Z'
-updated_at: '2026-06-03T00:35:45.631Z'
+updated_at: '2026-06-03T00:35:54.994Z'
 pr_history:
   - phase: review
     pr_number: 973
