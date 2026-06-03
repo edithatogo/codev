@@ -10,8 +10,6 @@ import { BuilderFileTreeItem } from './builder-file-tree-item.js';
 import { BuilderFolderTreeItem } from './builder-folder-tree-item.js';
 import { buildFilePathTree, type FilePathNode } from './file-path-tree.js';
 import type { BuilderDiffCache } from './builder-diff-cache.js';
-import type { ConnectionManager } from '../connection-manager.js';
-import { loadWorktreeConfig, hasRunnableDevCommand } from '../load-worktree-config.js';
 import { AreaGroupExpansionStore, type GroupExpansionStore } from './area-group-expansion.js';
 import {
   type BuilderGrouping,
@@ -108,7 +106,6 @@ export class BuildersProvider implements vscode.TreeDataProvider<vscode.TreeItem
   constructor(
     private cache: OverviewCache,
     private readonly diffCache: BuilderDiffCache,
-    private readonly connectionManager: ConnectionManager,
     workspaceState: vscode.Memento,
   ) {
     this.groupings = {
@@ -116,24 +113,6 @@ export class BuildersProvider implements vscode.TreeDataProvider<vscode.TreeItem
       area: areaGrouping(new AreaGroupExpansionStore(workspaceState, 'codev.buildersGroupExpansion')),
     };
     cache.onDidChange(() => this.changeEmitter.fire());
-  }
-
-  /**
-   * Refresh the `codev.hasDevCommand` context key so the builder-row Run/Stop
-   * Dev Server menu entries (and the dev keybindings + palette entries) only
-   * surface when a runnable `worktree.devCommand` is configured (#975).
-   *
-   * Driven from the render path (`getChildren`'s root branch) rather than a
-   * dedicated config-file listener: the context menu is on-demand and short-
-   * lived, so the key only needs to track the same cadence as the rows it
-   * gates — not a constant stream (contrast the always-on Workspace view).
-   * Fire-and-forget: the Tower config fetch must never block tree rendering.
-   * A disconnected/unreachable state resolves to `false` — fail-safe to hidden.
-   */
-  private refreshDevCommandContext(): void {
-    loadWorktreeConfig(this.connectionManager).then(config =>
-      vscode.commands.executeCommand(
-        'setContext', 'codev.hasDevCommand', hasRunnableDevCommand(config)));
   }
 
   /**
@@ -196,9 +175,6 @@ export class BuildersProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return this.rowsForGroup(element.groupName);
     }
     // Root: group headers, or the single-Uncategorized flatten case (area mode).
-    // Refresh the dev-command menu gate on the same cadence as the rows it
-    // applies to (fire-and-forget — does not block the render). See #975.
-    this.refreshDevCommandContext();
     return this.rootChildren();
   }
 

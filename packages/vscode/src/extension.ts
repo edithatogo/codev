@@ -48,6 +48,7 @@ import { persistAreaGroupExpansion } from './views/area-group-expansion.js';
 import { buildArchitectReferenceInjection } from './architect-reference-injection.js';
 import { runPreflight, recheckCli, isCliReady, showSetupRequiredToast } from './preflight/preflight.js';
 import { detectWorkspacePath } from './workspace-detector.js';
+import { loadWorktreeConfig, hasRunnableDevCommand } from './load-worktree-config.js';
 
 let connectionManager: ConnectionManager | null = null;
 let terminalManager: TerminalManager | null = null;
@@ -170,6 +171,37 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.onDidChangeActiveTerminal(syncTerminalFocusContext));
 	syncTerminalFocusContext(); // seed initial state
 
+	// Drive the `codev.hasDevCommand` context key so the builder-row Run/Stop
+	// Dev Server menu entries, the dev keybindings, and the workspace-dev palette
+	// entries only surface when a runnable `worktree.devCommand` is configured
+	// (#975). These surfaces are global (the keybindings/palette are invokable
+	// regardless of whether the Builders tree has rendered), so the key is
+	// refreshed by global signals — mirroring the Workspace view's own gate:
+	// `onStateChange` for the initial value once Tower is reachable, plus the
+	// `worktree-config-updated` SSE envelope (fired by Tower's config-file
+	// watcher) so the key stays live on `.codev/config(.local).json` edits
+	// without a window reload. The config is the Tower-merged 5-layer view
+	// (shared + project-local). Fail-safe: a disconnected/error state resolves
+	// to `false` — hide, never falsely offer.
+	const syncHasDevCommandContext = async () => {
+		const config = await loadWorktreeConfig(connectionManager!);
+		await vscode.commands.executeCommand(
+			'setContext', 'codev.hasDevCommand', hasRunnableDevCommand(config));
+	};
+	context.subscriptions.push(
+		connectionManager.onStateChange(() => { syncHasDevCommandContext(); }));
+	context.subscriptions.push(
+		connectionManager.onSSEEvent(({ data }) => {
+			try {
+				if ((JSON.parse(data) as { type?: unknown }).type === 'worktree-config-updated') {
+					syncHasDevCommandContext();
+				}
+			} catch {
+				// benign — malformed envelope
+			}
+		}));
+	syncHasDevCommandContext(); // seed initial state
+
 	// Update status bar with builder + needs-attention counts.
 	// Two "needs me" signals: blocked (formal gate) and idle-waiting
 	// (PTY silent past threshold, likely paused at a non-gate question
@@ -290,7 +322,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// List views use createTreeView so their title can carry a live item
 	// count; the rest stay on registerTreeDataProvider.
-	const buildersProvider = new BuildersProvider(overviewCache, builderDiffCache, connectionManager, context.workspaceState);
+	const buildersProvider = new BuildersProvider(overviewCache, builderDiffCache, context.workspaceState);
 	buildersView = vscode.window.createTreeView('codev.builders', { treeDataProvider: buildersProvider });
 	context.subscriptions.push(...persistAreaGroupExpansion(
 		buildersView, BuilderGroupTreeItem, buildersProvider.expansion,

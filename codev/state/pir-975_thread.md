@@ -65,5 +65,22 @@ moved connectionManager ahead of the transient workspaceState param).
 
 Wrote `codev/reviews/975-vscode-run-stop-dev-server-con.md`. No arch.md /
 lessons-learned.md changes (UI-gating bug within existing TreeView+when-clause
-pattern; the one transferable note lives in code comments + the review). Opening
-PR, recording with porch, then porch's single-pass 3-way consult runs.
+pattern; the one transferable note lives in code comments + the review). Opened
+PR #978, recorded with porch.
+
+### Consult: 2 REQUEST_CHANGES (Gemini, Codex; HIGH) vs 1 APPROVE (Claude)
+
+Both dissents were correct and identical: the render-path refresh left the
+*global* keybindings/palette stale when the Builders tree wasn't rendered
+(cmd+alt+r could silently no-op with a devCommand configured). Real defect, not
+a rebuttal. Gemini also caught a factual error in the review draft (render-path
+isn't "consistent with" buildersAutoCollapse/buildersGroupBy — those are
+onDidChangeConfiguration-driven).
+
+Surfaced to architect; they chose **Option B (global listener)**. Reverted
+builders.ts to original; restored the global `syncHasDevCommandContext` in
+extension.ts (onStateChange + worktree-config-updated SSE + seed) — the
+original pre-render-path approach. All three surfaces now live + consistent.
+Fixed review file (mechanism + factual error + Codex coverage note). Build +
+typecheck + 276 tests + lint all green. PIR is single-pass: escalating the
+REQUEST_CHANGES + fix disposition to the human at the pr gate.
