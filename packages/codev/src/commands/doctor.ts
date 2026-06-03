@@ -13,6 +13,7 @@ import { query as claudeQuery } from '@anthropic-ai/claude-agent-sdk';
 import { executeForgeCommandSync, loadForgeConfig, validateForgeConfig, resolveAllConcepts, type ConceptResolution } from '../lib/forge.js';
 import { detectHarnessFromCommand } from '../agent-farm/utils/harness.js';
 import { auditPrGates, formatPrGateWarning } from '../lib/pr-gate-audit.js';
+import { resolveAgyBin, AGY_OAUTH_MARKERS } from './consult/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -149,18 +150,9 @@ const CORE_DEPENDENCIES: Dependency[] = [
 
 // AI CLI dependencies - at least one required
 // Note: Claude is verified via Agent SDK (not CLI), handled separately below
+// Note: the gemini lane now uses the Antigravity CLI (agy) — checked separately
+// via resolveAgyBin (the bare `which agy` resolves to the IDE symlink, not the CLI).
 const AI_DEPENDENCIES: Dependency[] = [
-  {
-    name: 'Gemini',
-    command: 'gemini',
-    versionArg: '--version',
-    versionExtract: () => 'working',
-    required: false,
-    installHint: {
-      macos: 'see github.com/google-gemini/gemini-cli',
-      linux: 'see github.com/google-gemini/gemini-cli',
-    },
-  },
   {
     name: 'Codex',
     command: 'codex',
@@ -377,6 +369,50 @@ function verifyAiModel(modelName: string): CheckResult {
   }
 }
 
+const AGY_INSTALL_HINT = 'install: curl -fsSL https://antigravity.google/cli/install.sh | bash, then run `agy` once to sign in';
+
+/**
+ * Presence check for the Antigravity CLI (agy) — the gemini lane's backend.
+ * Uses resolveAgyBin (rejects the IDE symlink); never a bare `which agy`.
+ */
+function checkAgy(): CheckResult {
+  const bin = resolveAgyBin();
+  if (!bin) {
+    return { status: 'skip', version: 'not installed', note: AGY_INSTALL_HINT };
+  }
+  return { status: 'ok', version: 'CLI' };
+}
+
+/**
+ * Verify agy is authenticated via a tiny non-interactive --print probe.
+ * An unauthenticated agy prints an OAuth URL and waits; we detect that and
+ * report "needs login" rather than reporting it as broken.
+ */
+function verifyAgy(): CheckResult {
+  const bin = resolveAgyBin();
+  if (!bin) return { status: 'skip', version: 'not installed', note: AGY_INSTALL_HINT };
+  try {
+    const result = spawnSync(bin, ['--print', '--print-timeout', '25s', 'Reply with just OK'], {
+      encoding: 'utf-8',
+      timeout: 35000,
+      stdio: 'pipe',
+    });
+    const combined = (result.stdout || '') + (result.stderr || '');
+    if (AGY_OAUTH_MARKERS.some((m) => combined.includes(m))) {
+      return { status: 'fail', version: 'needs login', note: 'run `agy` once to sign in (OAuth)' };
+    }
+    if (result.signal === 'SIGTERM' || result.signal === 'SIGKILL') {
+      return { status: 'fail', version: 'timeout', note: 'check network connection / run `agy` to verify sign-in' };
+    }
+    if (result.status === 0 && combined.trim().length > 0) {
+      return { status: 'ok', version: 'operational' };
+    }
+    return { status: 'fail', version: 'not responding', note: 'run `agy` to verify sign-in' };
+  } catch {
+    return { status: 'fail', version: 'error', note: 'run `agy` to verify sign-in' };
+  }
+}
+
 /**
  * Find the project root with a codev/ directory
  */
@@ -535,7 +571,7 @@ export async function doctor(): Promise<number> {
   printStatus('Claude', { status: 'ok', version: 'Agent SDK' });
   installedAiClis.push('Claude');
 
-  // Check CLI-based AI dependencies (Gemini, Codex)
+  // Check CLI-based AI dependencies (Codex, OpenCode)
   for (const dep of AI_DEPENDENCIES) {
     const result = checkDependency(dep);
     if (result.status === 'ok') {
@@ -543,6 +579,12 @@ export async function doctor(): Promise<number> {
     }
     printStatus(dep.name, result);
   }
+
+  // gemini lane → Antigravity CLI (agy): custom presence check (resolveAgyBin
+  // rejects the IDE symlink; a bare `which agy` would resolve the wrong binary).
+  const agyPresence = checkAgy();
+  if (agyPresence.status === 'ok') installedAiClis.push('Gemini (agy)');
+  printStatus('Gemini (agy)', agyPresence);
 
   // Verify installed CLIs are actually operational
   console.log('');
@@ -565,8 +607,8 @@ export async function doctor(): Promise<number> {
     });
   }
 
-  // Verify CLI-based models
-  for (const cliName of installedAiClis.filter(n => n !== 'Claude')) {
+  // Verify CLI-based models (agy handled separately below — custom OAuth probe)
+  for (const cliName of installedAiClis.filter(n => n !== 'Claude' && n !== 'Gemini (agy)')) {
     console.log(chalk.blue(`  ⋯ ${cliName.padEnd(12)} verifying...`));
     process.stdout.write('\x1b[1A\x1b[2K');
 
@@ -581,6 +623,25 @@ export async function doctor(): Promise<number> {
         name: cliName,
         issue: result.version,
         recommendation: result.note,
+      });
+    }
+  }
+
+  // Verify the gemini lane (agy) via its custom OAuth-aware probe so an
+  // agy-only setup still counts as an operational model.
+  if (installedAiClis.includes('Gemini (agy)')) {
+    console.log(chalk.blue(`  ⋯ ${'Gemini (agy)'.padEnd(12)} verifying...`));
+    process.stdout.write('\x1b[1A\x1b[2K');
+    const agyVerify = verifyAgy();
+    printStatus('Gemini (agy)', agyVerify);
+    if (agyVerify.status === 'ok') {
+      aiCliCount++;
+    } else if (agyVerify.status === 'fail') {
+      warnings++;
+      warningDetails.push({
+        name: 'Gemini (agy)',
+        issue: agyVerify.version,
+        recommendation: agyVerify.note,
       });
     }
   }

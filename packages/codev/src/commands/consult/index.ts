@@ -10,7 +10,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawn, execSync, execFileSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import chalk from 'chalk';
 import { query as claudeQuery } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
@@ -35,7 +35,10 @@ interface ModelConfig {
 }
 
 const MODEL_CONFIGS: Record<string, ModelConfig> = {
-  gemini: { cli: 'gemini', args: ['--model', 'gemini-3.1-pro-preview'], envVar: 'GEMINI_SYSTEM_MD' },
+  // gemini dispatches to the Antigravity CLI (`agy`) via runAgyConsultation —
+  // this entry exists only for model validation and the `pro` alias; its
+  // cli/args are NOT used for dispatch (agy's binary path is resolved at runtime).
+  gemini: { cli: 'agy', args: [], envVar: null },
   hermes: { cli: 'hermes', args: ['chat', '-q'], envVar: null },
 };
 
@@ -579,6 +582,233 @@ async function runClaudeConsultation(
   }
 }
 
+// ── Antigravity CLI (`agy`) backend for the `gemini` lane ──────────────────
+// Replaces the retiring Gemini CLI. agy is an agent (reads files from disk via
+// --add-dir under --sandbox), OAuth-only, default model = Flash, plain-text
+// output (no usage JSON). See spec/plan 778.
+
+// Markers that indicate agy is NOT authenticated (it prints an OAuth URL and
+// waits ~30s for an interactive login that can't complete headlessly). When
+// seen, we terminate early and emit a non-blocking COMMENT skip.
+export const AGY_OAUTH_MARKERS = [
+  'accounts.google.com/o/oauth2',
+  'Authentication required',
+  'paste the authorization code',
+  'Waiting for authentication',
+];
+const AGY_PRINT_TIMEOUT = '5m';                 // passed to `agy --print-timeout`
+const AGY_TIMEOUT_MS = 6 * 60 * 1000;           // Codev-owned hard cap (> agy's own timeout)
+// OAuth banner appears before any review text; only scan the early stream.
+const AGY_MARKER_SCAN_LIMIT = 8192;
+
+/**
+ * Verify a path is the real headless `agy` CLI, not the Antigravity IDE
+ * launcher. The IDE ships `~/.antigravity/.../bin/agy` as a symlink to the
+ * Electron app binary (`Antigravity.app/.../antigravity`); resolving it and
+ * launching it would open the IDE, never produce a `--print` review. We reject
+ * by realpath WITHOUT executing anything (no risk of launching the GUI).
+ */
+export function isRealAgyCli(p: string): boolean {
+  try {
+    if (!fs.existsSync(p)) return false;
+    const real = fs.realpathSync(p);
+    if (real.includes('Antigravity.app')) return false;     // IDE app bundle
+    if (/[/\\]antigravity(\.exe)?$/.test(real)) return false; // IDE launcher binary
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the real `agy` CLI binary deterministically — never trust a bare
+ * PATH lookup (a stale shell or the IDE symlink shadows the CLI). Prefers the
+ * official installer path, then a PATH `agy` verified not to be the IDE.
+ * Returns null if no valid headless CLI is found.
+ */
+export function resolveAgyBin(): string | null {
+  // Explicit override (advanced users / tests): use it if valid, never silently
+  // fall back to a different binary the user didn't ask for.
+  const override = process.env.CODEV_AGY_BIN;
+  if (override) return isRealAgyCli(override) ? override : null;
+
+  const preferred = path.join(homedir(), '.local', 'bin', 'agy');
+  if (isRealAgyCli(preferred)) return preferred;
+  try {
+    const found = execSync('command -v agy 2>/dev/null', { encoding: 'utf-8' }).trim();
+    if (found && isRealAgyCli(found)) return found;
+  } catch {
+    // not on PATH
+  }
+  return null;
+}
+
+/** Non-blocking skip artifact: porch's verdict parser treats COMMENT as non-blocking. */
+function agySkipContent(reason: string): string {
+  return [
+    '---',
+    'VERDICT: COMMENT',
+    `SUMMARY: Gemini lane skipped — ${reason}`,
+    'CONFIDENCE: LOW',
+    '---',
+    '',
+    `The Gemini (Antigravity \`agy\`) reviewer was skipped: ${reason}.`,
+    'This is a non-blocking skip; the remaining reviewers still apply. To enable the',
+    'Gemini lane, install the CLI (https://antigravity.google/cli/install.sh) and run',
+    '`agy` once to sign in.',
+  ].join('\n');
+}
+
+function writeConsultOutput(outputPath: string | undefined, content: string): void {
+  if (!outputPath || content.length === 0) return;
+  const outputDir = path.dirname(outputPath);
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(outputPath, content);
+  console.error(`\nOutput written to: ${outputPath}`);
+}
+
+function recordAgyMetrics(
+  metricsCtx: MetricsContext | undefined,
+  startTime: number,
+  exitCode: number,
+  errorMessage: string | null,
+): void {
+  if (!metricsCtx) return;
+  recordMetrics(metricsCtx, {
+    durationSeconds: (Date.now() - startTime) / 1000,
+    // agy --print emits plain text, no token usage → cost rows degrade gracefully (null).
+    inputTokens: null,
+    cachedInputTokens: null,
+    outputTokens: null,
+    costUsd: null,
+    exitCode,
+    errorMessage,
+  });
+}
+
+/**
+ * Run the `gemini` consult lane via the Antigravity CLI (`agy --print`).
+ * Preserves agentic file-reading (--sandbox --add-dir), folds the role into the
+ * prompt, and NEVER blocks the run: a missing/unauthed/invalid CLI or a
+ * timeout/error produces a non-blocking COMMENT skip instead of throwing.
+ */
+async function runAgyConsultation(
+  queryText: string,
+  role: string,
+  workspaceRoot: string,
+  outputPath?: string,
+  metricsCtx?: MetricsContext,
+): Promise<void> {
+  const startTime = Date.now();
+
+  const bin = resolveAgyBin();
+  if (!bin) {
+    const reason = 'agy CLI not found (install: https://antigravity.google/cli/install.sh)';
+    process.stdout.write(agySkipContent(reason));
+    writeConsultOutput(outputPath, agySkipContent(reason));
+    recordAgyMetrics(metricsCtx, startTime, 0, reason);
+    console.error(`\n[gemini (agy) skipped: ${reason}]`);
+    return;
+  }
+
+  // agy has no system-prompt flag — fold the role into the prompt (hermes precedent).
+  const prompt = `${role}\n\n---\n\n${queryText}`;
+  // Grant the sandboxed agent read access to the workspace AND tmp (buildPRQuery
+  // writes the diff to a temp file the reviewer is told to read).
+  const addDirs = [workspaceRoot, tmpdir()];
+  let tempFile: string | null = null;
+  let promptArg = prompt;
+  // Large prompts can exceed ARG_MAX (E2BIG) — write to a temp file and point agy at it.
+  if (prompt.length > CLI_PROMPT_INLINE_MAX_CHARS) {
+    tempFile = path.join(tmpdir(), `codev-consult-prompt-${Date.now()}.md`);
+    fs.writeFileSync(tempFile, prompt);
+    promptArg = [
+      `Read the full consultation prompt from this file: ${tempFile}`,
+      'You have file access. Read files directly from disk to review code.',
+    ].join('\n\n');
+  }
+
+  const args = ['--print', '--sandbox', '--print-timeout', AGY_PRINT_TIMEOUT];
+  for (const d of addDirs) args.push('--add-dir', d);
+  args.push(promptArg);
+
+  const cleanup = () => {
+    if (tempFile && fs.existsSync(tempFile)) {
+      try { fs.unlinkSync(tempFile); } catch { /* best-effort */ }
+    }
+  };
+
+  return new Promise<void>((resolve) => {
+    const proc = spawn(bin, args, {
+      cwd: workspaceRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const outChunks: Buffer[] = [];
+    let scanBuf = '';
+    let settled = false;
+
+    const settleSkip = (reason: string, exitCode = 0) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { proc.kill('SIGTERM'); } catch { /* already gone */ }
+      cleanup();
+      const content = agySkipContent(reason);
+      process.stdout.write(content);
+      writeConsultOutput(outputPath, content);
+      recordAgyMetrics(metricsCtx, startTime, exitCode, reason);
+      console.error(`\n[gemini (agy) skipped: ${reason}]`);
+      resolve();
+    };
+
+    const timer = setTimeout(
+      () => settleSkip('agy timed out (no response)', 1),
+      AGY_TIMEOUT_MS,
+    );
+
+    const watch = (buf: Buffer, isStdout: boolean) => {
+      if (isStdout) outChunks.push(buf);
+      if (scanBuf.length < AGY_MARKER_SCAN_LIMIT) {
+        scanBuf += buf.toString('utf-8');
+        if (AGY_OAUTH_MARKERS.some((m) => scanBuf.includes(m))) {
+          settleSkip('agy not authenticated — run `agy` once to sign in (OAuth)', 1);
+        }
+      }
+    };
+    proc.stdout?.on('data', (b: Buffer) => watch(b, true));
+    proc.stderr?.on('data', (b: Buffer) => watch(b, false));
+
+    proc.on('error', (err) => {
+      settleSkip(`agy failed to start: ${err.message}`, 1);
+    });
+
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      cleanup();
+      const raw = Buffer.concat(outChunks).toString('utf-8').trim();
+      if (code !== 0 || raw.length === 0) {
+        const reason = code !== 0 ? `agy exited with code ${code}` : 'agy produced no review output';
+        const content = agySkipContent(reason);
+        process.stdout.write(content);
+        writeConsultOutput(outputPath, content);
+        recordAgyMetrics(metricsCtx, startTime, code ?? 1, reason);
+        console.error(`\n[gemini (agy) skipped: ${reason}]`);
+        resolve();
+        return;
+      }
+      // Plain-text stdout IS the review.
+      process.stdout.write(raw);
+      writeConsultOutput(outputPath, raw);
+      recordAgyMetrics(metricsCtx, startTime, 0, null);
+      console.error(`\n[gemini (agy) completed in ${((Date.now() - startTime) / 1000).toFixed(1)}s]`);
+      resolve();
+    });
+  });
+}
+
 /**
  * Run the consultation — dispatches to the correct model runner.
  */
@@ -610,6 +840,15 @@ async function runConsultation(
     return;
   }
 
+  // gemini lane → Antigravity CLI (`agy`); handles its own logging, metrics,
+  // and non-blocking skip (see runAgyConsultation).
+  if (model === 'gemini') {
+    const startTime = Date.now();
+    await runAgyConsultation(query, role, workspaceRoot, outputPath, metricsCtx);
+    logQuery(workspaceRoot, model, query, (Date.now() - startTime) / 1000);
+    return;
+  }
+
   const config = MODEL_CONFIGS[model];
 
   if (!config) {
@@ -622,33 +861,9 @@ async function runConsultation(
   }
 
   let tempFile: string | null = null;
-  const env: Record<string, string> = {};
   let cmd: string[];
-  // When true, the query is written to the child's stdin instead of argv.
-  // Used for gemini to avoid V8 heap exhaustion on large prompts (#680).
-  let stdinPayload: string | null = null;
 
-  if (model === 'gemini') {
-    // Gemini uses GEMINI_SYSTEM_MD env var for role
-    tempFile = path.join(tmpdir(), `codev-role-${Date.now()}.md`);
-    fs.writeFileSync(tempFile, role);
-    env['GEMINI_SYSTEM_MD'] = tempFile;
-
-    // Bugfix #680: gemini-cli v0.37.x crashes on large PR diffs (>500KB) due to
-    // V8 old-space exhaustion in the spawned subprocess. Mitigations:
-    //   1. Bump heap via NODE_OPTIONS (survives gemini-cli's internal relaunch).
-    //   2. Pipe the prompt via stdin instead of argv — avoids ARG_MAX and keeps
-    //      V8 from holding the full prompt buffer twice.
-    env['NODE_OPTIONS'] = [process.env.NODE_OPTIONS ?? '', '--max-old-space-size=8192']
-      .join(' ')
-      .trim();
-    stdinPayload = query;
-
-    // Use --output-format json to capture token usage/cost in structured output.
-    // Never use --yolo — it allows Gemini to write files (#370).
-    // No positional query arg: prompt arrives on stdin (triggers non-interactive mode).
-    cmd = [config.cli, '--output-format', 'json', ...config.args];
-  } else if (model === 'hermes') {
+  if (model === 'hermes') {
     // Hermes does not have a dedicated system prompt flag for single-shot mode.
     // Include role context at the top of the prompt.
     const hermesPrompt = `${role}\n\n---\n\n${query}`;
@@ -671,29 +886,15 @@ async function runConsultation(
     throw new Error(`Unknown model: ${model}`);
   }
 
-  // Execute with passthrough stdio.
-  // Use 'ignore' for stdin when no payload — prevents blocking when spawned as subprocess.
-  // Use 'pipe' when we need to stream the prompt in (e.g. gemini, see #680).
-  const fullEnv = { ...process.env, ...env };
+  // Execute with passthrough stdio. stdin is 'ignore' (hermes passes its prompt
+  // via argv) — prevents blocking when spawned as a subprocess.
   const startTime = Date.now();
-  const stdinMode: 'ignore' | 'pipe' = stdinPayload !== null ? 'pipe' : 'ignore';
 
   return new Promise((resolve, reject) => {
     const proc = spawn(cmd[0], cmd.slice(1), {
       cwd: workspaceRoot,
-      env: fullEnv,
-      stdio: [stdinMode, 'pipe', 'inherit'],
+      stdio: ['ignore', 'pipe', 'inherit'],
     });
-
-    if (stdinPayload !== null && proc.stdin) {
-      proc.stdin.on('error', (err) => {
-        // EPIPE can happen if the child exits before reading all input — not fatal.
-        if ((err as NodeJS.ErrnoException).code !== 'EPIPE') {
-          reject(err);
-        }
-      });
-      proc.stdin.end(stdinPayload, 'utf-8');
-    }
 
     const chunks: Buffer[] = [];
 

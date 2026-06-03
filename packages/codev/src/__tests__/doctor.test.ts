@@ -795,7 +795,13 @@ describe('doctor command', () => {
       expect(hasAuthError).toBe(true);
     });
 
-    it('should show timeout message for network issues', async () => {
+    it('should show timeout message for network issues (gemini lane / agy)', async () => {
+      // The gemini lane now verifies via the Antigravity CLI (agy). A hung agy
+      // --print probe (SIGTERM) should surface a timeout/network hint.
+      const agyBin = path.join(testBaseDir, 'agy-fake');
+      fs.writeFileSync(agyBin, '#!/bin/sh\n');
+      process.env.CODEV_AGY_BIN = agyBin;
+
       vi.mocked(execSync).mockImplementation((cmd: string) => {
         if (cmd.includes('which')) {
           return Buffer.from('/usr/bin/command');
@@ -806,21 +812,9 @@ describe('doctor command', () => {
         return Buffer.from('');
       });
 
-      vi.mocked(spawnSync).mockImplementation((cmd: string, args?: string[]) => {
-        // Gemini version check succeeds, but auth check times out
-        if (cmd === 'gemini') {
-          // Version check (--version) succeeds
-          if (args?.includes('--version')) {
-            return {
-              status: 0,
-              stdout: '0.1.0',
-              stderr: '',
-              signal: null,
-              output: [null, '0.1.0', ''],
-              pid: 0,
-            };
-          }
-          // Auth check (--yolo) times out
+      vi.mocked(spawnSync).mockImplementation((cmd: string) => {
+        // agy --print probe times out (no OAuth marker, SIGTERM).
+        if (cmd === agyBin) {
           return {
             status: null,
             stdout: '',
@@ -854,14 +848,18 @@ describe('doctor command', () => {
         logOutput.push(args.join(' '));
       });
 
-      const { doctor } = await import('../commands/doctor.js');
-      await doctor();
+      try {
+        const { doctor } = await import('../commands/doctor.js');
+        await doctor();
 
-      // Should show timeout with network hint
-      const hasTimeoutHint = logOutput.some(line =>
-        line.includes('Gemini') && (line.includes('timeout') || line.includes('network'))
-      );
-      expect(hasTimeoutHint).toBe(true);
+        // Should show timeout with network hint on the Gemini (agy) line.
+        const hasTimeoutHint = logOutput.some(line =>
+          line.includes('Gemini') && (line.includes('timeout') || line.includes('network'))
+        );
+        expect(hasTimeoutHint).toBe(true);
+      } finally {
+        delete process.env.CODEV_AGY_BIN;
+      }
     });
 
     it('should show operational when Codex login status succeeds', async () => {
