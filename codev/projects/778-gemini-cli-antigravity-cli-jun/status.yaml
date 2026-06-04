@@ -23,8 +23,8 @@ gates:
     status: pending
   verify-approval:
     status: pending
-iteration: 2
-build_complete: true
+iteration: 3
+build_complete: false
 history:
   - iteration: 1
     plan_phase: agy_backend
@@ -74,5 +74,21 @@ history:
         verdict: COMMENT
         file: >-
           /Users/mwk/Development/cluesmith/codev/.builders/spir-778/codev/projects/778-gemini-cli-antigravity-cli-jun/778-docs_skeleton_e2e-iter1-claude.txt
+  - iteration: 2
+    plan_phase: docs_skeleton_e2e
+    build_output: ''
+    reviews:
+      - model: gemini
+        verdict: APPROVE
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-778/codev/projects/778-gemini-cli-antigravity-cli-jun/778-docs_skeleton_e2e-iter2-gemini.txt
+      - model: codex
+        verdict: REQUEST_CHANGES
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-778/codev/projects/778-gemini-cli-antigravity-cli-jun/778-docs_skeleton_e2e-iter2-codex.txt
+      - model: claude
+        verdict: COMMENT
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-778/codev/projects/778-gemini-cli-antigravity-cli-jun/778-docs_skeleton_e2e-iter2-claude.txt
 started_at: '2026-06-02T01:16:31.004Z'
-updated_at: '2026-06-04T18:01:50.284Z'
+updated_at: '2026-06-04T18:13:24.444Z'
