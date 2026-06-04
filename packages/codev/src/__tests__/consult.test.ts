@@ -83,17 +83,14 @@ describe('consult command', () => {
   });
 
   describe('model configuration', () => {
-    it('should support model aliases', () => {
-      // The MODEL_ALIASES mapping
-      const aliases: Record<string, string> = {
-        'pro': 'gemini',
-        'gpt': 'codex',
-        'opus': 'claude',
-      };
-
-      expect(aliases['pro']).toBe('gemini');
-      expect(aliases['gpt']).toBe('codex');
-      expect(aliases['opus']).toBe('claude');
+    it('should support model aliases', async () => {
+      // Assert the REAL exported alias map (not a hardcoded duplicate). The
+      // `pro` alias is additionally exercised through the real execution path
+      // in the agy describe block below.
+      const { _MODEL_ALIASES } = await import('../commands/consult/index.js');
+      expect(_MODEL_ALIASES['pro']).toBe('gemini');
+      expect(_MODEL_ALIASES['gpt']).toBe('codex');
+      expect(_MODEL_ALIASES['opus']).toBe('claude');
     });
 
     it('should have correct CLI configuration for each model', async () => {
@@ -767,6 +764,18 @@ describe('consult command', () => {
       expect(args).toContain('--add-dir');
       // Safety (replaces the #370 --yolo concern): never auto-approve all tools.
       expect(args).not.toContain('--dangerously-skip-permissions');
+    });
+
+    it('routes the `pro` alias through the real execution path to the agy lane', async () => {
+      // `pro` → gemini → agy: exercise the actual resolution, not a hardcoded map.
+      const { consult, spawn } = await loadAgy();
+      spawn.mockClear();
+
+      await consult({ model: 'pro', prompt: 'review this' });
+
+      const call = spawn.mock.calls.find(c => c[0] === agyBin);
+      expect(call).toBeDefined(); // resolved to the agy backend
+      expect(call![1] as string[]).toContain('--print');
     });
 
     it('folds the reviewer role into the prompt (no GEMINI_SYSTEM_MD env)', async () => {
