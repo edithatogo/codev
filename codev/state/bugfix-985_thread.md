@@ -3,7 +3,8 @@
 ## Issue
 `consult -m claude` bills the metered Opus API instead of the Claude subscription because it
 forwards `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` into the Agent SDK env, which shadows
-`CLAUDE_CODE_OAUTH_TOKEN` in the SDK's auth priority. Reported by shannon:main (~$150/day).
+`CLAUDE_CODE_OAUTH_TOKEN` in the SDK's auth priority. Reported by an external adopter
+(~$150/day on a heavy dev day).
 
 ## Investigate (done)
 Root cause confirmed in source on this branch:
@@ -36,3 +37,16 @@ Root cause confirmed in source on this branch:
   in the fresh worktree). Net diff well under 300 LOC.
 
 BUGFIX protocol phases: Investigate → Fix → Create PR.
+
+## Create PR (done)
+- PR #986 opened against main. "Fixes #985".
+- CMAP (3-way) on the PR — all APPROVE, HIGH confidence, zero blocking issues:
+  - Codex: APPROVE/HIGH — correct, tightly scoped, solid regression coverage.
+  - Gemini: APPROVE/HIGH — correct root-cause fix, thorough branch coverage.
+  - Claude: APPROVE/HIGH — clean minimal fix; flagged (non-blocking) external-adopter
+    scrubbing convention + the `_`-prefix export style note (kept direct export — it's a
+    legitimate public utility, not a test-only helper).
+- Applied scrub: removed external-adopter workspace name from PR body + this thread
+  (kept the ~$150/day signal). Issue body still names the adopter — upstream of the
+  builder; flagged to architect.
+- Awaiting architect approval to merge (BUGFIX pr gate).
