@@ -600,6 +600,10 @@ const AGY_PRINT_TIMEOUT = '5m';                 // passed to `agy --print-timeou
 const AGY_TIMEOUT_MS = 6 * 60 * 1000;           // Codev-owned hard cap (> agy's own timeout)
 // OAuth banner appears before any review text; only scan the early stream.
 const AGY_MARKER_SCAN_LIMIT = 8192;
+// agy's own print-timeout message: on an agentic task that outruns --print-timeout,
+// it returns this (often with a "monitoring the task" note) instead of a review.
+// Treat it as a non-response → non-blocking skip rather than a garbage "review".
+const AGY_NONRESPONSE_MARKER = 'timed out waiting for response';
 
 /**
  * Verify a path is the real headless `agy` CLI, not the Antigravity IDE
@@ -809,8 +813,12 @@ async function runAgyConsultation(
       clearTimeout(timer);
       cleanup();
       const raw = Buffer.concat(outChunks).toString('utf-8').trim();
-      if (code !== 0 || raw.length === 0) {
-        const reason = code !== 0 ? `agy exited with code ${code}` : 'agy produced no review output';
+      if (code !== 0 || raw.length === 0 || raw.includes(AGY_NONRESPONSE_MARKER)) {
+        const reason = code !== 0
+          ? `agy exited with code ${code}`
+          : raw.includes(AGY_NONRESPONSE_MARKER)
+            ? 'agy timed out producing the review'
+            : 'agy produced no review output';
         const content = agySkipContent(reason);
         process.stdout.write(content);
         writeConsultOutput(outputPath, content);

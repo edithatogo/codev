@@ -844,6 +844,29 @@ describe('consult command', () => {
         stdoutSpy.mockRestore();
       }
     });
+
+    it('skips non-blockingly when agy times out producing the review (non-response message)', async () => {
+      // On a heavy agentic task that outruns --print-timeout, agy returns a
+      // "timed out waiting for response" message (not a review) — treat as a skip.
+      const { consult, spawn } = await loadAgy();
+      spawn.mockClear();
+      spawn.mockReturnValueOnce(makeFakeAgyProc({
+        stdout: 'An background process has been started to run `agy --sandbox`.\nError: timed out waiting for response',
+        code: 0,
+      }));
+
+      const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      try {
+        let threw = false;
+        try { await consult({ model: 'gemini', prompt: 'review' }); } catch { threw = true; }
+        expect(threw).toBe(false); // non-blocking
+        const written = stdoutSpy.mock.calls.map(c => String(c[0])).join('');
+        expect(written).toContain('VERDICT: COMMENT');
+        expect(written).toMatch(/timed out/i);
+      } finally {
+        stdoutSpy.mockRestore();
+      }
+    });
   });
 
   describe('agy binary resolution (resolveAgyBin / isRealAgyCli)', () => {
