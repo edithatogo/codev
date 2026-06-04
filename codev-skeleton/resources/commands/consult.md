@@ -19,7 +19,7 @@ consult stats [options]
 
 | Model | Alias | Backend | Notes |
 |-------|-------|---------|-------|
-| `gemini` | `pro` | gemini-cli | File access via --yolo, fast |
+| `gemini` | `pro` | Antigravity CLI (`agy`) | Agentic file access (`--sandbox --add-dir`), OAuth/subscription login. Skips non-blockingly if `agy` is missing/unauthed. |
 | `codex` | `gpt` | @openai/codex | Read-only sandbox, thorough |
 | `claude` | `opus` | Claude Agent SDK | Balanced analysis with tool use |
 | `hermes` | - | hermes CLI (`hermes chat -q`) | Uses Hermes agent as consult backend |
@@ -145,14 +145,16 @@ npm install -g @anthropic-ai/claude-code
 # Codex
 npm install -g @openai/codex
 
-# Gemini
-# See: https://github.com/google-gemini/gemini-cli
+# Gemini lane → Antigravity CLI (`agy`), replacing the retired Gemini CLI
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+agy   # run once and sign in (OAuth / Google subscription)
 ```
 
-Configure API keys:
+Configure auth:
 - Claude: `ANTHROPIC_API_KEY`
 - Codex: `OPENAI_API_KEY`
-- Gemini: `GOOGLE_API_KEY` or `GEMINI_API_KEY`
+- Gemini (`agy`): **OAuth / subscription** — run `agy` once and sign in (no API key). If `agy`
+  is missing or unauthenticated, the gemini lane skips non-blockingly (the run proceeds without it).
 
 ## The Consultant Role
 
