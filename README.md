@@ -139,7 +139,7 @@ This tour demonstrates:
 - How to write specifications that capture all requirements
 - How the planning phase breaks work into manageable chunks
 - The implementation phase in action
-- Multi-agent consultation with GPT-5 and Gemini Pro
+- Multi-agent consultation with GPT-5 and Gemini (via agy)
 - How lessons learned improve future development
 
 ## What is Codev?
@@ -206,7 +206,7 @@ In much the same way an operating system has a memory hierarchy, Codev repos hav
 
 ### 🤖 AI-Native Workflow
 - Structured formats that AI agents understand
-- Multi-agent consultation support (GPT-5, Gemini Pro, etc.)
+- Multi-agent consultation support (GPT-5, Gemini via agy, etc.)
 - Reduces back-and-forth from dozens of messages to 3-4 document reviews
 - Supports both AGENTS.md standard (Cursor, Copilot, etc.) and CLAUDE.md (Claude Code)
 

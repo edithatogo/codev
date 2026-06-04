@@ -318,8 +318,8 @@ Use sequential numbering with descriptive names (no leading zeros):
 To disable: User must explicitly say "without multi-agent consultation"
 
 **CRITICAL CONSULTATION CHECKPOINTS (DO NOT SKIP):**
-- After writing implementation code → STOP → Consult GPT-5 and Gemini Pro
-- After writing tests → STOP → Consult GPT-5 and Gemini Pro
+- After writing implementation code → STOP → Consult GPT-5 and Gemini (via agy)
+- After writing tests → STOP → Consult GPT-5 and Gemini (via agy)
 - ONLY THEN present results to user for evaluation
 
 ### cmap (Consult Multiple Agents in Parallel)

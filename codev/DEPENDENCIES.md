@@ -220,6 +220,18 @@ echo $PATH
 export PATH="$PATH:$(npm config get prefix)/bin"
 ```
 
+### Terminal connection issues
+
+Ensure no firewall is blocking the ports (default: 4200-4299):
+
+```bash
+# Check if port is in use
+lsof -i :4200
+
+# Clean up stale port allocations
+afx ports cleanup
+```
+
 ### gh authentication issues
 
 ```bash
