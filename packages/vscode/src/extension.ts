@@ -41,6 +41,7 @@ import { TeamProvider } from './views/team.js';
 import { StatusProvider } from './views/status.js';
 import { PanelPlaceholderProvider } from './views/panel-placeholder.js';
 import { DevServerTreeProvider } from './views/dev-server.js';
+import { formatTargetName } from './views/dev-server-format.js';
 import { WorkspaceProvider } from './views/workspace.js';
 import { BuilderTreeItem } from './views/builder-tree-item.js';
 import { BuilderFileTreeItem } from './views/builder-file-tree-item.js';
@@ -353,7 +354,10 @@ export async function activate(context: vscode.ExtensionContext) {
 	// Holds the CLI preflight row (#791); it self-refreshes on `onPreflightChange`.
 	const statusProvider = new StatusProvider(connectionManager);
 	// Codev Dev panel tab (#921) — the first real view in #812's codevPanel.
+	// createTreeView (not registerTreeDataProvider) so we hold the handle and can
+	// set TreeView.badge — the activity dot the plan calls for while a dev runs.
 	const devServerProvider = new DevServerTreeProvider(connectionManager, terminalManager!);
+	const devServerView = vscode.window.createTreeView('codev.devServer', { treeDataProvider: devServerProvider });
 	context.subscriptions.push(
 		buildersView,
 		pullRequestsView,
@@ -363,7 +367,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.registerTreeDataProvider('codev.team', teamProvider),
 		vscode.window.registerTreeDataProvider('codev.status', statusProvider),
 		vscode.window.registerTreeDataProvider('codev.placeholder', new PanelPlaceholderProvider()),
-		vscode.window.registerTreeDataProvider('codev.devServer', devServerProvider),
+		devServerView,
 		{ dispose: () => devServerProvider.dispose() },
 	);
 
@@ -397,9 +401,15 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 	};
 	const refreshDevSurface = (): void => {
-		const target = terminalManager?.listDevTerminals()[0]?.builderId ?? null;
+		const builderId = terminalManager?.listDevTerminals()[0]?.builderId ?? null;
+		const target = builderId ? formatTargetName(builderId) : null;
 		updateDevChip(target);
 		vscode.commands.executeCommand('setContext', 'codev.devServerRunning', target !== null);
+		// Activity dot on the Codev Dev tab while a dev runs — visible when the
+		// user is on another codevPanel tab (plan's tab-badge requirement).
+		devServerView.badge = target
+			? { value: 1, tooltip: `Dev server running for ${target}` }
+			: undefined;
 	};
 	context.subscriptions.push(
 		terminalManager.onDidChangeDevTerminals(refreshDevSurface),

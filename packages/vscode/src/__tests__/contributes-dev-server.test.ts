@@ -67,14 +67,15 @@ describe('codev.devServer title-bar actions (#921)', () => {
 });
 
 describe('extension.ts wiring (#921)', () => {
-  it('registers the dev-server tree view', () => {
+  it('creates the dev-server tree view via createTreeView (for the badge handle)', () => {
     expect(EXT_SRC).toMatch(
-      /registerTreeDataProvider\(['"]codev\.devServer['"], devServerProvider\)/,
+      /createTreeView\(['"]codev\.devServer['"], \{ treeDataProvider: devServerProvider \}\)/,
     );
   });
 
-  it('drives the chip + devServerRunning context key off the dev-terminal event', () => {
+  it('drives the chip + devServerRunning context key + tab badge off the dev-terminal event', () => {
     expect(EXT_SRC).toMatch(/onDidChangeDevTerminals\(refreshDevSurface\)/);
     expect(EXT_SRC).toMatch(/setContext['"],\s*['"]codev\.devServerRunning['"]/);
+    expect(EXT_SRC).toMatch(/devServerView\.badge\s*=/);
   });
 });
