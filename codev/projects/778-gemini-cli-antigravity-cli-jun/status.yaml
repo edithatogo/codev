@@ -21,6 +21,7 @@ gates:
     approved_at: '2026-06-02T20:33:37.524Z'
   pr:
     status: pending
+    requested_at: '2026-06-05T13:16:51.483Z'
   verify-approval:
     status: pending
 iteration: 1
@@ -91,4 +92,5 @@ history:
         file: >-
           /Users/mwk/Development/cluesmith/codev/.builders/spir-778/codev/projects/778-gemini-cli-antigravity-cli-jun/778-docs_skeleton_e2e-iter2-claude.txt
 started_at: '2026-06-02T01:16:31.004Z'
-updated_at: '2026-06-04T18:21:27.920Z'
+updated_at: '2026-06-05T13:16:51.483Z'
+pr_ready_for_human: true
