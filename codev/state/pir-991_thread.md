@@ -30,3 +30,21 @@ Key findings backing this:
 dev-approval verification will exercise BOTH surfaces against a forced Tower restart (architect's explicit requirement).
 
 Plan v2 committed. Awaiting `plan-approval`.
+
+## plan-approval APPROVED → rebased → implemented
+
+Rebased onto latest main (21 commits, all PIR #989 vscode-preflight; no overlap with my targets). Corrected one drifted line ref (terminal-manager openTerminal ctor 341→348).
+
+**Implementation complete. All green:**
+- **Core**: `session-successor.ts` (`resolveSuccessorTerminalId` + `SessionRef`), `./session-successor` export. Tests in `src/__tests__/` (NOT bare `__tests__/` — corrected the plan's path to match core's layout). 30 core tests pass.
+- **Dashboard**: `Terminal.tsx` onPermanentClose + reconnecting-status + deferred give-up timer (`PERMANENT_RECOVERY_MS=4000`); `App.tsx` wired at 3 sites + dep. 322 pass / 1 pre-existing skip.
+- **VSCode**: adapter `onSessionGone` seam; manager `recoverSuccessor(mapKey)` (in-place `pty.reconnect(newUrl)`, no tab churn) + `reconnectByTerminal` routed through it with same-url fallback. Extracted `sessionRefFromMapKey` into its own vscode-free `session-ref.ts` (so it unit-tests without the adapter import chain). 306 vscode tests pass; lint + compile clean.
+
+**Implementation deviations from plan (minor):**
+1. Used in-place `pty.reconnect(newUrl)` rather than dispose+reopen via openBuilder/openArchitect — both were sanctioned in the plan; in-place is cleaner (keeps the tab, no label reconstruction).
+2. `sessionRefFromMapKey` lives in `session-ref.ts` (new file), not inline in terminal-manager.ts — needed a vscode-free module to unit-test the pure mapping.
+3. Core test path is `src/__tests__/` not `__tests__/`.
+
+**Environmental gotcha (NOT my diff)**: `packages/types/dist` was missing in the worktree → vitest couldn't resolve `@cluesmith/codev-types`, failing terminal-adapter.test.ts even at HEAD (verified via stash). Fixed by `pnpm --filter @cluesmith/codev-types build`. Worth noting in review Lessons Learned: worktree needs types built before vscode vitest runs.
+
+Pushing + porch done → dev-approval gate.
