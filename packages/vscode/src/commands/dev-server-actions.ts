@@ -66,7 +66,17 @@ export async function switchDevTarget(
   await startDevForTarget(connectionManager, terminalManager, picked.target);
 }
 
-/** Focus the Workspace sidebar view, where the Dev Server row lives. */
+/**
+ * Open the Codev sidebar and focus the Workspace view, where the Dev Server row
+ * lives. Paired with `hideCodevSidebar` to form a show/hide toggle on the tab's
+ * title bar (the two `view/title` entries swap on the sidebar-visibility context
+ * keys, mirroring the Backlog view's show-all / mine-only toggle).
+ */
 export async function revealDevInWorkspace(): Promise<void> {
   await vscode.commands.executeCommand('codev.workspace.focus');
+}
+
+/** Close the sidebar — the toggle-off half of the Codev Dev tab's sidebar control. */
+export async function hideCodevSidebar(): Promise<void> {
+  await vscode.commands.executeCommand('workbench.action.closeSidebar');
 }

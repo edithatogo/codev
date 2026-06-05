@@ -223,6 +223,12 @@
         "icon": "$(eye)"
       },
       {
+        "command": "codev.devServer.hideSidebar",
+        "title": "Hide Codev Sidebar",
+        "category": "Codev",
+        "icon": "$(eye-closed)"
+      },
+      {
         "command": "codev.openDevUrl",
         "title": "Codev: Open Dev URL"
       },
@@ -375,6 +381,10 @@
         },
         {
           "command": "codev.devServer.revealInWorkspace",
+          "when": "false"
+        },
+        {
+          "command": "codev.devServer.hideSidebar",
           "when": "false"
         }
       ],
@@ -578,7 +588,12 @@
         },
         {
           "command": "codev.devServer.revealInWorkspace",
-          "when": "view == codev.devServer",
+          "when": "view == codev.devServer && !(sideBarVisible && activeViewlet == 'workbench.view.extension.codev')",
+          "group": "navigation@4"
+        },
+        {
+          "command": "codev.devServer.hideSidebar",
+          "when": "view == codev.devServer && sideBarVisible && activeViewlet == 'workbench.view.extension.codev'",
           "group": "navigation@4"
         }
       ],

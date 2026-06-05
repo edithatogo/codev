@@ -42,10 +42,18 @@ describe('codev.devServer title-bar actions (#921)', () => {
     }
   });
 
-  it('declares Switch Target and Reveal shown whenever the view is active', () => {
-    for (const cmd of ['codev.devServer.switchTarget', 'codev.devServer.revealInWorkspace']) {
-      expect(action(cmd)?.when).toBe('view == codev.devServer');
-    }
+  it('shows Switch Target whenever the view is active', () => {
+    expect(action('codev.devServer.switchTarget')?.when).toBe('view == codev.devServer');
+  });
+
+  it('pairs Reveal / Hide as a sidebar toggle on the Codev viewlet visibility', () => {
+    const codevSidebarShown = "sideBarVisible && activeViewlet == 'workbench.view.extension.codev'";
+    // Reveal shows when the Codev sidebar is NOT the active, visible viewlet.
+    expect(action('codev.devServer.revealInWorkspace')?.when)
+      .toBe(`view == codev.devServer && !(${codevSidebarShown})`);
+    // Hide shows when it is — the complementary half of the toggle.
+    expect(action('codev.devServer.hideSidebar')?.when)
+      .toBe(`view == codev.devServer && ${codevSidebarShown}`);
   });
 
   it('gives each action an icon', () => {
@@ -54,6 +62,7 @@ describe('codev.devServer title-bar actions (#921)', () => {
     expect(byId['codev.devServer.restart']?.icon).toBe('$(debug-restart)');
     expect(byId['codev.devServer.switchTarget']?.icon).toBe('$(arrow-swap)');
     expect(byId['codev.devServer.revealInWorkspace']?.icon).toBe('$(eye)');
+    expect(byId['codev.devServer.hideSidebar']?.icon).toBe('$(eye-closed)');
   });
 });
 
