@@ -56,4 +56,9 @@ Reframe: `arch.md` is **identically write-only** — `buildPhasePrompt()` inject
 
 Verified: buildPhasePrompt uses `{{var}}` substitution (`substituteVariables`) → template-var injection feasible. No `@import` in CLAUDE.md today.
 
-### Next: rewrite spec to hot/cold symmetric model → re-consult (CMAP) → re-present spec-approval. Do NOT self-approve.
+### Rewrote spec to hot/cold symmetric model → re-consult (iter2)
+- iter2 CMAP: Gemini APPROVE, Claude APPROVE, Codex REQUEST_CHANGES.
+- Codex + Claude converged on the **interactive-session surface** (the meaty part) being underspecified. Real gap: I'd conflated runtime 4-tier resolution (works for porch via `resolveCodevFile()`) with the interactive surface (CLAUDE.md/AGENTS.md are STATIC — no runtime loader; verified `copyRootFiles()` only does new-file/`.codev-new`).
+- Fixed: porch surface = runtime resolution+inject; interactive surface = **generated managed block** (markers, replace-in-place, non-clobber, insert-at-anchor) written at **generation time** (codev init/update). Locked the mechanism (rejected `@import`), made interactive criteria testable, added tier-4 placement + codev-update file-creation. Rebuttal: 987-specify-iter2-rebuttals.md.
+
+### Next: commit iter2 revision → re-present spec-approval gate (still pending) to architect. Do NOT self-approve.

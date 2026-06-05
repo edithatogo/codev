@@ -67,10 +67,11 @@ Each governance doc is split into a **two-tier (hot/cold)** pair, **symmetricall
 
 2. **Both COLD docs are kept intact** — `arch.md` and `lessons-learned.md` continue to exist as the full reference archives. Nothing is deleted; spec-narrow content remains as honest reference. The cold tier simply stops *pretending* to change behavior — the hot tier does that.
 
-3. **The hot tier reaches both consumption surfaces:**
-   - **porch-driven builders** — `buildPhasePrompt()` injects both hot files into **every** phase prompt (not design-time-only).
-   - **interactive sessions** (architect / human at the repo root) — the hot content is always-on the way `CLAUDE.md` is.
-   Both resolve through the **four-tier fallback chain**, so a repo that upgrades the package before checking in its own hot files still gets the skeleton copy rather than a failed/empty injection.
+3. **The hot tier reaches both consumption surfaces — but the surfaces are mechanically different and resolve the source at different times:**
+   - **porch-driven builders (runtime injection)** — `buildPhasePrompt()` resolves each hot file through the **runtime four-tier resolver** (`resolveCodevFile()`, verified to exist) and injects it into **every** phase prompt. Fallback is genuine *runtime* fallback: an upgraded-but-not-yet-seeded repo gets the installed-skeleton copy at injection time.
+   - **interactive sessions (generation-time managed block)** — `CLAUDE.md` / `AGENTS.md` are **static files with no runtime loader/import** (verified). The hot content therefore reaches interactive sessions as a **generated managed block** written into `CLAUDE.md` and `AGENTS.md` at **`codev init` / `codev update` (generation) time**, regenerated from the hot files (which the generator resolves through the four-tier chain *at generation time*). There is no runtime fallback on this surface — there cannot be, because nothing loads these files at runtime; the always-on property comes from the block being auto-loaded by the agent harness, the freshness from regeneration on update.
+
+   The **single source of truth** for both surfaces is the two hot files; the interactive block is a *generated mirror*, never hand-maintained. The "four-tier" guarantee thus means **runtime resolution for the porch surface** and **generation-time resolution for the interactive surface** — these are stated separately and tested separately.
 
 4. **The hard cap is load-bearing.** It is the mechanism that makes "inject into every prompt" affordable (negligible per-prompt tokens) and that prevents re-accretion. Adding a fact to a hot file requires **demoting** a weaker fact into the corresponding cold doc (displacement discipline). The cap is policed by MAINTAIN; honored by the producer at capture time.
 
@@ -91,10 +92,12 @@ Net effect: the small amount of knowledge that actually changes decisions is una
 - [ ] **HOT files are seeded by curation** — the genuinely behavior-changing, cross-cutting subset is lifted from the cold docs into the hot files. This is curation, **not** deletion: the cold docs are unchanged in content except for any demoted/duplicated framing.
 - [ ] **Both COLD docs are KEPT** — `codev/resources/arch.md` and `codev/resources/lessons-learned.md` still exist with their reference content intact (no deletion, no wholesale gutting, spec-narrow recipes retained).
 - [ ] **porch injects both hot files into every phase prompt** — `buildPhasePrompt()` injects `arch-critical.md` and `lessons-critical.md` content into the assembled prompt for **all** phases (specify, plan, implement, defend, evaluate, review). Verifiable: assemble a phase prompt for ≥2 distinct phases and confirm both hot files' text appears **verbatim and unconditionally** (not a "go read this file" pointer).
-- [ ] **Interactive sessions get the hot tier always-on** — the hot content is present in auto-loaded context for an interactive session at the repo root, from a **single source of truth** (no hand-maintained duplicate that can drift) and in a **tool-agnostic** way (works for `CLAUDE.md` and `AGENTS.md` consumers). `CLAUDE.md` and `AGENTS.md` remain byte-identical to each other.
-- [ ] **Injection resolves via the four-tier fallback chain** — both surfaces resolve the hot files through `.codev/` → `codev/` → cache → skeleton, so an upgraded-but-not-yet-seeded repo still injects the skeleton copy rather than failing/empty.
+- [ ] **Interactive sessions get the hot tier always-on, via a testable generated managed block** — `CLAUDE.md` and `AGENTS.md` contain a delimited managed block (explicit begin/end markers) holding the hot content, generated from the two hot files. Concretely verifiable: after `codev init`/`codev update`, the markers + hot content are present in both root docs; editing a hot file and re-running the generator updates the block; user content **outside** the markers is preserved across regeneration; the block is identical in `CLAUDE.md` and `AGENTS.md`. The block is a **generated mirror only** — never hand-edited (single source of truth = the hot files).
+- [ ] **Surface-appropriate four-tier resolution** — the **porch** surface resolves hot files through the **runtime** resolver (`resolveCodevFile()`), so an upgraded-but-not-yet-seeded repo injects the installed-skeleton copy at runtime; the **interactive** surface resolves the source through the four-tier chain **at generation time** (no runtime fallback exists for static root docs). Both are stated and tested as distinct behaviors.
+- [ ] **Tier-4 placement** — the hot files are present at the installed-skeleton location the runtime resolver reads for tier-4 fallback (`skeleton/resources/…`), **in addition** to the `templates/` trees scaffold copies from, so runtime fallback actually finds them.
+- [ ] **`codev update` creates and protects the new hot files** — the update path creates `arch-critical.md` / `lessons-critical.md` for existing adopters (the relevant `UPDATABLE_PREFIXES` / copy logic covers them), and `USER_DATA_PATTERNS` protects them once present; and `codev update` refreshes the `CLAUDE.md`/`AGENTS.md` managed block **without** clobbering user edits (replace-in-place between markers; insert at a defined anchor if markers are absent — not whole-file `.codev-new`).
 - [ ] **Scaffold copies the new files** — `scaffold.ts`'s copy list **adds** `arch-critical.md` and `lessons-critical.md` (while keeping `arch.md` and `lessons-learned.md`); `scaffold.test.ts` / `templates.test.ts` are updated to assert the new files are copied (and continue to assert the cold docs are copied).
-- [ ] **`codev update` coherence** — `USER_DATA_PATTERNS` protects the two new hot files (in addition to the two cold docs); the update path is coherent for existing adopters (no crash; new files created from the skeleton; cold docs preserved).
+- [ ] **Cold docs preserved through update** — `codev update` keeps `arch.md` and `lessons-learned.md` intact (they remain `USER_DATA`); no crash for existing adopters. (Hot-file creation + managed-block refresh specifics are covered in the dedicated criterion below.)
 - [ ] **Producers route hot-vs-cold** — the spir/aspir/pir + `porch/prompts/review.md` review prompts are changed from "append to `arch.md` / `lessons-learned.md`" to "**route** each new fact to the hot file (cap+displacement) or the cold doc," for **both** docs. The review sections reflect routing.
 - [ ] **Porch review checks remain valid** — the existing `review_has_arch_updates` / `review_has_lessons_updates` checks still pass on a correctly-routed review (renamed if the review section names change). **No new consumption check is added** (consumption is via always-on injection, per the principle and the prior "executed step, no hard consumption check" decision).
 - [ ] **MAINTAIN polices the cap** — the MAINTAIN protocol + `maintain.md` prompt + `update-arch-docs` skill (both trees) gain hot-tier cap-policing + displacement, and the skill's cold-tier philosophy is updated so the cold docs may retain spec-narrow reference content (the anti-accretion discipline moves to the hot cap). Arch-vs-lessons routing is extended with the hot/cold axis.
@@ -130,17 +133,22 @@ Net effect: the small amount of knowledge that actually changes decisions is una
 
 ## Solution Approaches
 
-### The two consumption surfaces (the meaty part)
-The hot files must be always-on for two structurally different consumers. Source of truth = the two hot files (resolved via the four-tier chain).
+### The two consumption surfaces (the meaty part — now locked, not deferred)
+The hot files are the single source of truth. The two consumers are mechanically different; the spec **commits** to a mechanism for each (the choice is too central to defer — `@import` and generated-block have materially different guarantees, so leaving it open would leave the success criteria ambiguous).
 
-**Surface 1 — porch-driven builders.** Inject via `buildPhasePrompt()`: resolve `arch-critical.md` + `lessons-critical.md` through the four-tier resolver and substitute them into every phase prompt (e.g. new `{{arch_critical}}` / `{{lessons_critical}}` variables, or a prepended always-on context block). Low-risk, mirrors the existing `{{variable}}` mechanism. **Recommended.**
+**Surface 1 — porch-driven builders (LOCKED: runtime resolver + variable injection).** `buildPhasePrompt()` resolves `arch-critical.md` + `lessons-critical.md` via `resolveCodevFile()` (the existing runtime four-tier resolver) and substitutes them into every phase prompt through the existing `{{variable}}` mechanism (`{{arch_critical}}` / `{{lessons_critical}}`). Genuine runtime fallback; low-risk; mirrors existing code.
 
-**Surface 2 — interactive sessions.** Candidate mechanisms:
-- **(a) Generated managed block in `CLAUDE.md` + `AGENTS.md`** mirrored from the hot files by a small sync/generation step (delimited markers prevent drift; mirrors the existing CLAUDE↔AGENTS sync discipline). *Pro:* tool-agnostic, truly always-on, single source of truth. *Con:* adds a generation/sync step + drift-guard. **Recommended.**
-- **(b) `@import` of the hot files from `CLAUDE.md`.** *Pro:* no sync. *Con:* Claude-Code-specific (AGENTS.md consumers don't honor it), and import-path resolution doesn't follow the four-tier chain. Acceptable only if the architect accepts Claude-only for interactive.
-- **(c) A "always read these" pointer.** *Rejected* — this is the exact write-only failure mode being fixed.
+**Surface 2 — interactive sessions (LOCKED: generated managed block; `@import` rejected).** A delimited **managed block** is generated into `CLAUDE.md` and `AGENTS.md`:
+- **Markers**: explicit begin/end sentinels (e.g. `<!-- BEGIN CODEV HOT CONTEXT (generated — do not edit) -->` … `<!-- END CODEV HOT CONTEXT -->`). Everything between the markers is owned by the generator; everything outside is user content.
+- **Source**: the two hot files, resolved through the four-tier chain **at generation time**.
+- **Regeneration**: written by `codev init` (new repos) and refreshed by `codev update` (existing repos) — and by any `codev`-side sync entry point the plan defines. The generator **replaces only the managed block in place**, preserving all user content outside the markers; if no markers exist yet (pre-existing adopter), it **inserts** the block at a defined anchor rather than routing the whole file to `.codev-new`.
+- **Tool-agnostic**: it is plain markdown, so it works identically for `CLAUDE.md` (Claude Code) and `AGENTS.md` (Cursor/Copilot/etc.). `CLAUDE.md` ≡ `AGENTS.md` is preserved because both get the same generated block.
 
-The spec **requires** that Surface 2 be always-on, single-source-of-truth, and (default) tool-agnostic; the final mechanism (a vs b) is a plan-level decision confirmed at the plan-approval gate.
+*Why `@import` is rejected:* it is Claude-Code-specific (AGENTS.md consumers don't honor it) and its path resolution does not follow the four-tier chain — it fails the tool-agnostic and single-source guarantees this surface requires.
+
+*Why not runtime fallback for Surface 2:* verified there is no runtime loader for `CLAUDE.md`/`AGENTS.md`; the harness auto-loads them as static files. Freshness therefore comes from regeneration at update time, which is the correct and only available point to apply the four-tier source resolution for this surface.
+
+**Mandatory guarantees for Surface 2 (locked before approval):** always-on (inside the auto-loaded root docs), single-source-of-truth (generated from the hot files, never hand-edited), tool-agnostic (plain markdown in both root docs), and non-clobbering on update (managed-block replace-in-place; user content preserved). The remaining plan-level latitude is the *marker spelling*, the *insertion anchor*, and the *exact `codev` sync entry point* — not the mechanism class.
 
 ### Approaches considered and rejected
 - **Retire `lessons-learned.md` + single design-heuristics digest** (the prior 2026-06-04 model). Rejected by the architect because it is asymmetric — it ignores that `arch.md` is identically write-only — and because deleting reference content loses the on-demand archive. Replaced by hot/cold, which keeps the archives and fixes both docs.
@@ -154,9 +162,9 @@ The spec **requires** that Surface 2 be always-on, single-source-of-truth, and (
 
 ### Important (Affects Design)
 - [ ] **Exact cap per hot file.** Proposed: each hot file ≤ ~10 single-line entries / "fits in a handful of lines at a glance." Final number set in the plan / confirmed at the plan gate.
-- [ ] **Interactive-surface mechanism** — generated managed block (tool-agnostic, recommended) vs `@import` (Claude-only). Resolve in plan.
-- [ ] **porch injection form** — `{{arch_critical}}`/`{{lessons_critical}}` template variables vs a prepended always-on block in `buildPhasePrompt()`. Lean: template variables. Resolve in plan.
 - [ ] **Review-section naming** — keep `## Architecture Updates` / `## Lessons Learned Updates` (with routing instructions inside) vs rename to signal hot/cold routing. Keeping preserves the existing porch checks with minimal churn. Lean: keep names, change the instructions. Resolve in plan.
+
+*(Resolved at spec time — no longer open:)* the interactive-surface **mechanism** is locked to the generated managed block (`@import` rejected); the porch **injection form** is locked to `{{arch_critical}}`/`{{lessons_critical}}` variables via `resolveCodevFile()`. Remaining latitude on the interactive surface is marker spelling, insertion anchor, and the exact `codev` sync entry point.
 
 ### Nice-to-Know (Optimization)
 - [ ] Whether the hot files should carry a one-line "how to curate / demote" header for architects.
@@ -168,12 +176,14 @@ This is a methodology/mechanism change; "tests" are structural assertions plus p
 
 ### Functional Tests
 1. **Always-on injection (porch)**: assemble phase prompts for ≥2 phases (e.g. specify and implement) and assert both `arch-critical.md` and `lessons-critical.md` text appears verbatim in each.
-2. **Single source of truth**: editing a hot file changes both the assembled porch prompt and the interactive always-on context (no second copy to hand-sync).
-3. **Four-tier resolution**: with no `codev/resources/arch-critical.md` present, injection falls back to the skeleton copy (no empty/failed injection).
-4. **Cold docs preserved**: `arch.md` and `lessons-learned.md` still exist with reference content after the change.
-5. **Producer routes**: review prompts instruct hot-vs-cold routing for both docs; no "append everything to the archive" instruction remains.
-6. **Checks valid**: porch review checks pass on a correctly-routed review.
-7. **Scaffold**: a freshly scaffolded project contains all four files (`arch.md`, `arch-critical.md`, `lessons-learned.md`, `lessons-critical.md`).
+2. **Runtime fallback (porch)**: with no `codev/resources/arch-critical.md` present, `buildPhasePrompt()` injects the installed-skeleton copy (no empty/failed injection) via `resolveCodevFile()`.
+3. **Interactive managed block (generation)**: after `codev init`, `CLAUDE.md` and `AGENTS.md` each contain the begin/end markers + hot content, identical between the two files.
+4. **Managed-block refresh, non-clobbering**: editing a hot file and re-running the generator updates the block; user content placed outside the markers survives unchanged; a root doc with no markers (existing adopter) gets the block inserted, not routed to `.codev-new`.
+5. **Single source of truth**: a hot-file edit is the *only* edit needed to change both the porch prompt (runtime) and the regenerated interactive block — no hand-maintained duplicate.
+6. **Cold docs preserved**: `arch.md` and `lessons-learned.md` still exist with reference content after the change, and across `codev update`.
+7. **Producer routes**: review prompts instruct hot-vs-cold routing for both docs; no "append everything to the archive" instruction remains.
+8. **Checks valid**: porch review checks pass on a correctly-routed review.
+9. **Scaffold**: a freshly scaffolded project contains all four files (`arch.md`, `arch-critical.md`, `lessons-learned.md`, `lessons-critical.md`); tier-4 skeleton copies exist where the runtime resolver reads them.
 
 ### Non-Functional Tests
 1. **Cap respected**: each seeded hot file fits the stated cap.
@@ -181,7 +191,7 @@ This is a methodology/mechanism change; "tests" are structural assertions plus p
 3. **Suite green**: existing unit/e2e tests pass; tests referencing the old copy list / sections updated.
 
 ## Dependencies
-- **Internal**: `buildPhasePrompt()` + `substituteVariables` (`packages/codev/src/commands/porch/prompts.ts`); the framework-file four-tier resolver; the CLAUDE↔AGENTS sync path (if a generated managed block is used); the spir/aspir/pir/maintain protocol definitions + prompts + templates (both trees); `porch/prompts/review.md`; the `update-arch-docs` skill (both trees); `scaffold.ts` + `scaffold.test.ts` + `templates.test.ts`; `templates.ts` (`USER_DATA_PATTERNS`); `CLAUDE.md`/`AGENTS.md`; role files.
+- **Internal**: `buildPhasePrompt()` + `substituteVariables` (`packages/codev/src/commands/porch/prompts.ts`); `resolveCodevFile()` (`packages/codev/src/lib/skeleton.ts`, runtime four-tier resolver); `copyRootFiles()` (`scaffold.ts`, current `CLAUDE.md`/`AGENTS.md` copy + `.codev-new` conflict behavior) — to be extended with managed-block generation; the new managed-block generator/sync entry point; the spir/aspir/pir/maintain protocol definitions + prompts + templates (both trees); `porch/prompts/review.md`; the `update-arch-docs` skill (both trees); `scaffold.ts` + `scaffold.test.ts` + `templates.test.ts`; `templates.ts` (`USER_DATA_PATTERNS`, `UPDATABLE_PREFIXES`); the installed-skeleton `resources/` tier-4 location; `CLAUDE.md`/`AGENTS.md`; role files.
 - **External**: none.
 - **Libraries/Frameworks**: none new.
 
@@ -190,8 +200,9 @@ This is a methodology/mechanism change; "tests" are structural assertions plus p
 |------|------------|--------|-------------|
 | Hot files silently grow past the cap (re-accretion) | Med | High | Explicit hard cap + demote-on-add discipline + MAINTAIN cap-policing; producer prompt forbids "append, trim later." |
 | "Inject" implemented as a weak pointer (the very failure being fixed) | Med | High | Success criterion requires verbatim, unconditional text in the assembled prompt and always-on interactive context — not a file reference. |
-| Interactive surface drifts from the source of truth | Med | Med | Single-source-of-truth requirement; generated managed block with drift-guard markers; CLAUDE≡AGENTS check. |
-| Tool-specific interactive mechanism leaves AGENTS.md consumers without the hot tier | Med | Med | Default to tool-agnostic generated block; `@import` only if architect accepts Claude-only at the gate. |
+| Interactive surface drifts from the source of truth | Med | Med | Locked to a generated managed block (no hand-editing); begin/end markers; regenerated on `codev update`; CLAUDE≡AGENTS check. |
+| Managed-block regeneration clobbers user edits to `CLAUDE.md`/`AGENTS.md` | Med | High | Replace **only** between markers; preserve content outside; insert-at-anchor (not whole-file `.codev-new`) when markers are absent; covered by a non-clobber test. |
+| Tool-specific interactive mechanism leaves AGENTS.md consumers without the hot tier | Low | Med | Mechanism locked to a plain-markdown generated block (tool-agnostic); `@import` rejected. |
 | Missed surfaces in the dual tree (footgun) | High | Med | Explicit live-surface sweep list + exhaustive `rg` in both trees; CMAP reviewers historically catch this. |
 | Always-on injection bloats every prompt | Low | Med | The hard cap keeps per-prompt cost negligible by construction; that is the cap's primary justification. |
 | Editing historical artifacts to "tidy" them | Low | Med | Explicit out-of-scope list; leave history intact. |
@@ -200,7 +211,13 @@ This is a methodology/mechanism change; "tests" are structural assertions plus p
 ## Expert Consultation
 **Date (iter 1, prior model)**: 2026-06-04 — Gemini APPROVE, Claude APPROVE, Codex REQUEST_CHANGES (four completeness gaps, all incorporated). That round reviewed the now-superseded retire-and-route model; its surviving, still-applicable findings (four-tier resolver, scaffold + tests, explicit live-surface sweep, route-not-append, MAINTAIN cap-policing, `codev update` coherence) are carried into this revision and re-scoped to the hot/cold split.
 
-**Date (iter 2, this model)**: TBD — to be re-consulted (Gemini, Codex, Claude) after this revision.
+**Date (iter 2, hot/cold model)**: 2026-06-05 — Gemini APPROVE, Claude APPROVE, Codex REQUEST_CHANGES. Both Codex and Claude converged on the **interactive-session surface** being underspecified. Changes made in response:
+- **Separated runtime vs generation-time resolution.** Verified `CLAUDE.md`/`AGENTS.md` are static with no runtime loader and `resolveCodevFile()` is the runtime resolver; the spec now states the porch surface resolves at runtime and the interactive surface resolves the source at **generation time** (no runtime fallback for static root docs). *(Codex #1)*
+- **Locked the interactive mechanism** to a generated managed block and **rejected `@import`** — no longer deferred to plan, because the guarantees differ materially by mechanism. *(Codex #4)*
+- **Defined the migration / non-clobber path**: managed block with begin/end markers, replace-in-place, preserve user content outside markers, insert-at-anchor when markers absent (not whole-file `.codev-new`); verified against current `copyRootFiles()` behavior. *(Codex #2, Claude #3)*
+- **Made the interactive criteria testable**: markers + content present after generation, refresh-on-edit, non-clobber, CLAUDE≡AGENTS. *(Codex #3)*
+- **Tier-4 placement**: hot files must also live where the runtime resolver reads tier-4, in addition to the `templates/` trees. *(Claude #1)*
+- **`codev update` file creation**: `UPDATABLE_PREFIXES`/copy logic must create the new hot files for existing adopters; `USER_DATA_PATTERNS` protects them once present. *(Claude #3)*
 
 ## Approval
 - [ ] Architect Review (human gate: spec-approval)
