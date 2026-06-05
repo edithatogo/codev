@@ -32,3 +32,29 @@ Design decisions:
 
 Plan written to `codev/plans/971-web-terminal-adopt-session-unk.md`. Awaiting
 plan-approval gate.
+
+## Plan approved → rebased on main (18 commits), no target files changed, anchors verified.
+
+## Implement phase (done, awaiting dev-approval)
+
+Implemented exactly to plan:
+- core `reconnect-policy.ts`: `WS_CLOSE_SESSION_UNKNOWN = 4404` export; added
+  `code === 4404 → permanent` branch ahead of the kept 400-499 HTTP-range check;
+  updated doc comment for the overloaded code meaning.
+- Tower `tower-websocket.ts`: `rejectUnknownSession()` helper (Origin present →
+  accept upgrade + `ws.close(4404, 'session-unknown')`; else HTTP 404). Wired both
+  session-not-found sites (direct + workspace). Other routing-error 404s untouched.
+- Dashboard `Terminal.tsx`: `onclose(event)` consults
+  `classifyUpgradeError({ code: event.code })`; permanent → disconnected + notice,
+  no retry. Transient 1006 still blind-retries.
+
+Tests: core +2 cases (19 pass). Tower +2 browser-path cases, clarified 2 Node-path
+cases (27 pass in file). Full codev suite: 3224 pass / 13 skip / 0 fail.
+
+Note: a first full-suite run showed transient `session-manager.test.ts` failures
+("Invalid shellper info JSON" — real-shellper subprocess spawn race under parallel
+load). Verified independent: session-manager imports none of my files, passes in
+isolation (67/67), and the re-run full suite is fully green. Pre-existing flakiness,
+not caused by this change.
+
+Builds: core ✓, codev ✓, dashboard ✓ (tsc + vite).
