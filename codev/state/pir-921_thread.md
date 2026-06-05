@@ -70,3 +70,11 @@ Implemented both surfaces on top of #812's codevPanel:
 - Chip "prominent" tint: VSCode `StatusBarItem.backgroundColor` ONLY honors error/warning backgrounds (verified in @types/vscode). So `prominentBackground` as a *background* is silently ignored. Implemented the issue's "prominent, not alarming" intent via `color = statusBarItem.prominentForeground` (the icon/text tint) instead. Visually verify at dev-approval; if a stronger cue is wanted, warningBackground is the only API-honored background (issue called it too alarming).
 
 Build: check-types ✓ lint ✓ esbuild ✓. Unit: 310 pass (26 suites). Next: push, porch done → dev-approval gate.
+
+## dev-approval feedback iter-1: Reveal → sidebar toggle
+
+Reviewer feedback: "Reveal in Workspace View" had weak value (navigated from the richer dev tab to the poorer Workspace dev row). Observed its real effect is opening the Codev sidebar. Per direction, repurposed it as a show/hide toggle:
+- Open half = `codev.devServer.revealInWorkspace` → `codev.workspace.focus` (opens sidebar + focuses Workspace view). Shown when Codev sidebar is NOT the active/visible viewlet.
+- Close half = `codev.devServer.hideSidebar` → `workbench.action.closeSidebar`. Shown when it is.
+- Paired via `when` on `sideBarVisible && activeViewlet == 'workbench.view.extension.codev'`, mirroring the Backlog show-all/mine-only eye/eye-closed toggle idiom. Icons $(eye)/$(eye-closed).
+Build/lint/types ✓, 311 unit tests ✓. Gate still dev-approval (no porch done re-run; iterating in place).
