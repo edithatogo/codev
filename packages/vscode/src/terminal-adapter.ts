@@ -196,6 +196,7 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
         // re-resolve the successor and re-point this terminal in place. giveUp()
         // still surfaces the manual reconnect affordance as the fallback when no
         // successor exists (genuine session death).
+        this.log('INFO', `Permanent close on ${this.wsUrl} — requesting successor recovery (#991)`);
         this.onSessionGone?.();
         this.giveUp('this terminal session no longer exists on Tower');
       }

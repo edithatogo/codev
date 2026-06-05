@@ -492,11 +492,19 @@ export class TerminalManager {
     const entry = this.terminals.get(mapKey);
     if (!entry) { return false; }
     const ref = sessionRefFromMapKey(mapKey);
-    if (!ref) { return false; }  // shell/dev — not persistent, no successor
+    if (!ref) {
+      this.log('INFO', `recoverSuccessor(${mapKey}): non-persistent kind — no successor to resolve`);
+      return false;  // shell/dev — not persistent, no successor
+    }
+    const refId = ref.kind === 'builder' ? ref.id : ref.name;
+    this.log('INFO', `recoverSuccessor(${mapKey}): session-gone (dead id ${entry.id}); resolving successor for ${ref.kind} '${refId}'`);
 
     const client = this.connectionManager.getClient();
     const workspacePath = this.connectionManager.getWorkspacePath();
-    if (!client || !workspacePath) { return false; }
+    if (!client || !workspacePath) {
+      this.log('WARN', `recoverSuccessor(${mapKey}): no Tower client/workspace — cannot resolve successor`);
+      return false;
+    }
 
     for (let attempt = 0; attempt < RECOVER_POLL_ATTEMPTS; attempt++) {
       let successorId: string | null = null;
@@ -504,18 +512,26 @@ export class TerminalManager {
         const state = await client.getWorkspaceState(workspacePath);
         if (state) { successorId = resolveSuccessorTerminalId(state, ref); }
       } catch (err) {
-        this.log('ERROR', `recoverSuccessor(${mapKey}) failed: ${(err as Error).message}`);
+        this.log('ERROR', `recoverSuccessor(${mapKey}) state fetch failed: ${(err as Error).message}`);
         return false;
       }
 
       // Bail if the terminal was closed or replaced while we were polling — the
       // map entry is a fresh object on every (re)open, so an identity mismatch
       // means this recovery is stale.
-      if (this.terminals.get(mapKey) !== entry) { return false; }
+      if (this.terminals.get(mapKey) !== entry) {
+        this.log('INFO', `recoverSuccessor(${mapKey}): terminal closed/replaced mid-poll — aborting`);
+        return false;
+      }
+
+      this.log('INFO', `recoverSuccessor(${mapKey}): poll ${attempt + 1}/${RECOVER_POLL_ATTEMPTS} → successor=${successorId ?? 'none'} (dead id ${entry.id})`);
 
       if (successorId && successorId !== entry.id) {
         const wsUrl = this.buildWsUrl(successorId);
-        if (!wsUrl) { return false; }
+        if (!wsUrl) {
+          this.log('WARN', `recoverSuccessor(${mapKey}): could not build ws url for ${successorId}`);
+          return false;
+        }
         // Re-point the existing tab's socket at the successor session in place.
         this.terminals.set(mapKey, { ...entry, id: successorId });
         entry.pty.reconnect(wsUrl);
@@ -526,6 +542,7 @@ export class TerminalManager {
       // No successor yet — wait for reconcile to register it, then re-poll.
       if (attempt < RECOVER_POLL_ATTEMPTS - 1) { await delay(RECOVER_POLL_INTERVAL_MS); }
     }
+    this.log('WARN', `recoverSuccessor(${mapKey}): no successor after ${RECOVER_POLL_ATTEMPTS} polls — leaving the give-up notice`);
     return false;
   }
 
