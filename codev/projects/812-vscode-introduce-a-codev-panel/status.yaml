@@ -1,7 +1,7 @@
 id: '812'
 title: vscode-introduce-a-codev-panel
 protocol: pir
-phase: plan
+phase: implement
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -17,4 +17,4 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-06-03T23:36:03.528Z'
-updated_at: '2026-06-05T01:47:15.552Z'
+updated_at: '2026-06-05T01:47:22.432Z'
