@@ -103,3 +103,16 @@ export function decidePreflight(input: {
   }
   return compareSemver(input.cliVersion, input.extVersion) < 0 ? 'outdated' : 'ok';
 }
+
+/**
+ * Ephemeral status-bar text shown when a guarded command is rejected for a
+ * non-ok preflight status, after the first-click modal has already fired this
+ * session (see `showPreflightFeedback` in `preflight.ts`). Names the current
+ * problem and the recovery command so the click reads as registered, not as a
+ * silent no-op. Kept pure so the wording is unit-tested without a vscode mock;
+ * #983 will extend it with a Tower-version branch.
+ */
+export function preflightFeedbackMessage(status: PreflightStatus): string {
+  const label = status === 'outdated' ? 'outdated' : 'not installed';
+  return `Codev: CLI ${label}. Run "Codev: Recheck CLI" when ready.`;
+}

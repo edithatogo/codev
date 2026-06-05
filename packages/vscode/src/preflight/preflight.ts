@@ -21,6 +21,7 @@ import { existsSync } from 'node:fs';
 import {
   decidePreflight,
   parseCliVersion,
+  preflightFeedbackMessage,
   resolveCodevPath,
   type PreflightStatus,
 } from './preflight-core.js';
@@ -44,7 +45,7 @@ export interface PreflightState {
 
 let cachedStatus: PreflightStatus | 'pending' = 'pending';
 let cachedVersion: string | null = null;
-let setupToastShown = false;
+let modalShownThisSession = false;
 
 /** Dependencies captured on the first `runPreflight`, reused by recheck / button handlers. */
 let deps: {
@@ -174,7 +175,7 @@ export async function recheckCli(): Promise<void> {
   changeEmitter.fire();
   const status = await performPreflight();
   if (status === 'ok') {
-    setupToastShown = false; // a fresh problem later should be allowed to re-toast
+    modalShownThisSession = false; // a fresh problem later restarts the modal-first pattern
     vscode.window.showInformationMessage(
       `Codev: CLI ready — codev ${cachedVersion ?? ''}`.trim(),
     );
@@ -238,24 +239,42 @@ function updateViaNpm(): void {
 }
 
 /**
- * Shown the first time a guarded command is invoked while the CLI is
- * unresolved. Single-per-session so repeated invocations don't spam.
+ * Point-of-action feedback when a guarded command is rejected because the CLI
+ * is missing / outdated. Attenuated, never silent:
+ *
+ * - **First** bad-state click this session: a modal warning toast with a
+ *   `Run Setup` action — the user is being told the state for the first time,
+ *   so a modal interrupt is warranted.
+ * - **Subsequent** clicks: an ephemeral status-bar message naming the same
+ *   state and the recovery command, auto-dismissing after a few seconds. No
+ *   modal, no action button — just enough to confirm the click registered and
+ *   the same problem still applies.
+ *
+ * The session flag resets when `recheckCli` confirms `ok`, so a fresh breakage
+ * later restarts the modal-first pattern. Reusable by #983 for the Tower-version
+ * dimension (it will pass a different status into `preflightFeedbackMessage`).
  */
-export function showSetupRequiredToast(): void {
-  if (setupToastShown) {
+export function showPreflightFeedback(): void {
+  if (!modalShownThisSession) {
+    modalShownThisSession = true;
+    vscode.window
+      .showWarningMessage('Codev: CLI not installed / outdated — run setup', 'Run Setup')
+      .then((choice) => {
+        if (choice !== 'Run Setup') {
+          return;
+        }
+        if (cachedStatus === 'outdated') {
+          showOutdatedNotification(cachedVersion, deps?.context.extension.packageJSON.version ?? '');
+        } else {
+          openWalkthrough();
+        }
+      });
     return;
   }
-  setupToastShown = true;
-  vscode.window
-    .showWarningMessage('Codev: CLI not installed / outdated — run setup', 'Run Setup')
-    .then((choice) => {
-      if (choice !== 'Run Setup') {
-        return;
-      }
-      if (cachedStatus === 'outdated') {
-        showOutdatedNotification(cachedVersion, deps?.context.extension.packageJSON.version ?? '');
-      } else {
-        openWalkthrough();
-      }
-    });
+  // The guard only calls this when `isCliReady()` is false, so `cachedStatus`
+  // is `missing` or `outdated` here — never `ok` / `pending`.
+  vscode.window.setStatusBarMessage(
+    preflightFeedbackMessage(cachedStatus as PreflightStatus),
+    4000,
+  );
 }
