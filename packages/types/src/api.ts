@@ -126,6 +126,18 @@ export interface TerminalEntry {
 
 // --- Overview (GET /api/overview) ---
 
+/**
+ * A single plan sub-phase as surfaced in the overview payload. `status` is a
+ * free-form string (not the narrower porch `PlanPhaseStatus` union) because the
+ * overview parser reads it verbatim out of `status.yaml`. Named shape so both
+ * the server and `OverviewBuilder.planPhases` reference one declaration.
+ */
+export interface PlanPhase {
+  id: string;
+  title: string;
+  status: string;
+}
+
 export interface OverviewBuilder {
   id: string;
   issueId: string | null;
@@ -158,7 +170,7 @@ export interface OverviewBuilder {
    */
   roleId: string | null;
   protocol: string;
-  planPhases: Array<{ id: string; title: string; status: string }>;
+  planPhases: PlanPhase[];
   progress: number;
   /** Human-readable label for the gate the builder is blocked on (e.g. "plan review"). */
   blocked: string | null;
@@ -315,6 +327,41 @@ export interface IssueView {
     createdAt: string;
     author: { login: string };
   }>;
+}
+
+// --- Issue search (GET /api/issue-search) ---
+
+/**
+ * One searchable issue row returned by Tower's GET /api/issue-search.
+ * Distinct from `OverviewBacklogItem`: it carries the issue `body` (so the
+ * search panel can match against it host-side) and omits the spec/plan/
+ * builder enrichment the sidebar tree needs. Body lives only on this
+ * on-demand search path — `OverviewBacklogItem` and `/api/overview` stay
+ * body-free so the always-on overview payload doesn't grow.
+ */
+export interface IssueSearchItem {
+  id: string;
+  title: string;
+  url: string;
+  /** Single `area/*` value (via `parseArea`); `'Uncategorized'` when unlabeled. */
+  area: string;
+  author?: string;
+  assignees?: string[];
+  createdAt: string;
+  /** Issue body for substring matching. `''` when the forge can't supply it. */
+  body: string;
+}
+
+/**
+ * Response shape of GET /api/issue-search. `currentUser` powers the
+ * panel's "Me"/"Unassigned" assignee scope. `error` is set (with an empty
+ * `items`) when the forge is unavailable, so the panel can show a reason
+ * rather than a silent empty table.
+ */
+export interface IssueSearchResponse {
+  items: IssueSearchItem[];
+  currentUser?: string;
+  error?: string;
 }
 
 // --- Team (GET /workspace/:path/api/team) ---

@@ -1,0 +1,45 @@
+# PIR #933 — VSCode Builders tree: inline gate-action icon
+
+## Restart (2026-06-02) — icon-only
+
+**History reset.** An earlier iteration implemented a per-gate *action* dispatcher
+(inline button opened the plan / ran dev / approved depending on gate). The
+architect judged the action-change to be scope creep — the issue only calls for
+an icon change — and directed a clean restart.
+
+Done:
+- `git reset --hard fcea5028` (pristine porch-init commit) → porch back in the
+  **plan** phase; all prior plan/implement commits removed.
+- `git push --force-with-lease` → remote branch cleaned to fcea5028.
+- GitHub issue #933 realigned to **icon-only** scope (per-gate action behavior
+  moved to explicit Out-of-scope; acceptance simplified).
+
+**Scope now:** one-line change — swap `codev.approveGate`'s declared icon from
+`$(check)` to `$(arrow-right)` in `packages/vscode/package.json`. Action/behavior
+unchanged; only the inline button glyph. The row's leading icon is already
+gate-specific (gateIconFor) and untouched.
+
+Plan rewritten → `codev/plans/933-afx-tower-ui-gate-action-butto.md`. Awaiting
+`plan-approval`.
+
+## Implement (2026-06-02) — icon-only
+
+Plan approved. One-line change: `codev.approveGate` icon `$(check)` →
+`$(arrow-right)` in `packages/vscode/package.json`. No code, no behavior change.
+Checks (worktree): check-types ✓, lint ✓, test:unit 197/197 ✓.
+Committed, pushed. `porch done` → awaiting `dev-approval`.
+
+## Review (2026-06-02)
+
+Review file written, PR #963 opened (body = review). 3-way consult (single
+advisory pass): gemini/codex/claude all APPROVE, HIGH, no issues. (Gemini's
+first run hit a transient exit-1; rerun succeeded.) `pr` gate pending —
+notified architect (all-clear), awaiting human merge + gate approval.
+
+## Merge blocked on branch protection (2026-06-02)
+
+porch pr-gate approved + protocol complete (phase: verified), but `gh pr merge 963 --merge`
+rejected: base branch policy. mergeStateStatus=BLOCKED, mergeable=MERGEABLE,
+reviewDecision=REVIEW_REQUIRED. Blockers: (1) required GitHub PR review approval
+(I'm author, can't self-approve); (2) 6 CI checks pending. Asked architect how to
+proceed (approve+merge / --auto / --admin). Holding.

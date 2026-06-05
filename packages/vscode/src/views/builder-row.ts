@@ -6,6 +6,7 @@
  */
 
 import type { OverviewBuilder } from '@cluesmith/codev-types';
+import { isIdleWaiting } from '@cluesmith/codev-core/builder-helpers';
 
 /**
  * Blocked-gate → codicon name. Keyed off the CANONICAL gate name
@@ -37,6 +38,75 @@ export function gateIconFor(blockedGate: string | null): string {
 }
 
 /**
+ * Roll up a Builders area-group's members into `{ blocked, idle, active }`
+ * counts (#926). Uses the SAME per-builder classification as the row icon in
+ * `builders.ts` — blocked (`b.blocked` truthy) takes precedence over idle
+ * (`isIdleWaiting`), which takes precedence over active — so the header's
+ * worst-of severity always tracks the rows beneath it.
+ *
+ * The header subclass (`BuilderGroupTreeItem`) turns this into the worst-of icon
+ * (blocked → `bell`, else idle → `comment-discussion`, else `circle-filled`) and
+ * a `"<b> blocked · <i> waiting · <a> active"` tooltip. Note the blocked header
+ * uses a GENERIC `bell`, not `gateIconFor` of any one member: a group can hold
+ * builders at different gates, so a single gate shape on the header would
+ * misrepresent the group — the yellow color carries the group-level signal.
+ *
+ * Pure / vscode-free so it's unit-tested under the vitest `__tests__/` harness.
+ */
+export function rollupGroupState(builders: OverviewBuilder[], now: number): GroupRollup {
+  let blocked = 0;
+  let idle = 0;
+  let active = 0;
+  for (const b of builders) {
+    if (b.blocked) {
+      blocked++;
+    } else if (isIdleWaiting(b, now)) {
+      idle++;
+    } else {
+      active++;
+    }
+  }
+  return { blocked, idle, active };
+}
+
+export interface GroupRollup {
+  blocked: number;
+  idle: number;
+  active: number;
+}
+
+/** The three builder states, in worst-to-best severity order. */
+export type BuilderState = 'blocked' | 'idle' | 'active';
+
+/**
+ * Single source of truth for the three builder-state glyphs (codicon name +
+ * theme color token), shared by the builder ROW (`builders.ts`) and the
+ * area-group header rollup (`builder-tree-item.ts`) so the vocabulary is
+ * defined once. Strings only — no vscode `ThemeIcon`/`ThemeColor` — so this
+ * module stays vscode-free and unit-testable; call sites wrap them.
+ *
+ * NOTE: a blocked ROW overrides `icon` with the gate-specific `gateIconFor`
+ * shape (keeping `color`); the generic `bell` here is the group HEADER's
+ * blocked glyph and the row's unmapped-gate fallback.
+ */
+export const BUILDER_STATE_GLYPH: Record<BuilderState, { icon: string; color: string }> = {
+  blocked: { icon: 'bell', color: 'notificationsWarningIcon.foreground' },
+  idle: { icon: 'comment-discussion', color: 'notificationsInfoIcon.foreground' },
+  active: { icon: 'circle-filled', color: 'testing.iconPassed' },
+};
+
+/**
+ * The worst (most severe) state present in a group's rollup: blocked beats
+ * idle beats active. Drives the header's worst-of icon without a nested
+ * ternary at the call site.
+ */
+export function worstBuilderState(rollup: GroupRollup): BuilderState {
+  if (rollup.blocked > 0) { return 'blocked'; }
+  if (rollup.idle > 0) { return 'idle'; }
+  return 'active';
+}
+
+/**
  * Compact elapsed-time label (`<1m`, `42m`, `3h`, `2d`) from `isoDate` to
  * `now`. `now` is passed in (not read from `Date.now()`) so callers and tests
  * compute deterministically.
@@ -52,31 +122,29 @@ export function timeSince(isoDate: string, now: number): string {
 }
 
 /**
- * The builder row's label. The phase leads the label, before the issue number
- * (`[<phase>] #<id> <title>`), so it sits at a FIXED offset right after the
- * row's icon — letting the eye scan the phase column straight down the tree
- * (issue ids vary in width, so an id-first order would make the phase bracket
- * jiggle row-to-row). It also survives end-truncation in a narrow sidebar and
- * shows across all three states — unlike the old trailing `[<phase>]` suffix
- * that only active rows carried and long titles clipped.
+ * The builder row's label: `<prefix>#<id> <title><stateLabel>`.
+ *
+ * `prefix` is supplied by the active grouping strategy (`BuilderGrouping.rowPrefix`,
+ * #952) — it carries whichever axis is NOT the group header (area when grouping by
+ * stage, phase when grouping by area), already bracketed with a trailing space (or
+ * `''` when omitted). Keeping prefix selection in the strategy lets this helper stay
+ * a pure formatter that knows nothing about the grouping axis.
  *
  * The state-dispatched suffix is preserved for blocked/idle duration:
  *  - blocked: ` blocked on <label> [<elapsed>]`
  *  - idle:    ` waiting on input [<elapsed> silent]`
- *  - active:  (empty — the phase prefix already covers it)
- *
- * The prefix uses the coarse `protocolPhase` (`plan` / `implement` / `review`),
- * NOT the collapsed `phase` field — `phase` prefers free-form plan sub-phase
- * ids (e.g. `phase_0_rebase_onto_ci`) which are too low-level for the row.
- * Empty `protocolPhase` (rare transient init state) omits the prefix entirely —
- * the row reads `#<id> <title>` rather than carrying a literal `[] `.
+ *  - active:  (empty)
  *
  * `isIdle` is injected by the caller (which already computes it via
  * `isIdleWaiting` for the icon + contextValue dispatch) rather than recomputed
- * here — keeps this helper pure (no `@cluesmith/codev-core` runtime import) and
- * unit-testable without a build step.
+ * here — keeps this helper pure and unit-testable without a build step.
  */
-export function builderRowLabel(b: OverviewBuilder, isIdle: boolean, now: number): string {
+export function builderRowLabel(
+  b: OverviewBuilder,
+  isIdle: boolean,
+  now: number,
+  prefix: string,
+): string {
   const isBlocked = !!b.blocked;
   const waitTime = isBlocked && b.blockedSince ? ` [${timeSince(b.blockedSince, now)}]` : '';
   const idleTime = isIdle && b.lastDataAt ? ` [${timeSince(b.lastDataAt, now)} silent]` : '';
@@ -85,6 +153,5 @@ export function builderRowLabel(b: OverviewBuilder, isIdle: boolean, now: number
     : isIdle
     ? ` waiting on input${idleTime}`
     : '';
-  const phasePrefix = b.protocolPhase ? `[${b.protocolPhase}] ` : '';
-  return `${phasePrefix}#${b.issueId ?? b.id} ${b.issueTitle ?? ''}${stateLabel}`;
+  return `${prefix}#${b.issueId ?? b.id} ${b.issueTitle ?? ''}${stateLabel}`;
 }

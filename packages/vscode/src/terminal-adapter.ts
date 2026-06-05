@@ -2,9 +2,24 @@ import * as vscode from 'vscode';
 import WebSocket from 'ws';
 import { FRAME_CONTROL, FRAME_DATA, type ControlMessage } from '@cluesmith/codev-types';
 import { EscapeBuffer } from '@cluesmith/codev-core/escape-buffer';
+import { BackoffController, classifyUpgradeError } from '@cluesmith/codev-core/reconnect-policy';
 
 const CHUNK_SIZE = 16384; // 16KB — chunk onDidWrite to avoid CPU spikes
 const MAX_QUEUE = 1048576; // 1MB — disconnect if queue exceeds this
+
+// Reconnect backoff. The exponential curve (1000 * 2^attempt, capped at 30s),
+// the give-up threshold, and the session-unknown classifier all live in the
+// shared BackoffController / classifyUpgradeError (#961). This adapter keeps the
+// #936 tuning: give up after MAX_RECONNECT_ATTEMPTS retries (sequence 1s, 2s,
+// 4s, 8s, 16s, 30s) and surface a terminal failure state.
+const MAX_RECONNECT_ATTEMPTS = 6;
+
+/**
+ * The clickable token emitted in the give-up message. Shared with the terminal
+ * link provider (#939) so the message text and the matcher cannot drift —
+ * `ReconnectTerminalLinkProvider` imports this exact constant.
+ */
+export const RECONNECT_LINK_TEXT = 'Click here to reconnect';
 
 /**
  * VS Code Pseudoterminal backed by a Tower WebSocket connection.
@@ -33,6 +48,14 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
   private queuedBytes = 0;
   private disposed = false;
 
+  // Reconnect-loop state. The adapter owns reconnection end-to-end (#936) —
+  // backoff scheduling, give-up after MAX_RECONNECT_ATTEMPTS, and a terminal
+  // failure state that stops the loop until the user manually reconnects. The
+  // backoff curve and give-up threshold live in the shared controller (#961).
+  private readonly backoff = new BackoffController({ maxAttempts: MAX_RECONNECT_ATTEMPTS });
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private gaveUp = false;
+
   constructor(
     private wsUrl: string,
     private authKey: string | null,
@@ -53,6 +76,10 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
 
   close(): void {
     this.disposed = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -98,11 +125,17 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
     if (this.disposed) { return; }
 
     this.log('INFO', `Connecting to ${this.wsUrl}`);
-    this.ws = new WebSocket(this.wsUrl);
+    const socket = new WebSocket(this.wsUrl);
+    this.ws = socket;
     this.ws.binaryType = 'arraybuffer';
 
     this.ws.on('open', () => {
       this.log('INFO', 'WebSocket connected');
+      // A successful (re)connect clears the loop state so a later close starts
+      // a fresh backoff chain from the 1s base delay rather than continuing
+      // where the previous failure run left off.
+      this.backoff.recordSuccess();
+      this.gaveUp = false;
       // Send auth via control message (not query param)
       if (this.authKey) {
         this.sendControl({ type: 'ping', payload: { auth: this.authKey } });
@@ -135,26 +168,96 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
     });
 
     this.ws.on('close', () => {
-      if (!this.disposed) {
-        this.log('WARN', 'WebSocket closed');
-        this.writeEmitter.fire('\x1b[33m[Codev: Connection lost, reconnecting...]\x1b[0m\r\n');
-        // Reconnection handled by terminal-manager
-      }
+      // Identity guard: an intentional reconnect() (or the backpressure path)
+      // closes this socket and opens a new one; this socket's `close` then
+      // fires asynchronously. Ignore it if it isn't the active socket, or we'd
+      // schedule a stray retry against the now-healthy connection.
+      if (this.disposed || this.ws !== socket || this.gaveUp) { return; }
+      this.log('WARN', 'WebSocket closed');
+      this.scheduleReconnect();
     });
 
     this.ws.on('error', (err) => {
       this.log('ERROR', `WebSocket error: ${err.message}`);
+      // A 4xx upgrade rejection means the session/resource is gone (Tower 404s
+      // an unknown session ID). The matching `close` fires right after; give up
+      // now so the close handler's scheduleReconnect() is a no-op.
+      if (this.ws === socket && classifyUpgradeError(err.message) === 'permanent') {
+        this.giveUp('this terminal session no longer exists on Tower');
+      }
     });
   }
 
+  /**
+   * Schedule one backed-off reconnect attempt. Emits at most one notice per
+   * backoff interval (not per close-event), and transitions to the give-up
+   * state once the attempt budget is exhausted (#936).
+   */
+  private scheduleReconnect(): void {
+    if (this.disposed || this.gaveUp || this.reconnectTimer) { return; }
+    if (this.backoff.recordFailure() === 'give-up') {
+      this.giveUp(`unable to reconnect after ${MAX_RECONNECT_ATTEMPTS} attempts`);
+      return;
+    }
+
+    const delay = this.backoff.nextDelayMs();
+    this.writeEmitter.fire(
+      `\x1b[33m[Codev: Connection lost — retrying in ${delay / 1000}s ` +
+      `(attempt ${this.backoff.attempt}/${MAX_RECONNECT_ATTEMPTS})]\x1b[0m\r\n`,
+    );
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      // Reset stream state before re-opening so stale partial ANSI bytes from
+      // the dead connection don't garble Tower's replayed buffer (#630).
+      this.resetStreamState();
+      this.connect();
+    }, delay);
+  }
+
+  /**
+   * Enter the terminal failure state: stop auto-retrying and surface a quiet
+   * red notice carrying the clickable reconnect affordance (#936 give-up state;
+   * the affordance itself is wired by ReconnectTerminalLinkProvider, #939).
+   */
+  private giveUp(reason: string): void {
+    if (this.gaveUp) { return; }
+    this.gaveUp = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.log('WARN', `Giving up reconnect: ${reason}`);
+    this.writeEmitter.fire(
+      `\x1b[31m[Codev: Connection lost — ${reason}. ${RECONNECT_LINK_TEXT}]\x1b[0m\r\n`,
+    );
+  }
+
+  /** Fresh decoder + escape buffer. Shared by every (re)connect path so none
+   *  leaks stale stream state into the next connection. */
+  private resetStreamState(): void {
+    this.decoder = new TextDecoder('utf-8', { fatal: false });
+    this.escapeBuffer = new EscapeBuffer();
+  }
+
+  /**
+   * Reconnect now, bypassing backoff. Called for the backpressure replay path
+   * and by the user's manual recovery click (#939). Resets the attempt budget
+   * and clears the give-up state so the user gets a full fresh retry chain.
+   */
   reconnect(wsUrl?: string): void {
+    if (this.disposed) { return; }
     if (wsUrl) { this.wsUrl = wsUrl; }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.backoff.reset();
+    this.gaveUp = false;
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
-    this.decoder = new TextDecoder('utf-8', { fatal: false });
-    this.escapeBuffer = new EscapeBuffer();
+    this.resetStreamState();
     this.connect();
   }
 

@@ -1,0 +1,30 @@
+id: '933'
+title: afx-tower-ui-gate-action-butto
+protocol: pir
+phase: verified
+plan_phases: []
+current_plan_phase: null
+gates:
+  plan-approval:
+    status: approved
+    requested_at: '2026-06-02T01:45:23.271Z'
+    approved_at: '2026-06-02T01:45:42.206Z'
+  dev-approval:
+    status: approved
+    requested_at: '2026-06-02T01:47:23.037Z'
+    approved_at: '2026-06-02T01:52:20.562Z'
+  pr:
+    status: approved
+    requested_at: '2026-06-02T01:55:51.864Z'
+    approved_at: '2026-06-02T01:59:39.939Z'
+iteration: 1
+build_complete: false
+history: []
+started_at: '2026-06-02T00:03:40.820Z'
+updated_at: '2026-06-02T01:59:48.486Z'
+pr_history:
+  - phase: review
+    pr_number: 963
+    branch: builder/pir-933
+    created_at: '2026-06-02T01:53:31.390Z'
+pr_ready_for_human: false

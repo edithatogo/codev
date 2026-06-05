@@ -3,7 +3,7 @@
   "publisher": "cluesmith",
   "displayName": "Codev for VS Code",
   "description": "Codev helps humans and agents co-develop both the context and the code of the project.",
-  "version": "3.1.6",
+  "version": "3.1.7",
   "license": "Apache-2.0",
   "icon": "icons/codev.png",
   "pricing": "Free",
@@ -78,7 +78,7 @@
       {
         "command": "codev.approveGate",
         "title": "Codev: Approve Gate",
-        "icon": "$(check)"
+        "icon": "$(arrow-right)"
       },
       {
         "command": "codev.cleanupBuilder",
@@ -108,6 +108,21 @@
         "command": "codev.disableBuildersFileTreeMode",
         "title": "Codev: View Changed Files as List",
         "icon": "$(list-flat)"
+      },
+      {
+        "command": "codev.groupBuildersByArea",
+        "title": "Codev: Group Builders by Area",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "codev.groupBuildersByPhase",
+        "title": "Codev: Group Builders by Phase",
+        "icon": "$(milestone)"
+      },
+      {
+        "command": "codev.openBacklogSearch",
+        "title": "Codev: Search Backlog",
+        "icon": "$(search)"
       },
       {
         "command": "codev.showBacklogAll",
@@ -149,6 +164,11 @@
       {
         "command": "codev.addReviewComment",
         "title": "Codev: Add Review Comment"
+      },
+      {
+        "command": "codev.recheckCli",
+        "title": "Codev: Recheck CLI",
+        "icon": "$(refresh)"
       },
       {
         "command": "codev.viewDiff",
@@ -300,9 +320,30 @@
         {
           "command": "codev.deleteReviewComment",
           "when": "false"
+        },
+        {
+          "command": "codev.runWorkspaceDev",
+          "when": "codev.hasDevCommand"
+        },
+        {
+          "command": "codev.stopWorkspaceDev",
+          "when": "codev.hasDevCommand"
+        },
+        {
+          "command": "codev.runWorktreeDev",
+          "when": "false"
+        },
+        {
+          "command": "codev.stopWorktreeDev",
+          "when": "false"
         }
       ],
       "view/item/context": [
+        {
+          "command": "codev.recheckCli",
+          "when": "view == codev.status && viewItem =~ /^codev-cli-(missing|outdated)$/",
+          "group": "inline@1"
+        },
         {
           "command": "codev.removeArchitect",
           "when": "view == codev.workspace && viewItem == workspace-architect-sibling",
@@ -360,12 +401,12 @@
         },
         {
           "command": "codev.runWorktreeDev",
-          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder|awaiting-builder)-/",
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder|awaiting-builder)-/ && codev.hasDevCommand",
           "group": "3_dev@2"
         },
         {
           "command": "codev.stopWorktreeDev",
-          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder|awaiting-builder)-/",
+          "when": "view == codev.builders && viewItem =~ /^(builder|blocked-builder|awaiting-builder)-/ && codev.hasDevCommand",
           "group": "3_dev@3"
         },
         {
@@ -431,9 +472,24 @@
           "group": "navigation"
         },
         {
+          "command": "codev.groupBuildersByArea",
+          "when": "view == codev.builders && codev.buildersGroupBy != 'area'",
+          "group": "navigation"
+        },
+        {
+          "command": "codev.groupBuildersByPhase",
+          "when": "view == codev.builders && codev.buildersGroupBy == 'area'",
+          "group": "navigation"
+        },
+        {
           "command": "codev.refreshOverview",
           "when": "view == codev.pullRequests",
           "group": "navigation"
+        },
+        {
+          "command": "codev.openBacklogSearch",
+          "when": "view == codev.backlog",
+          "group": "navigation@0"
         },
         {
           "command": "codev.refreshOverview",
@@ -518,12 +574,14 @@
       {
         "command": "codev.runWorkspaceDev",
         "key": "ctrl+alt+r",
-        "mac": "cmd+alt+r"
+        "mac": "cmd+alt+r",
+        "when": "codev.hasDevCommand"
       },
       {
         "command": "codev.stopWorkspaceDev",
         "key": "ctrl+alt+s",
-        "mac": "cmd+alt+s"
+        "mac": "cmd+alt+s",
+        "when": "codev.hasDevCommand"
       },
       {
         "command": "codev.pasteImage",
@@ -622,9 +680,50 @@
           "type": "boolean",
           "default": false,
           "description": "Show every open backlog issue. When off (the default), the Backlog view filters to items assigned to the current GitHub user. Toggleable via the Backlog title-bar eye icon."
+        },
+        "codev.buildersGroupBy": {
+          "type": "string",
+          "enum": [
+            "stage",
+            "area"
+          ],
+          "enumDescriptions": [
+            "Group builders by lifecycle stage (the action axis: SPECIFY → PLAN → IMPLEMENT → REVIEW → PR → VERIFIED) — answers \"where do I need to act?\"",
+            "Group builders by their area/* label (the domain axis), matching the Backlog view."
+          ],
+          "default": "stage",
+          "description": "Which axis the Builders view groups by. 'stage' (default) is the action axis; 'area' is the domain axis. Toggleable via the Builders title-bar button."
         }
       }
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "codevGettingStarted",
+        "title": "Get started with Codev",
+        "description": "Install the Codev CLI and connect VS Code to Tower.",
+        "steps": [
+          {
+            "id": "detect",
+            "title": "Check your setup",
+            "description": "Codev needs the `codev` command-line tool installed globally, at a version at least as new as this extension. This walkthrough helps you install it and verify it.",
+            "media": { "markdown": "walkthroughs/detect.md" }
+          },
+          {
+            "id": "install",
+            "title": "Install the Codev CLI",
+            "description": "Install or update the CLI globally with npm.",
+            "media": { "markdown": "walkthroughs/install.md" }
+          },
+          {
+            "id": "verify",
+            "title": "Verify the installation",
+            "description": "Confirm the CLI is detected and at a compatible version.",
+            "media": { "markdown": "walkthroughs/verify.md" },
+            "completionEvents": ["onContext:codev.cliReady"]
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "pnpm --filter @cluesmith/codev-core --filter @cluesmith/codev-types build && pnpm package",

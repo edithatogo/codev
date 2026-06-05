@@ -1,0 +1,30 @@
+id: '952'
+title: vscode-builders-tree-should-gr
+protocol: pir
+phase: review
+plan_phases: []
+current_plan_phase: null
+gates:
+  plan-approval:
+    status: approved
+    requested_at: '2026-06-02T02:31:32.994Z'
+    approved_at: '2026-06-02T06:11:48.406Z'
+  dev-approval:
+    status: approved
+    requested_at: '2026-06-02T06:21:42.777Z'
+    approved_at: '2026-06-02T23:55:44.617Z'
+  pr:
+    status: approved
+    requested_at: '2026-06-03T00:02:46.797Z'
+    approved_at: '2026-06-03T00:04:31.323Z'
+iteration: 1
+build_complete: false
+history: []
+started_at: '2026-06-02T02:26:28.948Z'
+updated_at: '2026-06-03T00:04:31.324Z'
+pr_history:
+  - phase: review
+    pr_number: 970
+    branch: builder/pir-952
+    created_at: '2026-06-02T23:59:07.097Z'
+pr_ready_for_human: false

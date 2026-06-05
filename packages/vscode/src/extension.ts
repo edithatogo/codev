@@ -17,6 +17,7 @@ import { openWorktreeFolder } from './commands/open-worktree-folder.js';
 import { runWorktreeSetup } from './commands/run-worktree-setup.js';
 import { viewPlanFile, viewSpecFile, viewReviewFile } from './commands/view-artifact.js';
 import { activateIssueView, viewBacklogIssue } from './commands/view-issue.js';
+import { BacklogSearchPanel } from './webviews/backlog-search-panel.js';
 import { searchBacklog } from './commands/search-backlog.js';
 import { connectTunnel, disconnectTunnel } from './commands/tunnel.js';
 import { listCronTasks } from './commands/cron.js';
@@ -25,7 +26,7 @@ import { activateGateToasts } from './notifications/gate-toast.js';
 import { activateReviewDecorations } from './review-decorations.js';
 import { activateReviewComments } from './comments/plan-review.js';
 import { BuilderSpawnHandler } from './builder-spawn-handler.js';
-import { BuilderTerminalLinkProvider } from './terminal-link-provider.js';
+import { BuilderTerminalLinkProvider, ReconnectTerminalLinkProvider } from './terminal-link-provider.js';
 import { computeBuildersToClose, roleIdsFromBuilders } from './prune-builder-terminals.js';
 import { buildBuilderPickRows } from './builder-pick-rows.js';
 import { isIdleWaiting } from '@cluesmith/codev-core/builder-helpers';
@@ -45,6 +46,9 @@ import { BuilderFileDecorationProvider } from './views/builder-file-decoration.j
 import { BacklogGroupTreeItem, BacklogTreeItem } from './views/backlog-tree-item.js';
 import { persistAreaGroupExpansion } from './views/area-group-expansion.js';
 import { buildArchitectReferenceInjection } from './architect-reference-injection.js';
+import { runPreflight, recheckCli, isCliReady, showSetupRequiredToast } from './preflight/preflight.js';
+import { detectWorkspacePath } from './workspace-detector.js';
+import { loadWorktreeConfig, hasRunnableDevCommand } from './load-worktree-config.js';
 
 let connectionManager: ConnectionManager | null = null;
 let terminalManager: TerminalManager | null = null;
@@ -72,9 +76,22 @@ function extractBuilderId(arg: vscode.TreeItem | string | undefined): string | u
  * BacklogTreeItem itself; command-palette invocations pass nothing →
  * undefined → spawnBuilder falls back to its full quick-pick flow.
  */
-function extractIssueId(arg: vscode.TreeItem | string | undefined): string | undefined {
+/**
+ * Argument shape accepted by the backlog issue commands. Beyond the sidebar's
+ * `TreeItem` and the row-click `string`, the Search Backlog webview (#920)
+ * passes a plain `{ issueId, issueTitle }` object so its inline "reference in
+ * architect" action can carry the title (which a bare id string can't).
+ */
+type IssueCommandArg =
+	| vscode.TreeItem
+	| string
+	| { issueId: string; issueTitle?: string }
+	| undefined;
+
+function extractIssueId(arg: IssueCommandArg): string | undefined {
 	if (typeof arg === 'string') { return arg; }
 	if (arg instanceof BacklogTreeItem) { return arg.issueId; }
+	if (arg && typeof arg === 'object' && 'issueId' in arg) { return arg.issueId; }
 	return undefined;
 }
 
@@ -86,8 +103,11 @@ function extractIssueId(arg: vscode.TreeItem | string | undefined): string | und
  * fall back. An empty title is normalised to undefined so the fallback
  * branch handles it identically to a missing title.
  */
-function extractIssueTitle(arg: vscode.TreeItem | string | undefined): string | undefined {
+function extractIssueTitle(arg: IssueCommandArg): string | undefined {
 	if (arg instanceof BacklogTreeItem) {
+		return arg.issueTitle || undefined;
+	}
+	if (arg && typeof arg === 'object' && 'issueId' in arg) {
 		return arg.issueTitle || undefined;
 	}
 	return undefined;
@@ -150,6 +170,37 @@ export async function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.window.onDidChangeActiveTerminal(syncTerminalFocusContext));
 	syncTerminalFocusContext(); // seed initial state
+
+	// Drive the `codev.hasDevCommand` context key so the builder-row Run/Stop
+	// Dev Server menu entries, the dev keybindings, and the workspace-dev palette
+	// entries only surface when a runnable `worktree.devCommand` is configured
+	// (#975). These surfaces are global (the keybindings/palette are invokable
+	// regardless of whether the Builders tree has rendered), so the key is
+	// refreshed by global signals — mirroring the Workspace view's own gate:
+	// `onStateChange` for the initial value once Tower is reachable, plus the
+	// `worktree-config-updated` SSE envelope (fired by Tower's config-file
+	// watcher) so the key stays live on `.codev/config(.local).json` edits
+	// without a window reload. The config is the Tower-merged 5-layer view
+	// (shared + project-local). Fail-safe: a disconnected/error state resolves
+	// to `false` — hide, never falsely offer.
+	const syncHasDevCommandContext = async () => {
+		const config = await loadWorktreeConfig(connectionManager!);
+		await vscode.commands.executeCommand(
+			'setContext', 'codev.hasDevCommand', hasRunnableDevCommand(config));
+	};
+	context.subscriptions.push(
+		connectionManager.onStateChange(() => { syncHasDevCommandContext(); }));
+	context.subscriptions.push(
+		connectionManager.onSSEEvent(({ data }) => {
+			try {
+				if ((JSON.parse(data) as { type?: unknown }).type === 'worktree-config-updated') {
+					syncHasDevCommandContext();
+				}
+			} catch {
+				// benign — malformed envelope
+			}
+		}));
+	syncHasDevCommandContext(); // seed initial state
 
 	// Update status bar with builder + needs-attention counts.
 	// Two "needs me" signals: blocked (formal gate) and idle-waiting
@@ -292,6 +343,8 @@ export async function activate(context: vscode.ExtensionContext) {
 	// state (architects added/removed don't otherwise fire an event the
 	// sidebar listens for).
 	const workspaceProvider = new WorkspaceProvider(connectionManager, terminalManager!);
+	// Holds the CLI preflight row (#791); it self-refreshes on `onPreflightChange`.
+	const statusProvider = new StatusProvider(connectionManager);
 	context.subscriptions.push(
 		buildersView,
 		pullRequestsView,
@@ -299,7 +352,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		recentlyClosedView,
 		vscode.window.registerTreeDataProvider('codev.workspace', workspaceProvider),
 		vscode.window.registerTreeDataProvider('codev.team', teamProvider),
-		vscode.window.registerTreeDataProvider('codev.status', new StatusProvider(connectionManager)),
+		vscode.window.registerTreeDataProvider('codev.status', statusProvider),
 	);
 
 	// Builders accordion: expanding one builder auto-collapses the others so a
@@ -360,6 +413,21 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.workspace.onDidChangeConfiguration((e) => {
 			if (!e.affectsConfiguration('codev.buildersFileViewAsTree')) { return; }
 			vscode.commands.executeCommand('setContext', 'codev.buildersFileViewAsTree', readFileViewAsTree());
+			buildersProvider.refresh();
+		}),
+	);
+
+	// Builders grouping axis: stage (action axis, default) vs area (domain axis).
+	// Same mechanics as the file-tree toggle — read the `codev.buildersGroupBy`
+	// setting, mirror to a context key so the paired title-bar commands swap
+	// correctly, refresh the provider on change so the tree re-groups immediately.
+	const readBuildersGroupBy = () =>
+		vscode.workspace.getConfiguration('codev').get<string>('buildersGroupBy', 'stage');
+	vscode.commands.executeCommand('setContext', 'codev.buildersGroupBy', readBuildersGroupBy());
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeConfiguration((e) => {
+			if (!e.affectsConfiguration('codev.buildersGroupBy')) { return; }
+			vscode.commands.executeCommand('setContext', 'codev.buildersGroupBy', readBuildersGroupBy());
 			buildersProvider.refresh();
 		}),
 	);
@@ -441,14 +509,40 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
+	// Command registration helpers (#791). Two registrars; the one you call IS
+	// the guard decision, so there's no separate list or per-call flag to keep
+	// in sync:
+	//   - `regCli`  — the command needs the codev CLI / Tower. When the CLI is
+	//                 missing or outdated it no-ops with a single "run setup"
+	//                 toast (via `guard`) instead of failing with a misleading
+	//                 "not connected to Tower" error.
+	//   - `reg`     — CLI-independent command (recovery paths like reconnect /
+	//                 recheck, config toggles, read-only viewers); registered
+	//                 with no guard.
+	// `isCliReady` is optimistic during the brief startup preflight window
+	// (treats the not-yet-resolved `pending` state as ready) so healthy installs
+	// are never blocked.
+	const guard = <A extends unknown[], R>(handler: (...args: A) => R) =>
+		(...args: A): R | undefined => {
+			if (isCliReady()) { return handler(...args); }
+			showSetupRequiredToast();
+			return undefined;
+		};
+	const reg = <A extends unknown[]>(id: string, handler: (...args: A) => unknown) =>
+		// eslint-disable-next-line no-restricted-syntax -- this IS the reg helper (#791)
+		vscode.commands.registerCommand(id, handler);
+	const regCli = <A extends unknown[]>(id: string, handler: (...args: A) => unknown) =>
+		// eslint-disable-next-line no-restricted-syntax -- this IS the regCli helper (#791)
+		vscode.commands.registerCommand(id, guard(handler));
+
 	// Commands
 	context.subscriptions.push(
-		vscode.commands.registerCommand('codev.helloWorld', () => {
+		reg('codev.helloWorld', () => {
 			const state = connectionManager?.getState() ?? 'unknown';
 			const workspace = connectionManager?.getWorkspacePath() ?? 'none';
 			vscode.window.showInformationMessage(`Codev: ${state} | Workspace: ${workspace}`);
 		}),
-		vscode.commands.registerCommand('codev.openArchitectTerminal', async (architectName?: string) => {
+		reg('codev.openArchitectTerminal', async (architectName?: string) => {
 			// Spec 786 Phase 6: the command accepts an optional architect name.
 			// Sidebar children pass their architect name via `command.arguments`.
 			// Existing palette / no-arg invocations default to `main`.
@@ -481,8 +575,8 @@ export async function activate(context: vscode.ExtensionContext) {
 		// from Phase 4. Wired to the right-click context menu on sibling
 		// entries (`viewItem == workspace-architect-sibling`) — see
 		// package.json's menus contribution. Refuses to remove `main`.
-		vscode.commands.registerCommand('codev.removeArchitect', async (arg: vscode.TreeItem | string | undefined) => {
-			let name: string | undefined;
+		regCli('codev.removeArchitect', async (arg: vscode.TreeItem | string | undefined) => {
+				let name: string | undefined;
 			if (typeof arg === 'string') {
 				name = arg;
 			} else if (arg instanceof vscode.TreeItem && typeof arg.label === 'string') {
@@ -524,7 +618,7 @@ export async function activate(context: vscode.ExtensionContext) {
 				vscode.window.showErrorMessage(`Codev: Failed to remove architect '${name}': ${err instanceof Error ? err.message : String(err)}`);
 			}
 		}),
-		vscode.commands.registerCommand('codev.openBuilderTerminal', async () => {
+		reg('codev.openBuilderTerminal', async () => {
 			const client = connectionManager?.getClient();
 			const workspacePath = connectionManager?.getWorkspacePath();
 			if (!client || !workspacePath || connectionManager?.getState() !== 'connected') {
@@ -549,7 +643,7 @@ export async function activate(context: vscode.ExtensionContext) {
 				vscode.window.showErrorMessage('Codev: Failed to get builders');
 			}
 		}),
-		vscode.commands.registerCommand('codev.newShell', async () => {
+		reg('codev.newShell', async () => {
 			const client = connectionManager?.getClient();
 			const workspacePath = connectionManager?.getWorkspacePath();
 			if (!client || !workspacePath || connectionManager?.getState() !== 'connected') {
@@ -566,14 +660,14 @@ export async function activate(context: vscode.ExtensionContext) {
 				vscode.window.showErrorMessage('Codev: Failed to create shell');
 			}
 		}),
-		vscode.commands.registerCommand('codev.openBuilderById', async (arg: vscode.TreeItem | string | undefined) => {
+		reg('codev.openBuilderById', async (arg: vscode.TreeItem | string | undefined) => {
 			// Left-click on a tree item passes b.id (string) via item.command.arguments;
 			// right-click context-menu invocations pass the BuilderTreeItem itself.
 			const roleOrId = extractBuilderId(arg);
 			if (!roleOrId) { return; }
 			await terminalManager?.openBuilderByRoleOrId(roleOrId, true);
 		}),
-		vscode.commands.registerCommand('codev.openBuilderRow', async (item: unknown) => {
+		reg('codev.openBuilderRow', async (item: unknown) => {
 			// Builder-row single-click does BOTH: opens the terminal and expands
 			// the row (the file list). Expansion is via reveal(expand:true) which
 			// fires onDidExpandElement — the accordion handler picks that up and
@@ -587,23 +681,25 @@ export async function activate(context: vscode.ExtensionContext) {
 				// Benign if the row is no longer present (e.g. mid-cleanup).
 			}
 		}),
-		vscode.commands.registerCommand('codev.spawnBuilder', (arg: vscode.TreeItem | string | undefined) =>
+		regCli('codev.spawnBuilder', (arg: vscode.TreeItem | string | undefined) =>
 			spawnBuilder(extractIssueId(arg))),
-		vscode.commands.registerCommand('codev.openBacklogIssue', (arg: vscode.TreeItem | undefined) => {
+		reg('codev.openBacklogIssue', (arg: vscode.TreeItem | undefined) => {
 			if (arg instanceof BacklogTreeItem) {
 				void vscode.env.openExternal(vscode.Uri.parse(arg.issueUrl));
 			}
 		}),
-		vscode.commands.registerCommand('codev.copyBacklogIssueNumber', async (arg: vscode.TreeItem | undefined) => {
+		reg('codev.copyBacklogIssueNumber', async (arg: vscode.TreeItem | undefined) => {
 			if (arg instanceof BacklogTreeItem) {
 				await vscode.env.clipboard.writeText(`#${arg.issueId}`);
 				vscode.window.showInformationMessage(`Codev: Copied #${arg.issueId}`);
 			}
 		}),
-		vscode.commands.registerCommand('codev.viewBacklogIssue', (arg: vscode.TreeItem | string | undefined) =>
+		reg('codev.viewBacklogIssue', (arg: vscode.TreeItem | string | undefined) =>
 			viewBacklogIssue(connectionManager!, extractIssueId(arg))),
-			vscode.commands.registerCommand('codev.searchBacklog', () => searchBacklog(overviewCache)),
-		vscode.commands.registerCommand('codev.referenceIssueInArchitect', async (arg: vscode.TreeItem | string | undefined) => {
+		reg('codev.openBacklogSearch', () =>
+			BacklogSearchPanel.createOrShow(connectionManager!, overviewCache, context.extensionUri)),
+		reg('codev.searchBacklog', () => searchBacklog(overviewCache)),
+		regCli('codev.referenceIssueInArchitect', async (arg: IssueCommandArg) => {
 			// Inline-button action on a backlog row: open + focus the architect
 			// terminal, then type `#<id> "<title>" ` into its prompt without
 			// submitting, so the user can keep typing their context before
@@ -618,61 +714,69 @@ export async function activate(context: vscode.ExtensionContext) {
 				vscode.window.showWarningMessage('Codev: Architect terminal not available');
 			}
 		}),
-		vscode.commands.registerCommand('codev.sendMessage', () => sendMessage(connectionManager!)),
-		vscode.commands.registerCommand('codev.approveGate', (arg: vscode.TreeItem | string | undefined, options?: { skipConfirmation?: boolean }) =>
+		regCli('codev.sendMessage', () => sendMessage(connectionManager!)),
+		regCli('codev.approveGate', (arg: vscode.TreeItem | string | undefined, options?: { skipConfirmation?: boolean }) =>
 			approveGate(connectionManager!, overviewCache, extractBuilderId(arg), options)),
-		vscode.commands.registerCommand('codev.cleanupBuilder', () => cleanupBuilder(connectionManager!, overviewCache)),
-		vscode.commands.registerCommand('codev.openWorktreeWindow', (arg: vscode.TreeItem | string | undefined) =>
+		regCli('codev.cleanupBuilder', () => cleanupBuilder(connectionManager!, overviewCache)),
+		regCli('codev.openWorktreeWindow', (arg: vscode.TreeItem | string | undefined) =>
 			openWorktreeWindow(connectionManager!, extractBuilderId(arg))),
-		vscode.commands.registerCommand('codev.viewDiff', (arg: vscode.TreeItem | string | undefined) =>
+		reg('codev.viewDiff', (arg: vscode.TreeItem | string | undefined) =>
 			viewDiff(connectionManager!, extractBuilderId(arg))),
-		vscode.commands.registerCommand('codev.openBuilderFileDiff', async (arg: unknown) => {
+		reg('codev.openBuilderFileDiff', async (arg: unknown) => {
 			if (!(arg instanceof BuilderFileTreeItem)) { return; }
 			const { left, right } = diffUrisForChange(arg.plan, { wt: arg.worktreePath, ref: arg.baseRef });
 			const title = `${arg.plan.resourcePath} (#${arg.builderId})`;
 			await vscode.commands.executeCommand('vscode.diff', left, right, title);
 		}),
-		vscode.commands.registerCommand('codev.runWorktreeDev', (arg: vscode.TreeItem | string | undefined) =>
+		regCli('codev.runWorktreeDev', (arg: vscode.TreeItem | string | undefined) =>
 			runWorktreeDev(connectionManager!, terminalManager!, extractBuilderId(arg))),
-		vscode.commands.registerCommand('codev.stopWorktreeDev', () =>
+		regCli('codev.stopWorktreeDev', () =>
 			stopWorktreeDev(connectionManager!, terminalManager!)),
-		vscode.commands.registerCommand('codev.runWorkspaceDev', () =>
+		regCli('codev.runWorkspaceDev', () =>
 			runWorkspaceDev(connectionManager!, terminalManager!)),
-		vscode.commands.registerCommand('codev.stopWorkspaceDev', () =>
+		regCli('codev.stopWorkspaceDev', () =>
 			stopWorkspaceDev(connectionManager!, terminalManager!)),
-		vscode.commands.registerCommand('codev.openDevUrl', (urlArg?: unknown) =>
+		reg('codev.openDevUrl', (urlArg?: unknown) =>
 			openDevUrl(connectionManager!, typeof urlArg === 'string' ? urlArg : undefined)),
-		vscode.commands.registerCommand('codev.pasteImage', () =>
+		reg('codev.pasteImage', () =>
 			pasteImage(connectionManager!, terminalManager!)),
-		vscode.commands.registerCommand('codev.refreshTeam', () => teamProvider.refresh()),
-		vscode.commands.registerCommand('codev.openWorktreeFolder', (arg: vscode.TreeItem | string | undefined) =>
+		reg('codev.refreshTeam', () => teamProvider.refresh()),
+		reg('codev.openWorktreeFolder', (arg: vscode.TreeItem | string | undefined) =>
 			openWorktreeFolder(connectionManager!, extractBuilderId(arg))),
-		vscode.commands.registerCommand('codev.runWorktreeSetup', (arg: vscode.TreeItem | string | undefined) =>
+		regCli('codev.runWorktreeSetup', (arg: vscode.TreeItem | string | undefined) =>
 			runWorktreeSetup(connectionManager!, extractBuilderId(arg))),
-		vscode.commands.registerCommand('codev.viewPlanFile', (arg: vscode.TreeItem | string | undefined) =>
+		reg('codev.viewPlanFile', (arg: vscode.TreeItem | string | undefined) =>
 			viewPlanFile(connectionManager!, extractBuilderId(arg))),
-		vscode.commands.registerCommand('codev.viewSpecFile', (arg: vscode.TreeItem | string | undefined) =>
+		reg('codev.viewSpecFile', (arg: vscode.TreeItem | string | undefined) =>
 			viewSpecFile(connectionManager!, extractBuilderId(arg))),
-		vscode.commands.registerCommand('codev.viewReviewFile', (arg: vscode.TreeItem | string | undefined) =>
+		reg('codev.viewReviewFile', (arg: vscode.TreeItem | string | undefined) =>
 			viewReviewFile(connectionManager!, extractBuilderId(arg))),
-		vscode.commands.registerCommand('codev.refreshOverview', () => overviewCache.refresh()),
-		vscode.commands.registerCommand('codev.enableBuildersAutoCollapse', () =>
+		reg('codev.refreshOverview', () => overviewCache.refresh()),
+		reg('codev.enableBuildersAutoCollapse', () =>
 			vscode.workspace.getConfiguration('codev').update('buildersAutoCollapse', true, vscode.ConfigurationTarget.Global)),
-		vscode.commands.registerCommand('codev.disableBuildersAutoCollapse', () =>
+		reg('codev.disableBuildersAutoCollapse', () =>
 			vscode.workspace.getConfiguration('codev').update('buildersAutoCollapse', false, vscode.ConfigurationTarget.Global)),
-		vscode.commands.registerCommand('codev.enableBuildersFileTreeMode', () =>
+		reg('codev.enableBuildersFileTreeMode', () =>
 			vscode.workspace.getConfiguration('codev').update('buildersFileViewAsTree', true, vscode.ConfigurationTarget.Global)),
-		vscode.commands.registerCommand('codev.disableBuildersFileTreeMode', () =>
+		reg('codev.disableBuildersFileTreeMode', () =>
 			vscode.workspace.getConfiguration('codev').update('buildersFileViewAsTree', false, vscode.ConfigurationTarget.Global)),
-		vscode.commands.registerCommand('codev.showBacklogAll', () =>
+		reg('codev.showBacklogAll', () =>
 			vscode.workspace.getConfiguration('codev').update('backlogShowAll', true, vscode.ConfigurationTarget.Global)),
-		vscode.commands.registerCommand('codev.showBacklogMineOnly', () =>
+		reg('codev.showBacklogMineOnly', () =>
 			vscode.workspace.getConfiguration('codev').update('backlogShowAll', false, vscode.ConfigurationTarget.Global)),
-		vscode.commands.registerCommand('codev.reconnect', () => connectionManager?.reconnect()),
-		vscode.commands.registerCommand('codev.connectTunnel', () => connectTunnel(connectionManager!)),
-		vscode.commands.registerCommand('codev.disconnectTunnel', () => disconnectTunnel(connectionManager!)),
-		vscode.commands.registerCommand('codev.cronTasks', () => listCronTasks(connectionManager!)),
-		vscode.commands.registerCommand('codev.addReviewComment', () => addReviewComment(overviewCache)),
+		reg('codev.groupBuildersByArea', () =>
+			vscode.workspace.getConfiguration('codev').update('buildersGroupBy', 'area', vscode.ConfigurationTarget.Global)),
+		reg('codev.groupBuildersByPhase', () =>
+			vscode.workspace.getConfiguration('codev').update('buildersGroupBy', 'stage', vscode.ConfigurationTarget.Global)),
+		reg('codev.reconnect', () => connectionManager?.reconnect()),
+		regCli('codev.connectTunnel', () => connectTunnel(connectionManager!)),
+		regCli('codev.disconnectTunnel', () => disconnectTunnel(connectionManager!)),
+		regCli('codev.cronTasks', () => listCronTasks(connectionManager!)),
+		reg('codev.addReviewComment', () => addReviewComment(overviewCache)),
+			// #791: re-verify the codev CLI after the user installs / upgrades it.
+			// Unguarded — it's the recovery path. The Status-view row refreshes via
+			// the preflight `onPreflightChange` event that `recheckCli` fires.
+			reg('codev.recheckCli', () => recheckCli()),
 	);
 
 	// Read-only `codev-issue:` content provider backing the "View Issue"
@@ -712,6 +816,20 @@ export async function activate(context: vscode.ExtensionContext) {
 			new BuilderTerminalLinkProvider(terminalManager),
 		),
 	);
+
+	// Make the give-up message's reconnect affordance clickable (#939)
+	context.subscriptions.push(
+		vscode.window.registerTerminalLinkProvider(
+			new ReconnectTerminalLinkProvider(terminalManager),
+		),
+	);
+
+	// CLI preflight (#791): verify the codev CLI is installed and >= this
+	// extension's version. Fire-and-forget so activation isn't blocked — the
+	// probe self-bounds at 400ms and caches its result for the session. Uses
+	// detectWorkspacePath() directly (connectionManager.getWorkspacePath() isn't
+	// populated until initialize() resolves, which may wait on Tower auto-start).
+	runPreflight(context, detectWorkspacePath(), outputChannel);
 
 	// Connect
 	await connectionManager.initialize();

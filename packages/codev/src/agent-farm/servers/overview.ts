@@ -22,157 +22,15 @@ import {
 } from '../../lib/github.js';
 import type { ForgePR, ForgeIssueListItem } from '../../lib/github.js';
 import { loadProtocol } from '../../commands/porch/protocol.js';
+import type {
+  PlanPhase,
+  OverviewBuilder,
+  OverviewPR,
+  OverviewBacklogItem,
+  OverviewRecentlyClosed,
+  OverviewData,
+} from '@cluesmith/codev-types';
 import Database from 'better-sqlite3';
-
-// =============================================================================
-// Types
-// =============================================================================
-
-export interface PlanPhase {
-  id: string;
-  title: string;
-  status: string;
-}
-
-export interface BuilderOverview {
-  id: string;
-  issueId: string | null;
-  issueTitle: string | null;
-  /**
-   * Display phase. Collapsed: prefers the active plan sub-phase id
-   * (`current_plan_phase`) over the protocol phase so the dashboard can match
-   * it against `planPhases` for sub-phase progress. Read `protocolPhase` for
-   * the coarse protocol phase.
-   */
-  phase: string;
-  /**
-   * Coarse protocol phase (`plan` / `implement` / `review`, …) — the raw
-   * `phase:` from `status.yaml` before the `phase` field's sub-phase collapse.
-   * Surfaces the high-level phase for at-a-glance UIs (#810) without leaking
-   * plan sub-phase ids. Empty string when no live status exists.
-   */
-  protocolPhase: string;
-  mode: 'strict' | 'soft';
-  gates: Record<string, string>;
-  worktreePath: string;
-  /**
-   * Canonical role identifier (e.g. `builder-pir-1423`) derived from the
-   * worktree basename via `worktreeNameToRoleId`. The bridge between
-   * filesystem-discovered builders and the runtime terminal registry's
-   * `entry.builders: Map<roleId, ptySessionId>`. `null` if the worktree
-   * name doesn't match any known protocol pattern (soft-mode builders
-   * with arbitrary names).
-   */
-  roleId: string | null;
-  protocol: string;
-  planPhases: PlanPhase[];
-  progress: number;
-  /** Human-readable label for the gate the builder is blocked on (e.g. "plan review"). */
-  blocked: string | null;
-  /**
-   * Canonical gate name (e.g. "plan-approval") for the gate the builder is
-   * blocked on. Use this when calling `porch approve` — `blocked` is a
-   * display label and won't match porch's gate keys.
-   */
-  blockedGate: string | null;
-  blockedSince: string | null;
-  startedAt: string | null;
-  idleMs: number;
-  /**
-   * Wall-clock ISO timestamp of the last DATA frame Tower received from
-   * this builder's shellper (`null` when no live session). The UI uses
-   * it to detect builders silent past a threshold — likely waiting for
-   * non-gate human input. Filled by `handleOverview` after this object
-   * is constructed (the parser leaves it `null`).
-   */
-  lastDataAt: string | null;
-  /**
-   * Name of the architect that spawned this builder (Spec 755 / 823). `null` for
-   * legacy rows from before #755, for builders whose worktree doesn't have a
-   * matching row in `state.db.builders`, or when state.db is unavailable.
-   * Populated by the enrichment block in `getOverview` from
-   * `state.db.builders.spawned_by_architect`. Used by the dashboard to render
-   * an inline attribution tag when the workspace hosts more than one architect.
-   */
-  spawnedByArchitect: string | null;
-  /**
-   * Single `area/*` value for this builder's issue, projected via
-   * `parseArea` (first-alphabetical wins; `'Uncategorized'` when the
-   * builder has no issue or the issue has no `area/*` labels). Populated
-   * by `getOverview` via the issue-cache join after `discoverBuilders`
-   * returns — `discoverBuilders` itself sets it to `'Uncategorized'` since
-   * it has no access to the issue payload. Consumed by the builders-tree
-   * grouping in #818 and the equivalent dashboard view.
-   */
-  area: string;
-  /**
-   * Canonical "PR is waiting on a human reviewer" signal. Gate-authoritative
-   * (#927): true exactly when the builder's `pr` gate is genuinely pending
-   * (`status: pending` + `requested_at`), which porch sets after the PR phase /
-   * CMAP for EVERY bundled PR-producing protocol (BUGFIX, AIR, SPIR, ASPIR,
-   * PIR). See `derivePrReady`. Consumers (dashboard NeedsAttentionList, VSCode
-   * tree) gate on this flag instead of re-deriving from the protocol-specific
-   * gate shape.
-   */
-  prReady: boolean;
-}
-
-export interface PROverview {
-  id: string;
-  title: string;
-  url: string;
-  reviewStatus: string;
-  linkedIssue: string | null;
-  createdAt: string;
-  author?: string;
-}
-
-export interface BacklogItem {
-  id: string;
-  title: string;
-  url: string;
-  type: string;
-  priority: string;
-  /**
-   * Single `area/*` value for this issue, projected via `parseArea`
-   * (first-alphabetical wins; `'Uncategorized'` when the issue has no
-   * `area/*` labels). Consumed by the backlog grouping in #811 and the
-   * equivalent vscode view.
-   */
-  area: string;
-  hasSpec: boolean;
-  hasPlan: boolean;
-  hasReview: boolean;
-  hasBuilder: boolean;
-  createdAt: string;
-  author?: string;
-  assignees?: string[];
-  specPath?: string;
-  planPath?: string;
-  reviewPath?: string;
-}
-
-export interface RecentlyClosedItem {
-  id: string;
-  title: string;
-  url: string;
-  type: string;
-  closedAt: string;
-  prUrl?: string;
-  specPath?: string;
-  planPath?: string;
-  reviewPath?: string;
-}
-
-export interface OverviewData {
-  builders: BuilderOverview[];
-  pendingPRs: PROverview[];
-  backlog: BacklogItem[];
-  recentlyClosed: RecentlyClosedItem[];
-  /** Auto-detected forge login of the current user (via the user-identity concept). */
-  currentUser?: string;
-  errors?: { prs?: string; issues?: string };
-}
 
 // =============================================================================
 // Status YAML parser (lightweight, no library dependency)
@@ -196,6 +54,19 @@ interface ParsedStatus {
    * value and the v3.1.3 fallback derivation.
    */
   prReadyForHuman: boolean | null;
+  /**
+   * Whether the PR tied to the current `pr` gate has already been merged
+   * (Issue #966). Read from the LAST entry of porch's `pr_history` list — the
+   * most-recent PR is the one the current `pr` gate was requested for. The
+   * last-entry semantics handle SPIR/PIR checkpoint workflows where an earlier
+   * PR merged but a later PR is still open and awaiting review.
+   *
+   * `derivePrReady` consults this so a merged-but-gate-still-pending builder
+   * (porch left the gate pending after an out-of-band merge — see #966) no
+   * longer reads as a PR awaiting human review. Defaults to `false` when
+   * `pr_history` is absent or its last entry has no `merged: true`.
+   */
+  merged: boolean;
 }
 
 /**
@@ -215,10 +86,11 @@ export function parseStatusYaml(content: string): ParsedStatus {
     planPhases: [],
     startedAt: '',
     prReadyForHuman: null,
+    merged: false,
   };
 
   const lines = content.split('\n');
-  let section: 'none' | 'gates' | 'plan_phases' = 'none';
+  let section: 'none' | 'gates' | 'plan_phases' | 'pr_history' = 'none';
   let currentGate = '';
   let currentPlanPhase: Partial<PlanPhase> | null = null;
 
@@ -258,6 +130,12 @@ export function parseStatusYaml(content: string): ParsedStatus {
 
     if (/^plan_phases:\s*$/.test(line)) {
       section = 'plan_phases';
+      continue;
+    }
+
+    if (/^pr_history:\s*$/.test(line)) {
+      if (currentPlanPhase) { pushPlanPhase(result, currentPlanPhase); currentPlanPhase = null; }
+      section = 'pr_history';
       continue;
     }
 
@@ -315,6 +193,30 @@ export function parseStatusYaml(content: string): ParsedStatus {
       const itemStatusMatch = line.match(/^\s{4}status:\s*(\S+)/);
       if (itemStatusMatch && currentPlanPhase) {
         currentPlanPhase.status = itemStatusMatch[1];
+        continue;
+      }
+    }
+
+    // pr_history section (#966). Each list item is one PR/stage. We only need the
+    // merged status of the LAST entry (the PR the current `pr` gate was requested
+    // for). On a new list item we reset to its default (`false`); a `merged: true`
+    // line within the entry flips it. The final value therefore reflects the last
+    // entry — so an earlier merged checkpoint PR followed by a later still-open PR
+    // correctly reads as not-merged.
+    if (section === 'pr_history') {
+      const itemStartMatch = line.match(/^\s{2}-\s+(.*)$/);
+      if (itemStartMatch) {
+        result.merged = false;
+        // The dash line carries the entry's first key/value; handle the (unusual)
+        // case where that first key is `merged` itself.
+        const firstKv = itemStartMatch[1].match(/^merged:\s*(true|false)\s*$/);
+        if (firstKv) result.merged = firstKv[1] === 'true';
+        continue;
+      }
+
+      const mergedMatch = line.match(/^\s{4}merged:\s*(true|false)\s*$/);
+      if (mergedMatch) {
+        result.merged = mergedMatch[1] === 'true';
         continue;
       }
     }
@@ -504,9 +406,18 @@ export function detectBlockedSince(parsed: ParsedStatus): string | null {
  * rollback hazard from #919) nor the old `bugfix && phase === 'verified'`
  * fallback (a crutch for a gateless BUGFIX variant — gateless PR-producing
  * protocols do not surface PR rows, by design).
+ *
+ * The `!parsed.merged` conjunct (#966) handles the case where porch left the
+ * `pr` gate `pending` after the PR already merged (an out-of-band GitHub merge
+ * plus a resume can scramble the ordering). A merged PR lives in
+ * `recentlyClosed`, never `pendingPRs`, so a stale `prReady: true` would
+ * suppress the builder's row in NeedsAttentionList without ever emitting a PR
+ * row — making the builder vanish. Once merged, it is no longer "a PR awaiting
+ * human review": derivePrReady returns false, and the still-pending `pr` gate
+ * surfaces the builder via the gate-row path instead.
  */
 export function derivePrReady(parsed: ParsedStatus): boolean {
-  return parsed.gates['pr'] === 'pending' && !!parsed.gateRequestedAt['pr'];
+  return parsed.gates['pr'] === 'pending' && !!parsed.gateRequestedAt['pr'] && !parsed.merged;
 }
 
 /**
@@ -640,11 +551,11 @@ export function extractProjectIdFromWorktreeName(dirName: string): string | null
 /**
  * Discover builders by scanning .builders/ directory and reading status.yaml.
  */
-export function discoverBuilders(workspaceRoot: string): BuilderOverview[] {
+export function discoverBuilders(workspaceRoot: string): OverviewBuilder[] {
   const buildersDir = path.join(workspaceRoot, '.builders');
   if (!fs.existsSync(buildersDir)) return [];
 
-  const builders: BuilderOverview[] = [];
+  const builders: OverviewBuilder[] = [];
 
   let entries: fs.Dirent[];
   try {
@@ -820,7 +731,7 @@ export function deriveBacklog(
   workspaceRoot: string,
   activeBuilderIssues: Set<string>,
   prLinkedIssues: Set<string>,
-): BacklogItem[] {
+): OverviewBacklogItem[] {
   const specFiles = scanArtifactDir(path.join(workspaceRoot, 'codev', 'specs'));
   const planFiles = scanArtifactDir(path.join(workspaceRoot, 'codev', 'plans'));
   const reviewFiles = scanArtifactDir(path.join(workspaceRoot, 'codev', 'reviews'));
@@ -833,7 +744,7 @@ export function deriveBacklog(
       const specFile = specFiles.get(id);
       const planFile = planFiles.get(id);
       const reviewFile = reviewFiles.get(id);
-      const item: BacklogItem = {
+      const item: OverviewBacklogItem = {
         id,
         title: issue.title,
         url: issue.url,
@@ -934,7 +845,7 @@ export class OverviewCache {
     ]);
 
     // 3. Process PRs
-    let pendingPRs: PROverview[] = [];
+    let pendingPRs: OverviewPR[] = [];
     if (prs === null) {
       errors.prs = 'GitHub CLI unavailable — could not fetch PRs';
     } else {
@@ -956,7 +867,7 @@ export class OverviewCache {
     );
 
     // 4. Process issues and derive backlog
-    let backlog: BacklogItem[] = [];
+    let backlog: OverviewBacklogItem[] = [];
     if (issues === null) {
       errors.issues = 'GitHub CLI unavailable — could not fetch issues';
     } else {
@@ -978,7 +889,7 @@ export class OverviewCache {
     }
 
     // 5. Process recently closed issues — enrich with artifact paths and PR URLs
-    let recentlyClosed: RecentlyClosedItem[] = [];
+    let recentlyClosed: OverviewRecentlyClosed[] = [];
     if (closed !== null) {
       // Build issue→prUrl map from merged PRs
       const issueToPrUrl = new Map<string, string>();
@@ -1002,7 +913,7 @@ export class OverviewCache {
         const specFile = specFiles.get(id);
         const planFile = planFiles.get(id);
         const reviewFile = reviewFiles.get(id);
-        const item: RecentlyClosedItem = {
+        const item: OverviewRecentlyClosed = {
           id,
           title: issue.title,
           url: issue.url,

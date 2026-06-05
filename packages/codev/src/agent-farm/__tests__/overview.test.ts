@@ -348,6 +348,102 @@ describe('overview', () => {
       const result = parseStatusYaml(yaml);
       expect(result.gateApprovedAt).toEqual({});
     });
+
+    it('defaults merged to false when pr_history is absent (#966)', () => {
+      const result = parseStatusYaml("id: '0100'\nphase: review");
+      expect(result.merged).toBe(false);
+    });
+
+    it('parses merged: true from the pr_history entry (#966)', () => {
+      const yaml = [
+        "id: '2019'",
+        'protocol: bugfix',
+        'phase: review',
+        'gates:',
+        '  pr:',
+        '    status: pending',
+        "    requested_at: '2026-06-02T15:14:59.000Z'",
+        'pr_history:',
+        '  - phase: review',
+        '    pr_number: 2030',
+        '    branch: builder/spir-2019',
+        "    created_at: '2026-06-02T15:10:00.000Z'",
+        '    merged: true',
+        "    merged_at: '2026-06-02T15:14:34.000Z'",
+        'pr_ready_for_human: true',
+      ].join('\n');
+
+      const result = parseStatusYaml(yaml);
+      expect(result.merged).toBe(true);
+      // sanity: the surrounding fields still parse correctly around the new section
+      expect(result.gates['pr']).toBe('pending');
+      expect(result.gateRequestedAt['pr']).toBe('2026-06-02T15:14:59.000Z');
+    });
+
+    it('parses merged: false (open PR) in pr_history (#966)', () => {
+      const yaml = [
+        "id: '0100'",
+        'phase: review',
+        'pr_history:',
+        '  - phase: review',
+        '    pr_number: 50',
+        '    branch: builder/bugfix-100',
+        "    created_at: '2026-06-02T15:10:00.000Z'",
+        '    merged: false',
+      ].join('\n');
+
+      const result = parseStatusYaml(yaml);
+      expect(result.merged).toBe(false);
+    });
+
+    it('reflects the LAST pr_history entry — earlier merged PR + later open PR (#966)', () => {
+      // SPIR/PIR checkpoint workflow: an earlier checkpoint PR merged, but a later
+      // PR is still open and awaiting review. The current pr gate is for the LATEST
+      // PR (not merged), so the builder is genuinely PR-ready.
+      const yaml = [
+        "id: '0100'",
+        'protocol: spir',
+        'phase: review',
+        'pr_history:',
+        '  - phase: implement',
+        '    pr_number: 40',
+        '    branch: builder/spir-100',
+        "    created_at: '2026-06-01T00:00:00.000Z'",
+        '    merged: true',
+        "    merged_at: '2026-06-01T01:00:00.000Z'",
+        '  - phase: review',
+        '    pr_number: 41',
+        '    branch: builder/spir-100',
+        "    created_at: '2026-06-02T00:00:00.000Z'",
+        '    merged: false',
+      ].join('\n');
+
+      const result = parseStatusYaml(yaml);
+      expect(result.merged).toBe(false);
+    });
+
+    it('reflects the LAST pr_history entry when the later entry has no merged key (#966)', () => {
+      // The later (open) PR has no `merged` key at all — must still read as not-merged.
+      const yaml = [
+        "id: '0100'",
+        'protocol: spir',
+        'phase: review',
+        'pr_history:',
+        '  - phase: implement',
+        '    pr_number: 40',
+        '    branch: builder/spir-100',
+        "    created_at: '2026-06-01T00:00:00.000Z'",
+        '    merged: true',
+        "    merged_at: '2026-06-01T01:00:00.000Z'",
+        '  - phase: review',
+        '    pr_number: 41',
+        '    branch: builder/spir-100',
+        "    created_at: '2026-06-02T00:00:00.000Z'",
+      ].join('\n');
+
+      const result = parseStatusYaml(yaml);
+      expect(result.merged).toBe(false);
+    });
   });
 
   // ==========================================================================
@@ -730,6 +826,7 @@ describe('overview', () => {
         planPhases: [],
         startedAt: '2026-05-26T00:00:00.000Z',
         prReadyForHuman: null,
+        merged: false,
         ...overrides,
       };
     }
@@ -763,6 +860,28 @@ describe('overview', () => {
       }))).toBe(false);
     });
 
+    it('returns false when the PR has merged but the pr gate is still pending (#966)', () => {
+      // Repro: porch left the `pr` gate pending after an out-of-band merge. The
+      // merged PR is in recentlyClosed (never pendingPRs), so a stale prReady:true
+      // would suppress the builder row without emitting a PR row → vanishes.
+      expect(derivePrReady(makeParsed({
+        protocol: 'bugfix',
+        phase: 'review',
+        gates: { pr: 'pending' },
+        gateRequestedAt: { pr: '2026-06-02T15:14:59Z' },
+        merged: true,
+      }))).toBe(false);
+    });
+
+    it('still returns true when the pr gate is pending, requested, and NOT merged (#966)', () => {
+      // The companion to the merged case: an open PR genuinely awaiting review.
+      expect(derivePrReady(makeParsed({
+        gates: { pr: 'pending' },
+        gateRequestedAt: { pr: '2026-05-26T12:00:00Z' },
+        merged: false,
+      }))).toBe(true);
+    });
+
     it('reads the pr gate directly and ignores pr_ready_for_human (#927)', () => {
       // Field true but gate not pending → not ready (kills the sticky-field hazard #919).
       expect(derivePrReady(makeParsed({
@@ -790,6 +909,39 @@ describe('overview', () => {
 
     it('returns false when no pr-gate signal is present', () => {
       expect(derivePrReady(makeParsed({ protocol: 'spir', phase: 'implement' }))).toBe(false);
+    });
+
+    it('repro #966: merged-but-gate-pending builder surfaces via the gate row, not as PR-ready', () => {
+      // Full chain on the real #966 repro shape: porch recorded
+      // merged: true but left the pr gate pending. The builder must NOT
+      // read as PR-ready (else NeedsAttentionList suppresses its row while no PR
+      // row exists — it vanishes). It must instead surface as a blocked "PR review"
+      // gate row, since the pr gate is genuinely still pending. This is why fixing
+      // derivePrReady alone is sufficient (no NeedsAttentionList change needed).
+      const yaml = [
+        "id: '2019'",
+        'protocol: bugfix',
+        'phase: review',
+        'gates:',
+        '  pr:',
+        '    status: pending',
+        "    requested_at: '2026-06-02T15:14:59.000Z'",
+        'pr_history:',
+        '  - phase: review',
+        '    pr_number: 2030',
+        '    branch: builder/spir-2019',
+        "    created_at: '2026-06-02T15:10:00.000Z'",
+        '    merged: true',
+        "    merged_at: '2026-06-02T15:14:34.000Z'",
+        'pr_ready_for_human: true',
+      ].join('\n');
+
+      const parsed = parseStatusYaml(yaml);
+      // No longer suppressed as a (now-merged) PR-ready builder...
+      expect(derivePrReady(parsed)).toBe(false);
+      // ...and surfaces via the gate-row path instead (pr gate still pending).
+      expect(detectBlocked(parsed)).toBe('PR review');
+      expect(detectBlockedSince(parsed)).toBe('2026-06-02T15:14:59.000Z');
     });
   });
 

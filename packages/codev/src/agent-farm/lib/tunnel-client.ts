@@ -17,6 +17,7 @@ import https from 'node:https';
 import { Duplex } from 'node:stream';
 import { URL } from 'node:url';
 import WebSocket, { createWebSocketStream } from 'ws';
+import { backoffDelayMs } from '@cluesmith/codev-core/reconnect-policy';
 
 export interface TunnelClientOptions {
   serverUrl: string;      // codevos.ai URL (e.g. "https://codevos.ai")
@@ -65,12 +66,19 @@ export const PONG_TIMEOUT_MS = 10_000;
  *
  * Formula: min(1000 * 2^attempt + random(0, 1000), 60000)
  * After 10 consecutive failures: 300000ms (5 min)
+ *
+ * Thin wrapper over the shared backoff curve (#961). The tunnel keeps its own
+ * tuning — 60s cap, 1s jitter, and a 5-minute floor after 10 failures — and its
+ * host-side circuit breaker (auth_failed / rate-limit handling stays below).
  */
 export function calculateBackoff(attempt: number, randomFn: () => number = Math.random): number {
-  if (attempt >= 10) return 300_000;
-  const base = 1000 * Math.pow(2, attempt);
-  const jitter = Math.floor(randomFn() * 1000);
-  return Math.min(base + jitter, 60_000);
+  return backoffDelayMs(attempt, {
+    baseMs: 1000,
+    capMs: 60_000,
+    jitterMs: 1000,
+    floor: { afterAttempts: 10, delayMs: 300_000 },
+    random: randomFn,
+  });
 }
 
 /**
