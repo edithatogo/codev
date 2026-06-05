@@ -396,8 +396,20 @@ export class TerminalManager {
     const disposable = vscode.window.onDidCloseTerminal((t) => {
       if (t !== terminal) { return; }
       pty.close();
-      if (this.terminals.get(mapKey)?.terminal === terminal) {
+      const wasTracked = this.terminals.get(mapKey)?.terminal === terminal;
+      if (wasTracked) {
         this.terminals.delete(mapKey);
+      }
+      // A dev terminal closed via this generic path (tab ✕, or the dev process
+      // exiting) must refresh the dev surfaces (#921) too — the explicit
+      // closeDevTerminal/closeBuilderTerminal paths fire the event, but a manual
+      // close reaches only here, which previously just unmapped and left the
+      // chip / tab / `codev.devServerRunning` stranded as "running". Guarded by
+      // `wasTracked` so the explicit-close path (which deletes first, then
+      // dispose()s the terminal) doesn't double-fire.
+      if (wasTracked && mapKey.startsWith('dev-')) {
+        this.devStartedAt.delete(mapKey.slice('dev-'.length));
+        this._onDidChangeDevTerminals.fire();
       }
       disposable.dispose();
     });
