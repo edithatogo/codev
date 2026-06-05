@@ -32,3 +32,10 @@ Edited `.github/workflows/test.yml` `unit` job only:
 Verified locally (reproducing the CI steps): core+types build, dashboard 317 passed/1 skipped exit 0, vscode 284 passed exit 0. YAML validated. No source/test changes.
 
 Committed + pushed. Awaiting dev-approval gate.
+
+## Review phase (2026-06-05)
+
+dev-approval approved (human ran a full `act` containerized run of the unit job + reviewed). Wrote review file.
+No arch changes (CI-config only). One lesson recorded in review (node-env vitest needs codev-types dist built;
+Vite resolves from src) for next MAINTAIN run to fold into lessons-learned.md.
+Opening PR; porch verify block runs single-pass 3-way consult next.
