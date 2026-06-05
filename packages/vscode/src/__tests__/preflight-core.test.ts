@@ -9,6 +9,7 @@ import {
   parseSemver,
   compareSemver,
   parseCliVersion,
+  preflightFeedbackMessage,
   resolveCodevPath,
   decidePreflight,
 } from '../preflight/preflight-core.js';
@@ -96,5 +97,23 @@ describe('decidePreflight', () => {
   });
   it('is outdated when the CLI is older than the extension', () => {
     expect(decidePreflight({ cliFound: true, cliVersion: '3.1.4', extVersion })).toBe('outdated');
+  });
+});
+
+describe('preflightFeedbackMessage', () => {
+  it('names the outdated state for an outdated CLI', () => {
+    const msg = preflightFeedbackMessage('outdated');
+    expect(msg).toContain('outdated');
+    expect(msg).not.toContain('not installed');
+  });
+  it('names the not-installed state for a missing CLI', () => {
+    const msg = preflightFeedbackMessage('missing');
+    expect(msg).toContain('not installed');
+    expect(msg).not.toContain('outdated');
+  });
+  it('points at the recheck recovery command in every case', () => {
+    for (const status of ['missing', 'outdated'] as const) {
+      expect(preflightFeedbackMessage(status)).toContain('Codev: Recheck CLI');
+    }
   });
 });
