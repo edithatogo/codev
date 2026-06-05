@@ -54,3 +54,19 @@ Verified on origin/main:
 Updated plan: removed the "HELD" framing → status now "unblocked, ready to implement"; folded in the panelContainerEmpty integration contract (extension.ts must flip it false; added a contributes test + manual placeholder check); dropped em dashes per new writing guidance.
 
 Gate state: still `plan-approval` gate_pending. I cannot self-approve (strict mode). Plan is accurate and ready; waiting on the human to approve the gate. Implementation will merge origin/main first to get codevPanel, then proceed.
+
+## Implement phase complete (plan-approval approved, #812 merged)
+
+Implemented both surfaces on top of #812's codevPanel:
+- `views/dev-server.ts` — DevServerTreeProvider (status header: Target / Running for <uptime> / Port; placeholder + epitaph states; 1s uptime ticker; best-effort port via Tower worktree config).
+- `views/dev-server-format.ts` + tests — pure formatUptime + extractDevPort.
+- `commands/dev-server-actions.ts` + dev-shared helpers (restartDevForTarget, listSwitchTargets, resolveDevTargetById) — Stop/Restart/Switch Target/Reveal.
+- `terminal-manager.ts` — builderId→startedAt map + getDevStartedAt for uptime.
+- `extension.ts` — register codev.devServer view; status-bar chip (Left, prio 99) lifecycle on onDidChangeDevTerminals; codev.devServerRunning context key; flip codev.panelContainerEmpty=false.
+- `package.json` — codev.devServer view in codevPanel; 4 command decls; 4 view/title menus; commandPalette gating.
+- Tests: new contributes-dev-server.test.ts; updated #812's contributes-panel.test.ts for the now-false key + 2nd view.
+
+### Deviation worth flagging at dev-approval
+- Chip "prominent" tint: VSCode `StatusBarItem.backgroundColor` ONLY honors error/warning backgrounds (verified in @types/vscode). So `prominentBackground` as a *background* is silently ignored. Implemented the issue's "prominent, not alarming" intent via `color = statusBarItem.prominentForeground` (the icon/text tint) instead. Visually verify at dev-approval; if a stronger cue is wanted, warningBackground is the only API-honored background (issue called it too alarming).
+
+Build: check-types ✓ lint ✓ esbuild ✓. Unit: 310 pass (26 suites). Next: push, porch done → dev-approval gate.
