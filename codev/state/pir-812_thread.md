@@ -29,3 +29,13 @@ Committed 23cdfef9, pushed. Awaiting dev-approval gate.
 ## dev-approval feedback: first-run reveal (2026-06-05)
 
 Reviewer noted the panel tab lands last and hides in the `...` overflow. VS Code exposes no order/position field for viewsContainers and no reposition API, so position can't be set directly. User chose: auto-reveal once on first install. Implemented in extension.ts — globalState-guarded `workbench.view.extension.codevPanel` call (key `codev.panelRevealedOnce`), fires once per profile. This intentionally reverses the issue's "don't auto-open" criterion #2; flag in PR/review. Added source-grep test for the guard. Commit f7628e50.
+
+## Review phase (2026-06-05)
+
+Wrote `codev/reviews/812-vscode-introduce-a-codev-panel.md` (Summary/Files/Commits/Test Results/Arch/Lessons/Things-to-look-at/How-to-test). Updated arch.md (panel container as second view-container location) and lessons-learned.md ([From 812] no panel-tab position control + first-run-reveal workaround). Committed 651063fa.
+
+PR #990 opened (Fixes #812), recorded with porch. Running single-pass 3-way consult via `porch done`. Will notify architect with verdicts, then wait at `pr` gate.
+
+## pr gate (2026-06-05)
+
+3-way consult complete (single advisory pass). Verdicts: gemini=APPROVE, codex=APPROVE, claude=APPROVE — all HIGH, no key issues. (Codex consult died silently on first run producing no file; re-ran cleanly, 62.9s.) Claude's lone note: context key set after registration vs plan's "before" — no observable effect, not a bug. Architect notified. PR #990 at `pr` gate; waiting for human merge approval. No code changes needed.
