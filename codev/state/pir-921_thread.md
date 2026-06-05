@@ -87,3 +87,12 @@ Build/lint/types ✓, 311 unit tests ✓. Gate still dev-approval (no porch done
 - PR #996 opened (body = review file, Fixes #921). Recorded with porch.
 - porch structural checks ✓ (pr_exists, review_has_arch_updates, review_has_lessons_updates).
 - 3-way consultation (gemini/codex/claude, type=impl) running in background — single advisory pass (max_iterations:1). Next: read verdicts, handle any REQUEST_CHANGES (fix+regression test or rebut; escalate either way), notify architect, wait at pr gate.
+
+## Consultation results (single pass) + fixes
+
+Verdicts: gemini=REQUEST_CHANGES, codex=REQUEST_CHANGES, claude=APPROVE.
+- FIXED (real bug, codex blocker): manual dev-terminal close left chip/tab/context stale — generic onDidCloseTerminal now clears devStartedAt + fires onDidChangeDevTerminals for dev terminals (guarded by wasTracked vs double-fire). Regression guard in terminal-manager.test.ts.
+- FIXED (plan gap, all 3): tab badge — switched codev.devServer to createTreeView, set devServerView.badge while running.
+- FIXED (plan gap, codex): target name — OverviewBuilder.id can be numeric (status.yaml id) → run-worktree-dev now keys on worktree basename; added formatTargetName helper (strips builder- prefix) + tests, applied in chip + tab.
+- REBUTTED (codex): reveal→Show/Hide toggle was the human's explicit dev-approval directive; plan predates it (Claude agreed it's a legit deviation).
+Build/lint/types ✓, 315 unit tests ✓ (+4). Dispositions recorded in review "3-Way Consultation" section. Next: porch next (record verdicts, fire pr gate), notify architect leading with REQUEST_CHANGES+dispositions, wait at pr gate.
