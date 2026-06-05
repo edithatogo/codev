@@ -42,3 +42,10 @@ dev-approval approved. Wrote `codev/reviews/989-vscode-guarded-command-feedbac.m
 Things to Look At / How to Test Locally). No arch.md or lessons-learned.md changes needed.
 Opening PR with the review as body (Fixes #989), recording with porch, then porch runs the
 single-pass 3-way consult. Will lead architect notification with any REQUEST_CHANGES.
+
+3-way consult done: Gemini APPROVE, Claude APPROVE, Codex REQUEST_CHANGES. Codex's two
+findings were both review-file accuracy (not code): (1) wrong package filter
+`@cluesmith/codev-vscode` — package is `codev-vscode`; (2) Files Changed omitted codev/
+artifacts. Both correct, both fixed in the review file. No code change → no regression test.
+Documented in review "Things to Look At" and escalating to architect leading with the
+REQUEST_CHANGES. PR #995. Advancing to pr gate.

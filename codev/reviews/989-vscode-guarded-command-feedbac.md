@@ -16,10 +16,19 @@ the same channel.
 
 ## Files Changed
 
+Code (the substance of the fix):
+
 - `packages/vscode/src/preflight/preflight-core.ts` (+13 / -0) — new pure `preflightFeedbackMessage(status)`
 - `packages/vscode/src/preflight/preflight.ts` (+36 / -21) — `showSetupRequiredToast` → `showPreflightFeedback`; flag rename; ephemeral branch
 - `packages/vscode/src/extension.ts` (+8 / -4) — import + guard call renamed; updated the stale "single toast" comment
 - `packages/vscode/src/__tests__/preflight-core.test.ts` (+19 / -0) — 3 cases for the new helper
+
+PIR protocol artifacts (carried on the branch, ship with the merge):
+
+- `codev/plans/989-vscode-guarded-command-feedbac.md` (+165 / -0) — the approved plan
+- `codev/reviews/989-vscode-guarded-command-feedbac.md` — this retrospective (also the PR body)
+- `codev/state/pir-989_thread.md` — builder narrative thread
+- `codev/projects/989-vscode-guarded-command-feedbac/status.yaml` — porch state (auto-managed)
 
 ## Commits
 
@@ -31,10 +40,11 @@ the same channel.
 
 - `npm run build`: ✓ pass (porch check, 6.8s)
 - `npm test`: ✓ pass (porch check, 20.7s)
-- `pnpm --filter @cluesmith/codev-vscode test:unit`: ✓ 287 pass (+3 new) — the suite that
-  actually covers this diff (the root `build`/`test` filter `@cluesmith/codev-core` +
-  `@cluesmith/codev`, not the vscode package)
-- `pnpm --filter @cluesmith/codev-vscode compile`: ✓ check-types + lint + esbuild
+- `pnpm test:unit` run from `packages/vscode/` (equivalently `pnpm --filter codev-vscode
+  test:unit` — the package is named `codev-vscode`, unscoped): ✓ 287 pass (+3 new). This is
+  the suite that actually covers this diff; the root `build`/`test` filter
+  `@cluesmith/codev-core` + `@cluesmith/codev`, **not** the vscode package
+- `pnpm compile` run from `packages/vscode/`: ✓ check-types + lint + esbuild
 - Manual verification (human, at the `dev-approval` gate): first click → modal with
   `Run Setup`; subsequent clicks → ephemeral status-bar message; recheck→ok resets the
   modal-first pattern; happy path runs with no feedback noise
@@ -59,6 +69,21 @@ here) and the human dev-approval run are the real verification. `codev/resources
 needs no update.
 
 ## Things to Look At During PR Review
+
+- **3-way consult dispositions (single advisory pass, `max_iterations: 1`):** Gemini
+  APPROVE, Claude APPROVE, **Codex REQUEST_CHANGES**. Codex's two findings were both about
+  *this review file's accuracy*, not the code — and both were correct:
+  1. The Test Results referenced `pnpm --filter @cluesmith/codev-vscode ...`, but the package
+     is named `codev-vscode` (unscoped), so that filter matches nothing. **Fixed** — the
+     section now names the actual command run (`pnpm test:unit` from `packages/vscode/`,
+     equivalently `--filter codev-vscode`). The 287-pass result was always real; only the
+     documented command string was wrong.
+  2. The Files Changed section omitted the `codev/` PIR artifacts (plan, status.yaml,
+     thread). **Fixed** — they're now listed under a separate "protocol artifacts" subsection.
+  No code change resulted, so no regression test applies (the findings were documentation
+  accuracy, not a code defect). Both fixes are in the review-revision commit on this branch.
+  Per PIR's single-pass design this revision is **not** independently re-reviewed — flagging
+  it here for the human at the `pr` gate.
 
 - **The `cachedStatus as PreflightStatus` cast** in the ephemeral branch
   (`preflight.ts`). It's safe because `guard` only calls the helper when `isCliReady()` is
