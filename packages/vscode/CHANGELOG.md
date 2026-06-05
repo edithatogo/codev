@@ -6,6 +6,10 @@
 
 - **Codev tab in the bottom panel.** A new `Codev` tab joins the bottom panel (alongside Problems / Output / Terminal) as a scaffold for upcoming view migrations (Recently Closed, Team, Status). Opens once on first activation for discoverability, then stays out of the way. The activitybar Codev sidebar is unchanged; this is purely additive. Currently shows a single placeholder row that hides itself automatically once real panel-side views start landing.
 
+### Bug fixes
+
+- **Guarded commands always give feedback now; the silent-after-first-click behavior is gone.** Clicking a CLI-dependent command (Spawn Builder, Approve Gate, Send Message, and 12 others) while the Codev CLI is missing or outdated used to produce a modal toast on the first click of the session, then go completely silent on every subsequent click. The first-click modal stays the same (the `Run Setup` action still works); subsequent clicks now show a brief auto-dismissing status-bar message naming the state and pointing at `Codev: Recheck CLI` as the recovery path. Once a recheck confirms `ok`, the next breakage restarts at the modal again.
+
 ## [3.1.7] - 2026-06-03
 
 ### What's new
