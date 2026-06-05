@@ -99,8 +99,22 @@ describe('#991 — successor-session recovery wiring', () => {
   it('recoverSuccessor re-points the existing tab in place (no tab churn) only on a NEW id', () => {
     // In-place reconnect onto the successor url; the id-unchanged guard avoids
     // a needless reconnect when state still carries the same id.
-    expect(TM_SRC).toMatch(/successorId === entry\.id.*return false/s);
+    expect(TM_SRC).toMatch(/successorId && successorId !== entry\.id/);
     expect(TM_SRC).toMatch(/entry\.pty\.reconnect\(wsUrl\)/);
+  });
+
+  it('recoverSuccessor polls a bounded number of times to ride out the reconcile race', () => {
+    // Tower accepts connections (and 404s the dead id) before startup reconcile
+    // re-registers the successor; a one-shot lookup would race that window and
+    // leave the terminal dead. Bounded poll closes the race.
+    expect(TM_SRC).toMatch(/for \(let attempt = 0; attempt < RECOVER_POLL_ATTEMPTS; attempt\+\+\)/);
+    expect(TM_SRC).toMatch(/await delay\(RECOVER_POLL_INTERVAL_MS\)/);
+  });
+
+  it('recoverSuccessor bails if the terminal was closed/replaced mid-poll', () => {
+    // The map entry is a fresh object per (re)open; an identity mismatch means
+    // this recovery is stale (manual close, or another recovery won the race).
+    expect(TM_SRC).toMatch(/this\.terminals\.get\(mapKey\) !== entry/);
   });
 
   it('reconnectByTerminal re-resolves the successor first, falling back to a same-url retry', () => {

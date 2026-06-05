@@ -10,6 +10,29 @@ import type { TerminalType } from '@cluesmith/codev-core/tower-client';
 
 const MAX_TERMINALS = 10;
 
+/**
+ * Successor-recovery poll budget (#991). After a Tower restart the server
+ * accepts connections — and 404s the dead terminal id — *before* startup
+ * `reconcileTerminalSessions()` has re-registered the successor session
+ * (tower-server.ts: `listen()` then a later `await reconcileTerminalSessions()`).
+ * A one-shot lookup races that window and leaves the terminal dead, so we re-poll
+ * Tower state until the successor appears.
+ *
+ * The figures aren't VSCode-specific — they mirror what the *dashboard* already
+ * does, so both surfaces behave identically against the same reconcile race:
+ *   - interval = 1s = the dashboard's `POLL_INTERVAL_MS` (its workspace-state
+ *     re-poll cadence). Same rhythm at which the system already re-checks Tower.
+ *   - total ≈ 4s = the dashboard's `PERMANENT_RECOVERY_MS` "declare the session
+ *     gone" window. Comfortably outlasts a normal reconcile, then we fall back
+ *     to the give-up notice + manual reconnect link for a genuinely-dead session.
+ * (Kept as local constants rather than imported — the dashboard values live in a
+ * separate package and aren't a shared contract.)
+ */
+const RECOVER_POLL_ATTEMPTS = 5;
+const RECOVER_POLL_INTERVAL_MS = 1000;
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 interface ManagedTerminal {
   terminal: vscode.Terminal;
   pty: CodevPseudoterminal;
@@ -457,9 +480,13 @@ export class TerminalManager {
    * the terminal's stable identity to the current `terminalId`, and reconnect
    * the existing tab's adapter at the new url (no tab churn, no replay loss).
    *
+   * Polls a bounded number of times ({@link RECOVER_ATTEMPTS}) to ride out the
+   * restart reconcile race — the successor may not be registered the instant the
+   * dead id is rejected.
+   *
    * Returns `true` when a *different* successor id was found and reconnected;
    * `false` for non-persistent kinds (shell/dev), an unreachable Tower, or when
-   * the id is unchanged/gone — letting callers fall back.
+   * no successor appears within the poll budget — letting callers fall back.
    */
   private async recoverSuccessor(mapKey: string): Promise<boolean> {
     const entry = this.terminals.get(mapKey);
@@ -471,25 +498,35 @@ export class TerminalManager {
     const workspacePath = this.connectionManager.getWorkspacePath();
     if (!client || !workspacePath) { return false; }
 
-    let successorId: string | null = null;
-    try {
-      const state = await client.getWorkspaceState(workspacePath);
-      if (!state) { return false; }
-      successorId = resolveSuccessorTerminalId(state, ref);
-    } catch (err) {
-      this.log('ERROR', `recoverSuccessor(${mapKey}) failed: ${(err as Error).message}`);
-      return false;
+    for (let attempt = 0; attempt < RECOVER_POLL_ATTEMPTS; attempt++) {
+      let successorId: string | null = null;
+      try {
+        const state = await client.getWorkspaceState(workspacePath);
+        if (state) { successorId = resolveSuccessorTerminalId(state, ref); }
+      } catch (err) {
+        this.log('ERROR', `recoverSuccessor(${mapKey}) failed: ${(err as Error).message}`);
+        return false;
+      }
+
+      // Bail if the terminal was closed or replaced while we were polling — the
+      // map entry is a fresh object on every (re)open, so an identity mismatch
+      // means this recovery is stale.
+      if (this.terminals.get(mapKey) !== entry) { return false; }
+
+      if (successorId && successorId !== entry.id) {
+        const wsUrl = this.buildWsUrl(successorId);
+        if (!wsUrl) { return false; }
+        // Re-point the existing tab's socket at the successor session in place.
+        this.terminals.set(mapKey, { ...entry, id: successorId });
+        entry.pty.reconnect(wsUrl);
+        this.log('INFO', `Recovered ${mapKey} onto successor session ${successorId}`);
+        return true;
+      }
+
+      // No successor yet — wait for reconcile to register it, then re-poll.
+      if (attempt < RECOVER_POLL_ATTEMPTS - 1) { await delay(RECOVER_POLL_INTERVAL_MS); }
     }
-    if (!successorId || successorId === entry.id) { return false; }
-
-    const wsUrl = this.buildWsUrl(successorId);
-    if (!wsUrl) { return false; }
-
-    // Re-point the existing tab's socket at the successor session in place.
-    this.terminals.set(mapKey, { ...entry, id: successorId });
-    entry.pty.reconnect(wsUrl);
-    this.log('INFO', `Recovered ${mapKey} onto successor session ${successorId}`);
-    return true;
+    return false;
   }
 
   private buildWsUrl(terminalId: string): string | null {
