@@ -46,7 +46,7 @@ import { BuilderFileDecorationProvider } from './views/builder-file-decoration.j
 import { BacklogGroupTreeItem, BacklogTreeItem } from './views/backlog-tree-item.js';
 import { persistAreaGroupExpansion } from './views/area-group-expansion.js';
 import { buildArchitectReferenceInjection } from './architect-reference-injection.js';
-import { runPreflight, recheckCli, isCliReady, showSetupRequiredToast } from './preflight/preflight.js';
+import { runPreflight, recheckCli, isCliReady, showPreflightFeedback } from './preflight/preflight.js';
 import { detectWorkspacePath } from './workspace-detector.js';
 import { loadWorktreeConfig, hasRunnableDevCommand } from './load-worktree-config.js';
 
@@ -513,9 +513,11 @@ export async function activate(context: vscode.ExtensionContext) {
 	// the guard decision, so there's no separate list or per-call flag to keep
 	// in sync:
 	//   - `regCli`  — the command needs the codev CLI / Tower. When the CLI is
-	//                 missing or outdated it no-ops with a single "run setup"
-	//                 toast (via `guard`) instead of failing with a misleading
-	//                 "not connected to Tower" error.
+	//                 missing or outdated it no-ops with point-of-action feedback
+	//                 (via `guard` → `showPreflightFeedback`: a modal "run setup"
+	//                 toast on the first click, an ephemeral status-bar message on
+	//                 later clicks) instead of failing with a misleading "not
+	//                 connected to Tower" error.
 	//   - `reg`     — CLI-independent command (recovery paths like reconnect /
 	//                 recheck, config toggles, read-only viewers); registered
 	//                 with no guard.
@@ -525,7 +527,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	const guard = <A extends unknown[], R>(handler: (...args: A) => R) =>
 		(...args: A): R | undefined => {
 			if (isCliReady()) { return handler(...args); }
-			showSetupRequiredToast();
+			showPreflightFeedback();
 			return undefined;
 		};
 	const reg = <A extends unknown[]>(id: string, handler: (...args: A) => unknown) =>
