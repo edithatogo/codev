@@ -766,6 +766,24 @@ describe('consult command', () => {
       expect(args).not.toContain('--dangerously-skip-permissions');
     });
 
+    it('scopes --add-dir to workspace + a dedicated subdir, never the whole OS temp dir', async () => {
+      // Security (#778 CMAP): granting the entire tmpdir() would expose unrelated
+      // /tmp files to the sandboxed reviewer. Grant only the consult sandbox subdir.
+      const { consult, spawn } = await loadAgy();
+      spawn.mockClear();
+
+      await consult({ model: 'gemini', prompt: 'review this' });
+
+      const call = spawn.mock.calls.find(c => c[0] === agyBin);
+      expect(call).toBeDefined();
+      const args = call![1] as string[];
+      const grantedDirs = args.filter((_a, i) => args[i - 1] === '--add-dir');
+      // Never grant the entire OS temp dir.
+      expect(grantedDirs).not.toContain(tmpdir());
+      // Exactly one granted dir is a dedicated, owned consult sandbox subdir under tmp.
+      expect(grantedDirs.some(d => d.startsWith(tmpdir()) && /[/\\]codev-consult-/.test(d))).toBe(true);
+    });
+
     it('routes the `pro` alias through the real execution path to the agy lane', async () => {
       // `pro` → gemini → agy: exercise the actual resolution, not a hardcoded map.
       const { consult, spawn } = await loadAgy();

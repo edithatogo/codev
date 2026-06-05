@@ -711,6 +711,24 @@ function agySkipContent(reason: string): string {
   ].join('\n');
 }
 
+/**
+ * Per-process sandbox temp dir for consult artifacts (the PR diff written by
+ * buildPRQuery, and the large-prompt file written by runAgyConsultation).
+ *
+ * Created once per CLI invocation (each `consult` run is its own process), so the
+ * sandboxed `agy` reviewer can be granted exactly this directory via `--add-dir`
+ * instead of the entire OS temp dir — keeping the grant scoped to the artifacts
+ * this flow creates. `mkdtempSync` yields a private, user-owned dir; callers still
+ * write with mode 0o600 / flag 'wx' to defeat symlink/clobber races.
+ */
+let _consultSandboxDir: string | null = null;
+function consultSandboxDir(): string {
+  if (!_consultSandboxDir) {
+    _consultSandboxDir = fs.mkdtempSync(path.join(tmpdir(), 'codev-consult-'));
+  }
+  return _consultSandboxDir;
+}
+
 function writeConsultOutput(outputPath: string | undefined, content: string): void {
   if (!outputPath || content.length === 0) return;
   const outputDir = path.dirname(outputPath);
@@ -766,14 +784,15 @@ async function runAgyConsultation(
 
   // agy has no system-prompt flag — fold the role into the prompt (hermes precedent).
   const prompt = `${role}\n\n---\n\n${queryText}`;
-  // Grant the sandboxed agent read access to the workspace AND tmp (buildPRQuery
-  // writes the diff to a temp file the reviewer is told to read).
-  const addDirs = [workspaceRoot, tmpdir()];
+  // Grant the sandboxed agent read access to the workspace AND the dedicated consult
+  // sandbox dir (where buildPRQuery writes the diff and, below, a large-prompt file
+  // lands) — NOT the entire OS temp dir, which would over-expose unrelated /tmp files.
+  const addDirs = [workspaceRoot, consultSandboxDir()];
   let tempFile: string | null = null;
   let promptArg = prompt;
   // Large prompts can exceed ARG_MAX (E2BIG) — write to a temp file and point agy at it.
   if (prompt.length > CLI_PROMPT_INLINE_MAX_CHARS) {
-    tempFile = path.join(tmpdir(), `codev-consult-prompt-${Date.now()}.md`);
+    tempFile = path.join(consultSandboxDir(), `codev-consult-prompt-${Date.now()}.md`);
     fs.writeFileSync(tempFile, prompt);
     promptArg = [
       `Read the full consultation prompt from this file: ${tempFile}`,
@@ -1183,9 +1202,10 @@ function buildPRQuery(prId: string): string {
   const diff = fetchPRDiff(prId);
 
   // Private-per-user dir to avoid world-readable /tmp diffs + symlink/clobber
-  // races: mkdtempSync creates a fresh dir owned by us; writeFileSync with
+  // races: consultSandboxDir() is a fresh mkdtempSync dir owned by us (and the
+  // only temp dir granted to the sandboxed agy reviewer); writeFileSync with
   // flag 'wx' refuses to follow a symlink or overwrite an existing file.
-  const diffDir = fs.mkdtempSync(path.join(tmpdir(), 'codev-pr-'));
+  const diffDir = consultSandboxDir();
   const diffPath = path.join(diffDir, `pr-${prId}.diff`);
   fs.writeFileSync(diffPath, diff, { encoding: 'utf-8', mode: 0o600, flag: 'wx' });
 

@@ -31,7 +31,9 @@ progression test.
 
 - [x] **Backend swap to `agy`** — `MODEL_CONFIGS.gemini` dispatches via `runAgyConsultation`.
 - [x] **Single backend, OAuth-only** — no API-key path; no separate Developer API backend.
-- [x] **Agentic file reading** — `--sandbox --add-dir`; proven live (e2e read a planted file).
+- [x] **Agentic file reading (scoped)** — `--sandbox --add-dir <workspace> + a dedicated
+  per-process consult sandbox subdir` (never the whole OS temp dir); proven live (e2e read a
+  planted file).
 - [x] **agy default model, no Pro pin** — no `--model` flag; `pro` alias kept; id stays `gemini`.
 - [x] **Non-blocking COMMENT skip** — missing / unauthed / IDE-stub / timeout → `COMMENT`.
 - [x] **Cost/usage degrade gracefully** — agy emits plain text; usage extraction returns
@@ -132,6 +134,23 @@ progression test.
   that fixed `consult.md`, `codev.md`, `arch.md`, and README blurbs, with out-of-scope
   items (historical artifacts, builder harness, generate-image skill) documented.
 - **Round 3** — gemini **APPROVE**, codex **APPROVE**, claude **APPROVE**. Advanced to review.
+
+### Review Phase — PR #988 CMAP (`--type pr`)
+- **Round 1** — gemini **APPROVE**, claude **APPROVE**, codex **REQUEST_CHANGES** (3,
+  integration-readiness): spec/plan lacked approval frontmatter; branch 310 commits
+  behind `main`; `chore(porch)` commits in history. **Addressed**: added approval
+  frontmatter (documents the human gate approvals); **merged `origin/main`** (conflict-free
+  → 0 behind, rebuilt core, full suite green). **Rebutted**: the porch state-commits are
+  required by repo policy (CLAUDE.md "DO NOT SQUASH MERGE — individual commits document the
+  development process").
+- **Re-consult** — gemini **APPROVE**, claude **APPROVE**, codex **REQUEST_CHANGES** (2 new,
+  both valid): (a) **security** — the agy `--add-dir` granted the entire OS `tmpdir()`;
+  (b) **doc drift** — the `origin/main` merge pulled the #985 "Claude auth" section into
+  `codev/resources/commands/consult.md` but not the skeleton copy. **Addressed**: (a) added
+  `consultSandboxDir()` — a per-process `mkdtemp` subdir holding the PR-diff + large-prompt
+  files; agy is now granted only `workspaceRoot` + that subdir (pinned by a new test);
+  (b) synced the #985 section into the skeleton so both `consult.md` copies are
+  byte-identical again.
 
 ## Architecture Updates
 
