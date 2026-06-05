@@ -33,13 +33,24 @@
     6. Re-cp the template back to UNRELEASED.md to start the next cycle
 -->
 
+## Web terminal stops on dead sessions almost instantly (#971, PR #992)
+
+When Tower restarts or otherwise loses a session, the dashboard's web terminal used to spend the full 6-attempt backoff (~60s) blindly retrying before giving up, because a browser can't read a failed WebSocket upgrade's HTTP status (it only sees close `1006`). v3.1.7's #961 narrowed the retry budget from 50 to 6 attempts but left the underlying mismatch in place. This release closes the gap: the web terminal now matches VSCode's near-instant give-up behavior.
+
+Tower discriminates browser clients from Node clients via the `Origin` header. Browsers (which always send `Origin`) get an accepted WebSocket upgrade followed immediately by a close with the app-range code `4404`. The core reconnect-policy helper recognises `4404` as a permanent failure, and the dashboard's `onclose` handler fast-paths on it. Node clients (which never send `Origin`) keep the existing HTTP `404` upgrade-rejection path that #936's VSCode fast-path relies on, so there is no regression.
+
+One transient retry is still expected when a session is killed mid-connection: the first drop sees the generic `1006` close (transient → one retry), the reconnect attempt hits `4404` → give up. Matches the VSCode sequence. Total dashboard dead-time for a killed session: roughly one backoff interval (1s), down from ~60s.
+
+A follow-up (#991) tracks the next layer: a stale tab on a pre-restart terminal id can't self-recover because persistent sessions return under a new id after a Tower restart. The give-up signal is now correct; the auto-remount-onto-successor-id affordance is deferred.
+
 ## Polish
 
 - **New `Codev` tab in the bottom panel** (#812, PR #990). A second view container joins the existing activitybar Codev sidebar, this time docked alongside Problems / Output / Terminal in the bottom panel area. It opens once on first activation for discoverability, then stays out of the way. Initially shows a single placeholder row signposting the upcoming view migrations (Recently Closed, Team, Status) that will populate the panel in follow-up PRs. The activitybar sidebar is unchanged. Constraint worth noting: VS Code provides no positional control for panel view containers, so a new tab lands last and would otherwise spill into the `…` overflow; the one-time globalState-guarded reveal is the only discoverability lever available.
 
 ## Other fixes (dashboard, porch, infrastructure)
 
-<!-- Non-vscode work that ships in the npm release. Same bullet shape as Polish. -->
+- **Builders with a merged PR but a still-pending `pr` gate no longer vanish from the dashboard's Needs Attention** (#966, PR #980). After a merge, a builder whose porch `pr` gate hadn't yet been approved silently dropped off both the Needs Attention rows and the Work surface entirely. Its PR had moved to recently-closed (so didn't surface via the open-PRs path), while its still-pending gate was incorrectly read as "ready". They now correctly surface via the gate-row path, matching the human-attention model where a merged-but-gate-pending builder is exactly what needs acknowledgement.
+- **`consult -m claude` now bills against the Claude subscription, not the metered Opus API** (#985, PR #986). When both `CLAUDE_CODE_OAUTH_TOKEN` (subscription auth) and `ANTHROPIC_API_KEY` (metered API auth) were set in the environment, consult's Claude subprocess silently picked up the API key, routing all CMAP traffic through the metered API. The consult helper now strips the API-key vars from the subprocess's env copy when an OAuth token is present, so traffic routes via the subscription. CI and key-only environments are unaffected (no OAuth token → API key still used). Reported by an external adopter at roughly $150/day on a heavy dev day before the fix.
 
 ## Breaking changes
 
