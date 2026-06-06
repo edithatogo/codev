@@ -33,11 +33,15 @@ Reframe the fix around the dominant transient case: **let the click heal itself 
 
 ### 1. Primary: bounded silent auto-retry in `openBuilderByRoleOrId` (`terminal-manager.ts:193-209`)
 
-When the lookup misses (`!builder?.terminalId`), re-query `getWorkspaceState` a few times with a short backoff before surfacing anything. Each retry re-triggers Tower's rehydrate + on-the-fly reconnect, which is exactly the self-heal path:
+When the lookup misses (`!builder?.terminalId`), re-query `getWorkspaceState` a few times with a short backoff before surfacing anything. Each retry re-triggers Tower's rehydrate + on-the-fly reconnect, which is exactly the self-heal path.
 
-- ~3 attempts, ~400ms apart (total budget ~1.2s). The first attempt is the existing call (no added latency on the happy path; retries happen only on the miss branch).
+**Reuse the system's shared backoff convention, not a hand-rolled delay.** The codebase consolidated four hand-rolled `Math.min(1000 * 2^attempt, cap)` curves into `packages/core/src/reconnect-policy.ts` (#961) specifically so new call sites don't re-invent it; the two closest analogues — `connection-manager.ts` (Tower/SSE reconnect, via `backoffDelayMs`) and `terminal-adapter.ts` (terminal WebSocket reconnect, via `BackoffController`) — already use it. So this retry will call `backoffDelayMs(attempt, opts)` from `@cluesmith/codev-core/reconnect-policy` with a **local attempt counter** (the bare-function form, matching how the SSE/tunnel sites use it — `BackoffController`'s status-machine + give-up wrapper is for event-driven onClose scheduling we don't need here).
+
+- The module's *defaults* (base 1000ms, cap 30_000ms, 6 attempts → `1s,2s,4s,8s,16s,30s`) are tuned for persistent reconnect loops and are too slow for an interactive click. Use interactive-tuned options instead: `backoffDelayMs(attempt, { baseMs: 150, capMs: 800 })` over ~3–4 attempts → roughly `150ms, 300ms, 600ms` (total budget ~1s). Constants live next to the call site with a comment explaining the interactive tuning vs. the reconnect defaults.
+- The first attempt is the existing call (no added latency on the happy path; retries happen only on the miss branch).
 - On success at any attempt → open the builder terminal normally. **No toast** — the transient case becomes invisible, which is the best UX and directly implements the issue's "self-recovers gracefully on the next overview tick" acceptance bullet.
 - The retry loop only re-fetches and re-resolves; it does not change the happy path (a first-attempt hit returns immediately).
+- `classifyUpgradeError` (the module's third export) is **not** used — it classifies WebSocket close codes; our `/api/state` poll gets a builder list, so "resolved or not after N tries" is the only signal.
 
 ### 2. Secondary: an actionable toast only when retries are exhausted (likely-persistent)
 
@@ -61,7 +65,8 @@ The first draft led with recovery (per the issue's options 1–2). That mis-weig
 
 ## Files to Change
 
-- `packages/vscode/src/terminal-manager.ts:193-209` — in `openBuilderByRoleOrId`, wrap the resolve in a bounded retry (re-fetch `getWorkspaceState`, re-run `resolveAgentName`, ~3 attempts / ~400ms backoff). On exhaustion, call a small private helper for the actionable toast (`Retry` + secondary `Recover Builders`). Keep the `ambiguous` and `not connected` branches as-is. Factor the toast + the sleep into helpers so the method stays readable and unit-testable; reuse the already-fetched `workspacePath`.
+- `packages/vscode/src/terminal-manager.ts:193-209` — in `openBuilderByRoleOrId`, wrap the resolve in a bounded retry (re-fetch `getWorkspaceState`, re-run `resolveAgentName`, ~3–4 attempts with delays from `backoffDelayMs(attempt, { baseMs: 150, capMs: 800 })` and a local counter). On exhaustion, call a small private helper for the actionable toast (`Retry` + secondary `Recover Builders`). Keep the `ambiguous` and `not connected` branches as-is. Factor the toast + the sleep into helpers so the method stays readable and unit-testable; reuse the already-fetched `workspacePath`.
+- `packages/vscode/src/terminal-manager.ts` (imports) — add `import { backoffDelayMs } from '@cluesmith/codev-core/reconnect-policy';` (same import surface `connection-manager.ts` / `terminal-adapter.ts` already use).
 - `packages/vscode/src/__tests__/terminal-manager.test.ts` — extend the suite: (a) **miss-then-hit** → `getWorkspaceState` returns no session on attempt 1 and a session on attempt 2 → builder terminal opens, `showWarningMessage` NOT called; (b) **all-miss** → toast shown with `Retry` + `Recover Builders` labels; (c) selecting **Retry** re-attempts the open; (d) selecting **Recover Builders** → `createTerminal` with `cwd === workspacePath` + `sendText('afx workspace recover')`; (e) happy path (first-attempt session present) → opens immediately, no extra fetches, no warning. Inject a fake/fast sleep so tests don't wait real time.
 
 No `package.json` command contribution needed (buttons handled inline). No types/server changes.

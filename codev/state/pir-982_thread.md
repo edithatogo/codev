@@ -41,3 +41,9 @@ Mechanism confirmed: `/api/state` rehydrates + on-the-fly shellper-reconnects on
 - PRIMARY: bounded silent auto-retry in `openBuilderByRoleOrId` (~3 attempts, ~400ms apart). Re-query `getWorkspaceState` (re-triggers Tower self-heal). On any hit → open, NO toast. Transient case becomes invisible (= the issue's "self-recovers on next tick" AC).
 - SECONDARY (persistent tail only): actionable toast leading with **Retry**; **Recover Builders** demoted to last-resort line (dry-run, dead-shellper case). Recovery is no longer the headline.
 - Happy path untouched (first-attempt hit returns immediately). Option 3/4/5 still deferred.
+
+## Backoff convention check (reviewer asked "same one used across the system?")
+
+No — first draft's "fixed 400ms" was ad-hoc. Canonical convention is `packages/core/src/reconnect-policy.ts` (#961 consolidated 4 hand-rolled `Math.min(1000*2^attempt,cap)` copies). Exports `backoffDelayMs(attempt, opts)` (bare curve, parameterized: baseMs/capMs/maxAttempts/jitterMs/random), `BackoffController` (counter+give-up), `classifyUpgradeError` (WS close codes). Already used by `connection-manager.ts` (SSE reconnect → backoffDelayMs) and `terminal-adapter.ts` (WS reconnect → BackoffController).
+
+Catch: defaults (base 1s, cap 30s, 6 attempts) are for persistent reconnect loops — too slow for an interactive click. Fix: reuse the **bare `backoffDelayMs`** (own a local counter, like the SSE/tunnel sites) with interactive params `{ baseMs: 150, capMs: 800 }` over ~3-4 attempts (~150/300/600ms, ~1s total). Don't use BackoffController (event-driven onClose machinery we don't need) or classifyUpgradeError (WS-only). Plan + Files-to-Change updated to import `@cluesmith/codev-core/reconnect-policy`.
