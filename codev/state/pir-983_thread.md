@@ -24,4 +24,15 @@ Plan written to `codev/plans/983-vscode-tower-detect-installed-.md`. Awaiting `p
 - Added a first-class **Blast Radius** section: 3 packages additive; only contained, compile-caught edits are the 3 `makeCtx()` test helpers (new `RouteContext` fields) + 4 `preflightFeedbackMessage` call sites.
 Scope confirmed: this addresses **only #983**. #982 is a separate bug class (shared UX echo only); #989/#995 already merged (foundation); #791 extended, not modified.
 
+### Implement phase (dev-approval gate pending)
+
+Plan approved. Implemented across 4 packages, all checks green (porch build 5.7s ✓, tests 20.6s ✓; vscode 328 unit tests ✓, codev 96 route tests ✓, both typechecks ✓, vscode lint ✓).
+
+- **types**: `TowerVersionInfo { version, startedAt }` + export.
+- **core**: `TowerClient.getVersion()` returns the raw `{ ok, status, data }` so the preflight can tell 404 (too-old) from status 0 (unreachable).
+- **tower**: `GET /api/version` route + `handleVersion`; `RouteContext` gains `version`/`startedAt`, stamped at boot in `tower-server.ts`. Fixed the 3 `makeCtx()` test helpers; added a route test.
+- **vscode**: `decideTowerStatus` + `towerDivergenceMessage` (pure, in preflight-core, 8 new unit tests); `probeTowerVersion` fired on each `connected` transition in `extension.ts`; dedicated `showTowerDivergenceFeedback` toast (modal-first then ephemeral) with local `Restart Tower` action vs remote-host informational wording; `restartTower` helper in tower-starter; additive `PreflightState` + Status-row tooltip.
+
+**Deviation from plan (reduces blast radius):** kept `preflightFeedbackMessage` and its 4 call sites untouched; added a *separate* `towerDivergenceMessage` pure helper instead of overloading it. Net: the only non-additive edits were the 3 `makeCtx()` helpers (new required RouteContext fields). `views/status.ts` and `extension.ts:603` guard untouched as planned.
+
 **Rebased on main (picked up PIR #991 / PR #999).** Clean rebase, no conflicts. Re-verified every line ref in the plan — all still accurate (RouteContext tower-routes.ts:131, routeCtx tower-server.ts:296, status.ts:76 destructure, preflight.ts:277, extension.ts:603, the 3 makeCtx helpers). #991's net change did **not** touch vscode `connection-manager.ts` or preflight (they pivoted to a core-side terminal-id-preservation fix), so my hook points are intact. **Key new dependency:** #991 changed `afx tower stop` to `lsof -ti :PORT -sTCP:LISTEN` so it only kills the listening Tower, not the extension host's client sockets. This is what makes my `Restart Tower` action safe to fire from inside the extension. Folded that into the plan (section 4 + runtime-survival check).
