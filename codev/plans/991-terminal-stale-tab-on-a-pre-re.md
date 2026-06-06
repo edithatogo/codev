@@ -1,120 +1,53 @@
-# PIR Plan: Terminal self-heals onto the successor session after a Tower restart (dashboard + VSCode)
+# PIR Plan: Terminals survive a Tower restart — core Tower fix
+
+> **Note:** This plan was rewritten at the `dev-approval` gate after live debugging found the actual root cause. The original plan (a client-side "remount onto the successor id" on dashboard + VSCode) is preserved as the rejected alternative below — it could never work because of two Tower-level bugs it was unknowingly working around.
 
 ## Understanding
 
-After a Tower restart, persistent (shellper-backed) terminal sessions — **builders and architects** — are reconnected under a **new** terminal id and the old SQLite row is deleted (`tower-terminals.ts:646`, `:669-672`, `:832`, `:868-872`). A terminal tab still holding the **old** id's WebSocket URL (`/ws/terminal/<oldId>`) gets a permanent close: `4404` (`WS_CLOSE_SESSION_UNKNOWN`) for the web terminal, the `Unexpected server response: 404` upgrade error for the VSCode terminal. Both correctly classify it `permanent` via `classifyUpgradeError` and give up — the old id really is gone. The missing piece on **both** surfaces is reconnecting to the **successor** id without a manual user action.
+Issue #991 asked for a terminal to "self-heal onto its successor session" after a Tower restart, and framed it as a **client-side** problem: the terminal id changes on restart, so the old `/ws/terminal/<oldId>` url goes dead and the client should re-resolve and reconnect to the new id. The original plan took that framing at face value and treated the id change as a fixed given.
 
-The "successor" is never found by mapping old-id → new-id (the old id is deleted from state). It is found by **stable session identity** → current `terminalId` in fresh workspace state. Both surfaces already consume the same wire type — `DashboardState` from `@cluesmith/codev-types` (dashboard via `/api/state`; VSCode via `TowerClient.getWorkspaceState`, which lives in `@cluesmith/codev-core`). Each session carries a stable id/name plus its current `terminalId`:
+Live debugging at the `dev-approval` gate (the VSCode **Extension Host** log + the **Codev** output channel) revealed two **Tower-level root causes** that no client-side recovery could fix:
 
-- `state.builders[]` → `{ id, terminalId }`
-- `state.architects[]` → `{ name, terminalId }`
+1. **`afx tower stop` was killing the VSCode extension host.** `getProcessesOnPort` (`commands/tower.ts`) ran `lsof -ti :PORT`, which returns the *listening server and every client* of the port. The extension host holds **client** sockets to Tower's port (the SSE stream + every terminal WebSocket), so `afx tower stop` SIGTERM'd it. **Proven empirically:** `lsof -ti :4100` returned the VSCode `Code Helper (Plugin)` host (the exact pid from the reviewer's log) *and* the node server; `lsof -ti :4100 -sTCP:LISTEN` returns only the server. Every restart destroyed and re-activated the whole extension host, wiping all terminal state — which is why every client-side recovery attempt was futile (there was no live extension to run it).
 
-**Where each surface stands today:**
+2. **Tower reassigns the terminal id on every reconcile.** `createSessionRaw` (`pty-manager.ts`) mints a fresh `randomUUID()`; both reconcile paths (`tower-terminals.ts:646` startup, `:832` on-the-fly) register the reconnected shellper under the new id and delete the old SQLite row. That id change is the *source* of the dead-id chain that #936/#971/#991/#997 all work around.
 
-- **Dashboard**: recovery is *reactive but un-triggered*. `useBuilderStatus` re-fetches `/api/state` on a 1s poll + on SSE; `useTabs` rebuilds tabs keyed on the **stable** id (`builder.id`, `architect`/`architect:<name>`), so the tab's `terminalId` field updates to the successor and `getTerminalWsPath` yields a new `wsPath`; the `Terminal` effect is keyed on `[wsPath]` (`Terminal.tsx:727`) and remounts. The gap: the permanent-close branch (`Terminal.tsx:533-537`) prints "session no longer exists" and stops — it never *triggers* the re-fetch. Recovery waits on an incidental poll/focus event (and the 1s poll throttles to ~1/min when the tab is hidden, while SSE is disconnected while hidden — `useSSE.ts`).
-- **VSCode**: recovery machinery exists but the give-up path bypasses it. `terminal-adapter.ts:185` classifies the permanent close and calls `giveUp('this terminal session no longer exists on Tower')`, surfacing a clickable "Click here to reconnect" link (#936/#939). But the link routes to `terminal-manager.ts` `reconnectByTerminal()` → `pty.reconnect()` **with no URL**, so it retries the **same dead id** and fails again. Meanwhile the manager already knows how to resolve a successor — `openBuilderByRoleOrId` (`:180-208`) fetches `getWorkspaceState` and resolves `builder.terminalId` via `resolveAgentName`, and `openBuilder`/`openArchitect` already implement a **stale-replace** (dispose the terminal when `existing.id !== terminalId`, reopen on the new id — `:160-173`, `:109-123`). Nothing wires the give-up to that machinery, and there's no *automatic* trigger.
-
-**This is one cross-cutting gap with one shared resolution rule and two surface-specific glue layers** — mirroring the cycle's established pattern (#961 `BackoffController`, #971 `classifyUpgradeError`): pure logic in `@cluesmith/codev-core`, surface glue in each package.
+The clean fix is at the source: keep the host alive, and preserve the terminal id across reconcile. Then a Tower restart is just a transient WebSocket blip that the **existing** reconnect machinery (#442/#936) already handles — on both surfaces, with no special recovery code.
 
 ## Proposed Change
 
-### 1. Core — shared successor-resolution helper (`@cluesmith/codev-core`)
+### Core fix 1 — `afx tower stop` must not kill port clients
+`getProcessesOnPort` → `lsof -ti :${port} -sTCP:LISTEN` — match only the listening server, not clients. The function's doc comment already said "processes listening on a port"; this aligns the implementation with its contract. Both callers (the stop path and the running-check) want the listener, so the filter is safe for both.
 
-New pure module `packages/core/src/session-successor.ts` exporting:
+### Core fix 2 — preserve the terminal id across reconcile
+- `createSessionRaw(opts: { label; cwd; id? })` uses `opts.id ?? randomUUID()`. The in-memory sessions map is empty at reconcile time, so reusing the id can't collide.
+- Both reconcile paths pass the persisted `dbSession.id`, so the session keeps its identity. The existing delete+save becomes an in-place row refresh under the same id.
 
-```ts
-export type SessionRef =
-  | { kind: 'builder'; id: string }
-  | { kind: 'architect'; name: string };
+Result: the client's `/ws/terminal/<id>` stays valid → the adapter's existing backoff reconnect re-attaches → the terminal resumes with replay. No client-side remount, no give-up-and-reopen.
 
-/** Given fresh workspace state and a stable session reference, return the
- *  current (successor) terminalId, or null if the session is gone. */
-export function resolveSuccessorTerminalId(
-  state: Pick<DashboardState, 'builders' | 'architects'>,
-  ref: SessionRef,
-): string | null;
-```
-
-- `builder`: reuse the existing core `resolveAgentName(ref.id, state.builders)` (tail-matches bare numeric ids against canonical `builder-<proto>-<n>` ids, exactly as `openBuilderByRoleOrId` does today) → its `terminalId ?? null`.
-- `architect`: `state.architects.find(a => a.name === ref.name)?.terminalId ?? null`.
-- Type-only import of `DashboardState` (matches `tower-client.ts`'s house style); no runtime dep on `@cluesmith/codev-types`.
-- Add a `./session-successor` subpath export to `packages/core/package.json` (mirrors `./reconnect-policy`, `./agent-names`).
-
-Scope note: only **builder** and **architect** are persistent, restart-reconciled sessions (per the reconcile code the issue cites). Shell/dev terminals are non-persistent (they don't survive a restart), so they're intentionally out of the helper's `SessionRef` union. `util` is extensible later by id if a persistent-util case arises.
-
-### 2. VSCode glue — automatic successor remount on permanent close
-
-- **`terminal-adapter.ts`**: add an optional `onSessionGone?: () => void` (constructor param, defaulting undefined). In the permanent-close branch (`:185-186`), invoke `this.onSessionGone?.()` *before* falling back to the existing `giveUp(...)` message. This is the seam that lets the manager (which knows the stable identity; the adapter does not) attempt recovery. If `onSessionGone` is absent or recovery finds no successor, the current give-up link behavior is unchanged (graceful fallback).
-- **`terminal-manager.ts`**:
-  - In `openTerminal` (the `new CodevPseudoterminal(...)` call, `:348`), pass an `onSessionGone` closure that captures `mapKey`/`type` and calls a new `recoverSuccessor(mapKey)`.
-  - New `private async recoverSuccessor(mapKey: string)`: derive a `SessionRef` from the mapKey (`builder-<id>` → `{kind:'builder', id}`, `architect:<name>` → `{kind:'architect', name}`; other kinds → return, leave give-up message), `await client.getWorkspaceState(workspacePath)`, call `resolveSuccessorTerminalId(state, ref)`. If it returns a **new** id (different from the dead `entry.id`), reopen via the existing stale-replace method (`openBuilder`/`openArchitect`) which disposes the dead terminal and attaches to the successor. If null, do nothing (the adapter's give-up link stands).
-  - Route the manual `reconnectByTerminal` (`:392-398`) through `recoverSuccessor` too, so the "Click here to reconnect" affordance **also** re-resolves the successor instead of retrying the dead id — fixing the manual path's dead-URL bug as a bonus, with a final fall-through to `pty.reconnect()` when no successor exists (genuine transient give-up).
-
-Net VSCode behavior: a post-restart permanent close auto-resolves the successor and reattaches; the manual link becomes a correct fallback rather than a no-op.
-
-### 3. Dashboard glue — trigger the existing reactive remount (does **not** consume the core helper; see Design Notes)
-
-- **`Terminal.tsx`**: add optional `onPermanentClose?: () => void`. In the permanent-close branch (`:533-537`): call `onPermanentClose?.()` (asks the parent to re-fetch state), set status `'reconnecting'` (not `'disconnected'`), and **defer** the "session no longer exists" message behind a bounded give-up timer (`PERMANENT_RECOVERY_MS ≈ 4000ms`, tracked on `rc`, cleared in cleanup). If the successor arrives, the parent hands a new `wsPath`, the effect cleanup runs (timer cleared) and the component remounts — the scary message never flashes. If the timer fires (no successor → genuine death), write the original message and set `'disconnected'`.
-- **`App.tsx`**: pass `onPermanentClose={refresh}` to all three `Terminal` render sites (`:122`, `:162`, `:303`); add `refresh` to `renderPersistentTerminals`'s `useCallback` deps (`:173`). `refresh` is a stable `useCallback(..., [])`, so it won't churn the `[wsPath]` effect.
+### Remove the superseded client workarounds
+The client-side approaches built earlier this cycle — VSCode successor-remount (`recoverSuccessor`/`onSessionGone`/`resyncAllTerminals`), then close-on-stop/reopen-on-reconnect, and the shared `resolveSuccessorTerminalId` core helper — are obviated by the core fix and were removed (reverted to the `#921` base). The dashboard self-heal (`Terminal.onPermanentClose → App.refresh`) is **kept** (harmless; now dormant since the web url stays valid across a restart).
 
 ## Files to Change
-
-**Core**
-- `packages/core/src/session-successor.ts` — new: `SessionRef`, `resolveSuccessorTerminalId`.
-- `packages/core/package.json` — add `./session-successor` export.
-- `packages/core/__tests__/session-successor.test.ts` (match core's test layout) — unit tests.
-
-**VSCode**
-- `packages/vscode/src/terminal-adapter.ts` — add `onSessionGone?` ctor param; invoke in the permanent-close branch (`:185`).
-- `packages/vscode/src/terminal-manager.ts` — pass `onSessionGone` in `openTerminal` (`:348`); add `recoverSuccessor(mapKey)`; route `reconnectByTerminal` (`:392`) through it.
-- `packages/vscode/src/__tests__/terminal-adapter.test.ts` and/or `terminal-manager` tests — cover the new seam.
-
-**Dashboard**
-- `packages/dashboard/src/components/Terminal.tsx` — `onPermanentClose?` prop, `PERMANENT_RECOVERY_MS`, `rc.recoveryTimer`, reconnecting-then-deferred-message branch, cleanup.
-- `packages/dashboard/src/components/App.tsx` — wire `onPermanentClose={refresh}` at `:122`/`:162`/`:303`; deps at `:173`.
-- `packages/dashboard/__tests__/Terminal.reconnect.test.tsx` — extend `MockWs.simulateClose(code?)`; new tests.
-
-## Design Notes / Open Question for the Architect
-
-The architect's steer was a shared core helper that **both** surfaces consume. The resolution rule genuinely belongs in core and VSCode consumes it directly. **The dashboard, however, does not call the helper** — and forcing it to would be a net negative:
-
-- The dashboard never holds the dead id at a resolution point. Its `useTabs` already rebuilds tabs from fresh state keyed on the **stable** id, so the successor `terminalId` flows in reactively and the `wsPath`-keyed `Terminal` remounts on its own. The only missing link is *triggering* the re-fetch, which `onPermanentClose → refresh()` supplies.
-- To make the dashboard call `resolveSuccessorTerminalId` we'd have to plumb a `SessionRef` down into the `Terminal` component (which today knows only `wsPath`) and add an explicit resolution path that duplicates what `useTabs` does for free — more coupling, no benefit.
-
-So my recommendation: **helper in core (canonical, unit-tested, consumed by VSCode); dashboard heals reactively via `refresh()`.** The helper still earns core placement on the #961/#971 precedent (cross-host terminal-session logic, sibling to `classifyUpgradeError`), and it de-duplicates the builder-lookup rule already inlined in `openBuilderByRoleOrId`. If you specifically want literal both-consume symmetry, the only consumption point would be refactoring `useTabs`/`getTerminalWsPath` to route `terminalId` reads through the helper — I'd advise against it (indirection without removing duplication), but flagging it so you can overrule at this gate.
+- `packages/codev/src/agent-farm/commands/tower.ts` — `getProcessesOnPort` LISTEN filter.
+- `packages/codev/src/terminal/pty-manager.ts` — `createSessionRaw` optional `id`.
+- `packages/codev/src/agent-farm/servers/tower-terminals.ts` — both reconcile paths pass `dbSession.id`; comments/log updated.
+- `packages/codev/src/terminal/__tests__/tower-shellper-integration.test.ts` — id-reuse unit test.
+- `packages/vscode/src/terminal-manager.ts`, `packages/vscode/src/extension.ts`, `packages/vscode/src/__tests__/terminal-manager.test.ts` — revert the close/reopen workaround to the `#921` base.
+- *(kept)* `packages/dashboard/src/components/Terminal.tsx`, `App.tsx`, `__tests__/Terminal.reconnect.test.tsx` — dashboard self-heal.
 
 ## Risks & Alternatives Considered
-
-- **Callback identity churns the dashboard `[wsPath]` effect** → mitigated: `refresh` is a stable `useCallback(..., [])`; read by closure (same pattern as `onFileOpen`), not added to deps.
-- **Successor not yet reconciled when the give-up fires** → dashboard: the bounded timer spans several 1s polls and the interval keeps re-fetching; VSCode: `getWorkspaceState` is fetched at recovery time, after Tower is back up and has accepted the (rejected) upgrade, so reconcile has run. If a successor is momentarily absent, both fall back to the existing give-up message — no worse than today.
-- **Infinite remount/recovery loop** → none: dashboard's permanent branch never re-opens a socket itself (only re-fetches); VSCode's `recoverSuccessor` only reopens when the resolved id **differs** from the dead one, so a still-stale state is a no-op. A genuinely-new-then-immediately-stale successor (double restart) simply repeats one bounded recovery — self-limiting.
-- **VSCode adapter doesn't know its stable identity** → by design the manager owns identity; the `onSessionGone` closure captures `mapKey`. Adapter stays transport-only.
-- **Alternative — dashboard minimal variant** (keep the immediate red message + `'disconnected'`, just add `onPermanentClose?.()`): smaller diff but flashes "session no longer exists" for up to ~1s before a successful heal. Rejected for the deferred-message UX; trivial to fall back to if preferred.
-- **Alternative — VSCode: recover only on the manual link click, not automatically**: rejected — the issue's acceptance requires reconnect "without the user touching the refresh button."
+- **Rejected alternative (the original plan): client-side remount onto the successor id.** Built and iterated extensively (core `resolveSuccessorTerminalId` helper; VSCode per-adapter recovery → reconnect-event resync → close/reopen; dashboard `onPermanentClose → refresh`). It never worked in the reviewer's environment — because the extension host was being killed (root cause #1) and the id kept changing (root cause #2). Abandoned in favor of the core fix. **Lesson: confirm the runtime survives the event before building recovery on top of it.**
+- **Risk: LISTEN filter misses the server.** Verified empirically against the live port — `-sTCP:LISTEN` returns exactly the node server, nothing else.
+- **Risk: reusing the id collides.** The sessions map is empty at reconcile (Tower just started), so no collision is possible.
+- **Risk: reconcile-gap.** A reconnect landing in the brief window after Tower accepts connections but before startup reconcile finishes could still 404 once and recover on the next retry/click. Rare (the client's backoff timing usually lands after reconcile); **#997 (reconcile-before-serving)** makes it deterministic and is the right follow-up. Out of scope here.
+- **Scope/area pivot:** #991 is now primarily a **Tower-server** fix (`area/tower`) plus the kept dashboard self-heal — not the cross-cutting client remount the issue framed. The reviewer directed this pivot live at the gate.
 
 ## Test Plan
-
-**Core unit (`session-successor.test.ts`):**
-- builder ref resolves to the current `terminalId` (incl. bare-numeric tail-match via `resolveAgentName`); architect ref resolves by name.
-- returns `null` when the session is absent / has no `terminalId`.
-- a post-restart state (same stable id, new `terminalId`) returns the **new** id.
-
-**Dashboard unit (`Terminal.reconnect.test.tsx`, vitest + jsdom, fake timers):**
-- `simulateClose(code?)` defaults `1006`; pass `4404` for permanent.
-- permanent close (`4404`) invokes `onPermanentClose` once; transient (`1006`) does not.
-- permanent close creates **no** new WebSocket (no blind retry) and shows `terminal-status-reconnecting` with the "no longer exists" line **not yet** written.
-- after `PERMANENT_RECOVERY_MS`, status → `terminal-status-disconnected` and the message is written.
-- unmount after a permanent close + advance timers → no late `setConnStatus`/write (timer cleared).
-
-**VSCode unit (adapter + manager):**
-- adapter invokes `onSessionGone` on a permanent close; not on a transient close.
-- `recoverSuccessor`: with a state whose builder/architect carries a new `terminalId`, it reopens onto the new id (stale-replace dispose+reopen); with no successor, it leaves the give-up message and (manual path) falls back to `pty.reconnect()`.
-
-**Manual — dev-approval gate (`afx dev pir-991`), both surfaces, per the architect's instruction:**
-1. Open a **VSCode** builder/architect terminal **and** a **dashboard** builder/architect terminal; confirm both connected.
-2. Force a Tower restart (`pnpm -w run local-install`, or stop/start Tower) so both sessions reconnect under new ids.
-3. **Without touching either refresh button**, confirm **both** terminals auto-remount onto the successor id within a few seconds (fresh replay, status returns to connected).
-4. Negative: a non-persistent shell/dev terminal (no successor) settles to the give-up message/link after the bounded delay — no infinite "reconnecting", no loop.
-5. Regression: an ordinary transient blip (brief drop, not a restart) still reconnects via normal backoff on both surfaces.
-
-**Build/tests:** `pnpm --filter @cluesmith/codev-core build && pnpm --filter @cluesmith/codev-core test`; `pnpm --filter @cluesmith/codev-dashboard build && pnpm --filter @cluesmith/codev-dashboard test`; `pnpm --filter @cluesmith/codev-vscode build && pnpm --filter @cluesmith/codev-vscode test`.
+- **Unit:** `createSessionRaw` reuses a provided id and mints a fresh one without one (added); the existing reconcile/shellper tests still pass (id-preservation doesn't break reconcile). Run: `pnpm --filter @cluesmith/codev exec vitest run src/terminal/__tests__/tower-shellper-integration.test.ts src/agent-farm/__tests__/tower-terminals.test.ts`.
+- **Build/typecheck:** codev typecheck clean (`tsc --noEmit`); vscode + dashboard suites green.
+- **Manual (the dev-approval test — live, reviewer-run since a real Tower bounce kills the builder session):**
+  1. `pnpm build && pnpm -w run local-install` — deploys the new `afx` (host-kill fix) and the new Tower server (id preservation).
+  2. With a builder/architect terminal open, `afx tower stop && afx tower start`.
+  3. **Expect:** the VSCode extension host does **not** restart (it survives), and open terminals reconnect to the **same** session within the normal backoff (replay restored) — no dead pane, no reopen, no new window.
+  4. **Negative:** a >~60s downtime shows the existing `Click here to reconnect` give-up; clicking it now reconnects (id preserved) rather than retrying a dead id.
