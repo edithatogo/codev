@@ -18,20 +18,26 @@
 import * as vscode from 'vscode';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import type { TowerClient } from '@cluesmith/codev-core/tower-client';
 import {
   decidePreflight,
+  decideTowerStatus,
   parseCliVersion,
   preflightFeedbackMessage,
   resolveCodevPath,
+  towerDivergenceMessage,
   type PreflightStatus,
+  type TowerStatus,
 } from './preflight-core.js';
+import { getTowerAddress } from '../workspace-detector.js';
+import { restartTower } from '../tower-starter.js';
 
 /** Fully-qualified walkthrough id: `<publisher>.<name>#<walkthroughId>`. */
 const WALKTHROUGH_ID = 'cluesmith.codev-vscode#codevGettingStarted';
 /** workspaceState key gating the once-per-workspace auto-open of the walkthrough. */
 const WALKTHROUGH_SHOWN_KEY = 'codev.preflight.walkthroughShown';
 /** Install docs surfaced from the outdated-CLI notification and walkthrough. */
-export const INSTALL_DOCS_URL = 'https://github.com/cluesmith/codev#installation';
+export const INSTALL_DOCS_URL = 'https://github.com/cluesmith/codev#quick-start';
 /** Hard cap on the `codev --version` probe so a hung binary can't stall startup. */
 const VERSION_TIMEOUT_MS = 400;
 /** The command users / UI invoke to re-verify after fixing the CLI. */
@@ -41,11 +47,27 @@ export const RECHECK_COMMAND = 'codev.recheckCli';
 export interface PreflightState {
   status: PreflightStatus | 'pending';
   cliVersion: string | null;
+  /** #983 Tower-version dimension (additive — existing consumers ignore these). */
+  towerStatus: TowerStatus;
+  /** Version reported by the *running* Tower process, or null if not probed. */
+  runningVersion: string | null;
+  /** Whether the configured Tower host is local (gates the `Restart Tower` action). */
+  hostIsLocal: boolean;
 }
 
 let cachedStatus: PreflightStatus | 'pending' = 'pending';
 let cachedVersion: string | null = null;
 let modalShownThisSession = false;
+
+// #983 Tower-version dimension. Cached alongside the CLI dimension and surfaced
+// via getPreflightState() / onPreflightChange.
+let cachedTowerStatus: TowerStatus = 'pending';
+let cachedRunningVersion: string | null = null;
+let cachedHostIsLocal = true;
+/** Mirrors `modalShownThisSession` for the Tower toast (modal-first, then ephemeral). */
+let towerDivergenceShownThisSession = false;
+/** Last Tower client passed to the probe — reused to re-probe after a restart. */
+let lastTowerClient: TowerClient | null = null;
 
 /** Dependencies captured on the first `runPreflight`, reused by recheck / button handlers. */
 let deps: {
@@ -60,7 +82,13 @@ export const onPreflightChange = changeEmitter.event;
 
 /** Current cached preflight state, for the Status-view row. */
 export function getPreflightState(): PreflightState {
-  return { status: cachedStatus, cliVersion: cachedVersion };
+  return {
+    status: cachedStatus,
+    cliVersion: cachedVersion,
+    towerStatus: cachedTowerStatus,
+    runningVersion: cachedRunningVersion,
+    hostIsLocal: cachedHostIsLocal,
+  };
 }
 
 /**
@@ -146,6 +174,16 @@ async function performPreflight(): Promise<PreflightStatus> {
   } else if (status === 'outdated') {
     showOutdatedNotification(cliVersion, extVersion);
   }
+
+  // #983: the Tower-divergence comparison needs the installed-CLI version this
+  // check just resolved. If a Tower probe already ran (Tower connected before
+  // this ~400ms CLI check finished), it saw `installedCli = null` and reported
+  // `ok`; re-run it now with the resolved version so the divergence isn't lost
+  // to that startup race. No-op until the first probe sets `lastTowerClient`.
+  if (lastTowerClient) {
+    await probeTowerVersion(lastTowerClient);
+  }
+
   return status;
 }
 
@@ -251,8 +289,10 @@ function updateViaNpm(): void {
  *   the same problem still applies.
  *
  * The session flag resets when `recheckCli` confirms `ok`, so a fresh breakage
- * later restarts the modal-first pattern. Reusable by #983 for the Tower-version
- * dimension (it will pass a different status into `preflightFeedbackMessage`).
+ * later restarts the modal-first pattern. The Tower-version dimension (#983)
+ * reuses this same modal-first/ephemeral-after shape in
+ * `showTowerDivergenceFeedback` below, kept as a separate surface so this CLI
+ * command-guard entry point stays no-arg and untouched.
  */
 export function showPreflightFeedback(): void {
   if (!modalShownThisSession) {
@@ -277,4 +317,120 @@ export function showPreflightFeedback(): void {
     preflightFeedbackMessage(cachedStatus as PreflightStatus),
     4000,
   );
+}
+
+// ===========================================================================
+// Tower-version dimension (#983)
+// ===========================================================================
+
+/**
+ * Probe the *running* Tower's version (`GET /api/version`) and compare it
+ * against the installed CLI and this extension's expected version. On
+ * divergence (`stale` / `too-old`) the user gets an actionable toast; the
+ * healthy path is silent. Invoked on each `connected` transition (activation +
+ * reconnect) — not per-tick, since the in-memory version only changes on a
+ * Tower restart, which severs and re-establishes the connection anyway.
+ *
+ * `unreachable` is intentionally silent: the existing "Not connected to Tower"
+ * path already covers that case.
+ */
+export async function probeTowerVersion(client: TowerClient): Promise<void> {
+  if (!deps) {
+    return;
+  }
+  lastTowerClient = client;
+  const { outputChannel } = deps;
+  const { host } = getTowerAddress();
+  const hostIsLocal = host === 'localhost' || host === '127.0.0.1';
+  cachedHostIsLocal = hostIsLocal;
+
+  const result = await client.getVersion();
+  const runningVersion = result.data?.version ?? null;
+  const towerStatus = decideTowerStatus({
+    probeStatus: result.status,
+    runningVersion,
+    installedCli: cachedVersion,
+    cliStatus: cachedStatus,
+  });
+
+  cachedTowerStatus = towerStatus;
+  cachedRunningVersion = runningVersion;
+  changeEmitter.fire();
+
+  outputChannel.appendLine(
+    `[${new Date().toISOString()}] [Preflight] towerStatus=${towerStatus} `
+    + `running=${runningVersion ?? 'none'} installed=${cachedVersion ?? 'none'}`,
+  );
+
+  if (towerStatus === 'ok') {
+    // Healthy again — let a future divergence re-arm the modal-first pattern.
+    towerDivergenceShownThisSession = false;
+    return;
+  }
+  // `unreachable` is silent — the existing "not connected to Tower" path owns
+  // it. For stale / too-old, a restart only helps if we know the installed CLI
+  // version it would load; otherwise the prompt is unactionable (and the CLI
+  // preflight already covers the "CLI missing" case). cachedVersion is the
+  // installed CLI.
+  if ((towerStatus === 'stale' || towerStatus === 'too-old') && cachedVersion) {
+    showTowerDivergenceFeedback(towerStatus, runningVersion, cachedVersion, host, hostIsLocal);
+  }
+}
+
+/**
+ * Toast for a divergent running Tower. Mirrors `showPreflightFeedback`'s
+ * modal-first / ephemeral-after shape. For a local Tower the toast carries a
+ * `Restart Tower` action; for a remote/tunnelled Tower the local restart would
+ * target the wrong machine, so the toast is informational and names the host.
+ */
+function showTowerDivergenceFeedback(
+  status: 'stale' | 'too-old',
+  runningVersion: string | null,
+  installedVersion: string,
+  host: string,
+  hostIsLocal: boolean,
+): void {
+  const message = towerDivergenceMessage({ status, runningVersion, installedVersion, hostIsLocal, host });
+
+  if (towerDivergenceShownThisSession) {
+    vscode.window.setStatusBarMessage(message, 5000);
+    return;
+  }
+  towerDivergenceShownThisSession = true;
+
+  if (!hostIsLocal) {
+    vscode.window.showWarningMessage(message);
+    return;
+  }
+  vscode.window
+    .showWarningMessage(message, 'Restart Tower')
+    .then((choice) => {
+      if (choice === 'Restart Tower') {
+        restartTowerAndReprobe();
+      }
+    });
+}
+
+/**
+ * Run `afx tower stop && afx tower start`, then re-probe to confirm the
+ * divergence cleared. Safe to invoke from inside the extension only because
+ * #991 scoped `afx tower stop` to the listening Tower process (it no longer
+ * SIGTERMs the extension host's own client sockets).
+ */
+async function restartTowerAndReprobe(): Promise<void> {
+  if (!deps) {
+    return;
+  }
+  const ok = await restartTower(deps.workspacePath, deps.outputChannel);
+  if (!ok) {
+    vscode.window
+      .showWarningMessage('Codev: Tower restart did not complete. Try `afx tower start`.', 'Retry')
+      .then((choice) => { if (choice === 'Retry') { restartTowerAndReprobe(); } });
+    return;
+  }
+  // A fresh divergence after this restart should re-arm the modal.
+  towerDivergenceShownThisSession = false;
+  if (lastTowerClient) {
+    await probeTowerVersion(lastTowerClient);
+  }
 }
