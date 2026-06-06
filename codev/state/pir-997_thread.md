@@ -49,3 +49,24 @@ assumption against updated main:
   getRehydratedTerminalsEntry, tower-routes.ts:870), so gating that one helper covers state+overview.
 - No competing readiness barrier exists anywhere — approach is unobstructed.
 Conclusion: plan stands as written; the race is intact on current main. Force-pushed rebased branch.
+
+## Implement phase
+
+Plan approved. Implemented the readiness-barrier approach:
+- `tower-terminals.ts`: monotonic settled-once barrier (`markStartupReconcileSettled` /
+  `isStartupReconcileSettled` / `whenStartupReconcileSettled(timeoutMs)` + test reset hook).
+  Resolved in `reconcileTerminalSessions()` finally + early `!_deps` return (non-blocking-on-failure).
+  `getRehydratedTerminalsEntry` awaits it → /api/state + /api/overview deterministic on first read.
+- `tower-websocket.ts`: both terminal upgrade routes gate on the barrier before getSession, with a
+  `if (!isStartupReconcileSettled())` fast-path so post-startup upgrades stay synchronous (zero overhead).
+- `tower-routes.ts` handleHealthCheck: adds `ready: isStartupReconcileSettled()` (sync, liveness preserved).
+- `packages/core/tower-client.ts`: `TowerHealth.ready?: boolean` (optional, back-compat).
+
+Design note for reviewer: the load-bearing fix is the **await-barrier on /api/state** (deterministic
+single call, no client poll). `ready` on /health is additive — keeps `status:'healthy'` as pure
+liveness (matters for restartTower's wait-for-/health logic) and gives a cheap non-blocking probe.
+User asked "why ready vs healthy?" → confirmed keep `ready` (liveness≠readiness, K8s-style split).
+
+Tests: barrier unit tests + gated-rehydrate test (tower-terminals.test.ts), /health.ready
+(tower-routes.test.ts), WS mock updated for fast-path. Full unit suite green: 3249 passed, 13
+skipped, 0 failed. Build clean. Heading to dev-approval gate.
