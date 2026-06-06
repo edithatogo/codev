@@ -34,3 +34,18 @@ probe makes Tower wholly unreachable); 503-during-window (forces client poll); r
 alone (every client must learn handshake to get determinism).
 
 Plan written, awaiting plan-approval gate.
+
+### Rebase on main + re-verification (at plan-gate)
+Rebased onto origin/main (was 88 behind, 3 ahead) — replayed clean. Re-checked every plan
+assumption against updated main:
+- The 88 commits touched only `servers/overview.ts` + new `resolved-enrichment-cache.ts` in
+  servers/; nothing in the terminal/startup path. tower-server.ts / tower-terminals.ts /
+  tower-websocket.ts / handleHealthCheck all unchanged.
+- All plan line refs still hold: createServer:343, listen:349, reconcile:405; reconcile:476,
+  getRehydratedTerminalsEntry:164, isReconciling:82, !_reconciling guard:780; handleHealthCheck:286.
+- WS upgrade has TWO getSession sites to gate: :196 (direct /ws/terminal/:id) and :267
+  (workspace-scoped) — both via rejectUnknownSession.
+- /api/overview still resolves terminals through the same chokepoint (handleOverview →
+  getRehydratedTerminalsEntry, tower-routes.ts:870), so gating that one helper covers state+overview.
+- No competing readiness barrier exists anywhere — approach is unobstructed.
+Conclusion: plan stands as written; the race is intact on current main. Force-pushed rebased branch.
