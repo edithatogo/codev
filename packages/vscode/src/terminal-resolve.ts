@@ -89,3 +89,20 @@ export async function resolveBuilderTerminal<T extends ResolvableBuilder>(
   }
   return { kind: 'missing' };
 }
+
+/**
+ * The main-checkout root for an `afx` command, given the VSCode window's
+ * detected workspace path.
+ *
+ * A builder worktree lives at `<root>/.builders/<id>` and is itself a full
+ * checkout (it has its own `codev/`), so `detectWorkspacePath`'s walk-up stops
+ * at the worktree when VSCode is *rooted at* that worktree — `getWorkspacePath()`
+ * then returns the worktree, not the main checkout. `afx workspace recover` must
+ * run from the main root (repo guidance: never run `afx` from inside a
+ * worktree), so strip a trailing `/.builders/<id>` segment when present.
+ * A normal main-checkout window has no such suffix and is returned unchanged.
+ */
+export function mainCheckoutRoot(workspacePath: string): string {
+  const match = /[\\/]\.builders[\\/][^\\/]+\/?$/.exec(workspacePath);
+  return match ? workspacePath.slice(0, match.index) : workspacePath;
+}

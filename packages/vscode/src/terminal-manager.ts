@@ -5,7 +5,7 @@ import type { OverviewCache } from './views/overview-data.js';
 import { encodeWorkspacePath } from '@cluesmith/codev-core/workspace';
 import { resolveAgentName } from '@cluesmith/codev-core/agent-names';
 import type { TerminalType } from '@cluesmith/codev-core/tower-client';
-import { resolveBuilderTerminal } from './terminal-resolve.js';
+import { resolveBuilderTerminal, mainCheckoutRoot } from './terminal-resolve.js';
 
 const MAX_TERMINALS = 10;
 
@@ -235,10 +235,12 @@ export class TerminalManager {
    * last-resort path for a genuinely lost session (e.g. a dead shellper).
    *
    * Recover opens a terminal running `afx workspace recover` (its default
-   * dry-run preview) at the workspace root, mirroring `run-worktree-setup`.
+   * dry-run preview) at the main checkout root, mirroring `run-worktree-setup`.
    * It deliberately stops at the preview rather than `--apply`: recover is
    * workspace-wide (it can't target one builder), so the user reviews the scope
-   * before reviving.
+   * before reviving. The cwd is resolved via `mainCheckoutRoot` so the command
+   * runs from the main checkout even when VSCode is rooted at a builder worktree
+   * window (where `getWorkspacePath()` resolves to the worktree, not main).
    */
   private async promptNoTerminalRecovery(roleOrId: string, workspacePath: string, focus: boolean): Promise<void> {
     const RETRY = 'Retry';
@@ -253,7 +255,10 @@ export class TerminalManager {
     if (choice === RETRY) {
       await this.openBuilderByRoleOrId(roleOrId, focus);
     } else if (choice === RECOVER) {
-      const terminal = vscode.window.createTerminal({ name: 'Codev: Recover Builders', cwd: workspacePath });
+      const terminal = vscode.window.createTerminal({
+        name: 'Codev: Recover Builders',
+        cwd: mainCheckoutRoot(workspacePath),
+      });
       terminal.show();
       terminal.sendText('afx workspace recover');
     }

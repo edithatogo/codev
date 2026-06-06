@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import { backoffDelayMs } from '@cluesmith/codev-core/reconnect-policy';
 import {
   resolveBuilderTerminal,
+  mainCheckoutRoot,
   TERMINAL_RESOLVE_ATTEMPTS,
   type ResolvableBuilder,
 } from '../terminal-resolve.js';
@@ -143,5 +144,32 @@ describe('resolveBuilderTerminal', () => {
 
     expect(outcome.kind).toBe('missing');
     expect(calls).toBe(2);
+  });
+});
+
+describe('mainCheckoutRoot', () => {
+  it('returns a normal main-checkout path unchanged', () => {
+    expect(mainCheckoutRoot('/Users/me/repos/codev')).toBe('/Users/me/repos/codev');
+  });
+
+  it('strips a trailing /.builders/<id> worktree segment back to the main root', () => {
+    // The recover command must run from the main checkout even when VSCode is
+    // rooted at a worktree window (PIR #982 — the codex review finding).
+    expect(mainCheckoutRoot('/Users/me/repos/codev/.builders/pir-982')).toBe('/Users/me/repos/codev');
+  });
+
+  it('tolerates a trailing slash on the worktree path', () => {
+    expect(mainCheckoutRoot('/Users/me/repos/codev/.builders/spir-153/')).toBe('/Users/me/repos/codev');
+  });
+
+  it('does not strip when .builders is not the leaf segment', () => {
+    // Only a worktree-rooted window (leaf == .builders/<id>) should be rewritten;
+    // a deeper path is left alone rather than guessed at.
+    const deep = '/Users/me/repos/codev/.builders/pir-982/packages/vscode';
+    expect(mainCheckoutRoot(deep)).toBe(deep);
+  });
+
+  it('handles Windows-style separators', () => {
+    expect(mainCheckoutRoot('C:\\repos\\codev\\.builders\\pir-982')).toBe('C:\\repos\\codev');
   });
 });

@@ -73,7 +73,7 @@ describe('PIR #982 — actionable recovery for a missing terminal', () => {
   // makes impractical to exercise behaviorally.
 
   it('delegates the resolve to the bounded-retry helper', () => {
-    expect(TM_SRC).toMatch(/import \{ resolveBuilderTerminal \} from '\.\/terminal-resolve\.js'/);
+    expect(TM_SRC).toMatch(/import \{[^}]*\bresolveBuilderTerminal\b[^}]*\} from '\.\/terminal-resolve\.js'/);
     expect(TM_SRC).toMatch(/await resolveBuilderTerminal\(/);
   });
 
@@ -95,9 +95,11 @@ describe('PIR #982 — actionable recovery for a missing terminal', () => {
     expect(recoveryBody).toMatch(/const RECOVER = 'Recover Builders'/);
   });
 
-  it('Retry re-attempts the open; Recover runs `afx workspace recover` at the workspace root', () => {
+  it('Retry re-attempts the open; Recover runs `afx workspace recover` at the main checkout root', () => {
     expect(recoveryBody).toMatch(/choice === RETRY[\s\S]*openBuilderByRoleOrId\(roleOrId, focus\)/);
-    expect(recoveryBody).toMatch(/createTerminal\(\{ name: 'Codev: Recover Builders', cwd: workspacePath \}\)/);
+    // cwd must be the main checkout root, not the raw workspace path — a
+    // worktree-rooted window would otherwise run afx in the wrong dir (#982).
+    expect(recoveryBody).toMatch(/cwd: mainCheckoutRoot\(workspacePath\)/);
     expect(recoveryBody).toMatch(/sendText\('afx workspace recover'\)/);
   });
 });
