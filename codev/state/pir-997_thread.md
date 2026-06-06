@@ -70,3 +70,35 @@ User asked "why ready vs healthy?" → confirmed keep `ready` (liveness≠readin
 Tests: barrier unit tests + gated-rehydrate test (tower-terminals.test.ts), /health.ready
 (tower-routes.test.ts), WS mock updated for fast-path. Full unit suite green: 3249 passed, 13
 skipped, 0 failed. Build clean. Heading to dev-approval gate.
+
+## Review phase
+
+dev-approval approved by human. Wrote review + retrospective, arch.md "Startup Readiness Barrier
+(#997)" subsection, lessons-learned entry. PR #1004 opened (Fixes #997), recorded with porch.
+Review checks all green (pr_exists, review_has_arch_updates, review_has_lessons_updates).
+
+3-way consult (single advisory pass, max_iterations:1):
+- claude: APPROVE, HIGH confidence, KEY_ISSUES: None.
+- gemini: skipped (agy CLI not installed) — non-blocking environmental skip, not a code finding.
+- codex: **Quota exceeded (billing)** — produced NO output file. Retried once per protocol; same
+  result. Persistent, environmental, not a code finding.
+
+Codex was quota-blocked initially; user fixed billing and asked me to retry. Codex then ran and
+returned **REQUEST_CHANGES**: legitimate — original tests covered the barrier mechanism (unit) but
+omitted the end-to-end restart-race regression the plan's Test Plan called for.
+
+Addressed (PIR single-pass; no AI re-review):
+- Added `tower-terminals.test.ts` › "a single read after a restart reflects the completed reconcile
+  (resolves after it)": drives a real reconcile held mid-flight, issues one getRehydratedTerminalsEntry
+  concurrently, asserts deterministic ordering (read resolves AFTER reconcile) + complete builders map.
+- Verified non-vacuous: gate removed → ['read','reconcile'] fails; gate present → ['reconcile','read'].
+- Documented finding+fix in review "Things to Look At"; flagged for human verification at pr gate.
+
+VERIFICATION GOTCHA (mine): I'd been running `pnpm vitest` from the MAIN checkout
+(/repos/cluesmith/codev/packages/codev), not the worktree — so earlier "passes" didn't include my
+new tests, and the fails-without-gate check was a no-op. Re-ran FROM THE WORKTREE: with-gate 60/60
+pass; gate-removed → the regression fails as designed. Full worktree suite: 3258 passed, 13 skipped,
+0 failed. Lesson for future verification: always run tests from the worktree dir, not main.
+
+Verdicts: claude=APPROVE, gemini=COMMENT(skipped/env), codex=REQUEST_CHANGES(addressed). Next:
+porch next → record verdicts → pr gate. Will notify architect leading with the codex disposition.
