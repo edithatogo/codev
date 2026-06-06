@@ -10,6 +10,7 @@
 
 ### Bug fixes
 
+- **Terminal reconnect notice overwrites in place and wipes on reconnect.** The `[Codev: Connection lost. retrying in Xs (attempt Y/6)]` line used to print one fresh `\r\n`-terminated line per retry attempt, stacking notices in scrollback and leaving them orphaned above the resumed output once Tower came back. The line now overwrites itself in place (single line ticking `1/6 → 6/6`) and is cleared the moment the WebSocket reconnects, so a healthy reconnect leaves no trace in the terminal. The red give-up notice (after 6 failed attempts) is unchanged: it stays visible as the terminal's failure state and still carries the clickable `Reconnect` token.
 - **Guarded commands always give feedback now; the silent-after-first-click behavior is gone.** Clicking a CLI-dependent command (Spawn Builder, Approve Gate, Send Message, and 12 others) while the Codev CLI is missing or outdated used to produce a modal toast on the first click of the session, then go completely silent on every subsequent click. The first-click modal stays the same (the `Run Setup` action still works); subsequent clicks now show a brief auto-dismissing status-bar message naming the state and pointing at `Codev: Recheck CLI` as the recovery path. Once a recheck confirms `ok`, the next breakage restarts at the modal again.
 
 ## [3.1.7] - 2026-06-03
