@@ -81,4 +81,14 @@ Drafted `codev/plans/987-...md` on the final hot/cold model. 6 phases (porch JSO
 
 **6 phases:** 1 hot-file curation+cap+placement · 2 porch runtime injection · 3 interactive managed block (markers, non-clobber) · 4 scaffold/templates.ts/tests · 5 producer routing (review prompts both trees) · 6 MAINTAIN+skill cap/map policing + docs sweep + consistency.
 
-### Next: porch done → plan 3-way consult → incorporate → plan-approval gate (HUMAN). Do NOT self-approve.
+### Plan iter1 CMAP: Gemini RC, Codex RC, Claude COMMENT — incorporated
+Two real findings + one reviewer disagreement:
+1. **DEAD CODE (Gemini/Codex/Claude):** `copyResourceTemplates` is NOT called by init/adopt/update (verified — init.ts comment: framework files resolve at runtime). `update.ts` only does copySkills+copyRootFiles; `UPDATABLE_PREFIXES` = hash-migration, not resource creation. → My Phase 4 premise was wrong. REWROTE Phase 4: new `copyHotTierDefaults` helper (skip-existing) wired explicitly into init/adopt/**update** + combined integration test on real `codev update`.
+2. **Injection form — Codex vs Claude disagreed.** Root cause: spec self-contradicted ("LOCKED variable" vs "deferred to plan") — lesson [From 0089]. Fixed spec to defer form to plan; plan PINS prepend (guarantees every phase; variables risk silently-missed template); FLAGGED for architect at plan gate. Did NOT silently override — corrected the contradiction + surfaced.
+3. **Phase 5:** add review *templates* (not just prompts) — done.
+
+**Spec corrected too** (dead-code assumption had propagated into approved success criteria): Current State scaffold para, 2 install/update criteria, injection-form text, consultation-log note. Goals unchanged, mechanism corrected. Architecture insight: hot files = framework defaults in skeleton/resources (tier-4 runtime) + locally materialized (visible/editable for curation); skeleton = generic starter, codev/resources = real curated content (resolves spec-iter1 deferred #5).
+
+Rebuttal: 987-plan-iter1-rebuttals.md.
+
+### Next: commit → afx architect (architecture correction + injection-form flag) → porch done → likely re-consult iter2 → plan-approval gate (HUMAN). Do NOT self-approve.
