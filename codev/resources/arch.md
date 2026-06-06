@@ -1743,7 +1743,7 @@ The `consult` command (`packages/codev/src/commands/consult/index.ts`) is a **CL
 
 ```
 consult -m gemini spec 42
-  → spawns: gemini --yolo "<role + query>"
+  → spawns: agy --print --sandbox --add-dir <workspace> "<role + query>"
 
 consult -m codex spec 42
   → spawns: codex exec -c experimental_instructions_file=<tmpfile> --full-auto "<query>"
@@ -1756,7 +1756,7 @@ consult -m claude spec 42
 
 | Model | CLI Binary | Role Injection | Key Env Var |
 |-------|-----------|----------------|-------------|
-| gemini | `gemini` | Temp file via `GEMINI_SYSTEM_MD` env var | `GOOGLE_API_KEY` |
+| gemini | `agy` (Antigravity CLI; resolved real bin, not the IDE symlink) | Folded into the prompt (role + query) | OAuth / subscription (no API key) |
 | codex | `codex` | Temp file via `-c experimental_instructions_file=` flag | `OPENAI_API_KEY` |
 | claude | `claude` | Prepended to query string | `ANTHROPIC_API_KEY` |
 

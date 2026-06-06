@@ -310,14 +310,16 @@ Use sequential numbering with descriptive names (no leading zeros):
 ## Multi-Agent Consultation
 
 **DEFAULT BEHAVIOR**: Consultation is ENABLED by default with:
-- **Gemini 3.1 Pro** (gemini-3.1-pro-preview) for deep analysis
+- **Gemini** via the **Antigravity CLI (`agy`)** for deep analysis (the retired Gemini CLI's
+  replacement; OAuth/subscription, agy's default model — no pinned model id). Skips non-blockingly
+  if `agy` is missing/unauthenticated.
 - **GPT-5.4 Codex** (gpt-5.4-codex) for coding and architecture perspective
 
 To disable: User must explicitly say "without multi-agent consultation"
 
 **CRITICAL CONSULTATION CHECKPOINTS (DO NOT SKIP):**
-- After writing implementation code → STOP → Consult GPT-5 and Gemini Pro
-- After writing tests → STOP → Consult GPT-5 and Gemini Pro
+- After writing implementation code → STOP → Consult GPT-5 and Gemini (via agy)
+- After writing tests → STOP → Consult GPT-5 and Gemini (via agy)
 - ONLY THEN present results to user for evaluation
 
 ### cmap (Consult Multiple Agents in Parallel)
