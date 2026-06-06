@@ -20,7 +20,6 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import type { TowerClient } from '@cluesmith/codev-core/tower-client';
 import {
-  compareSemver,
   decidePreflight,
   decideTowerStatus,
   parseCliVersion,
@@ -330,8 +329,7 @@ export async function probeTowerVersion(client: TowerClient): Promise<void> {
     return;
   }
   lastTowerClient = client;
-  const { context, outputChannel } = deps;
-  const extVersion = context.extension.packageJSON.version as string;
+  const { outputChannel } = deps;
   const { host } = getTowerAddress();
   const hostIsLocal = host === 'localhost' || host === '127.0.0.1';
   cachedHostIsLocal = hostIsLocal;
@@ -342,7 +340,6 @@ export async function probeTowerVersion(client: TowerClient): Promise<void> {
     probeStatus: result.status,
     runningVersion,
     installedCli: cachedVersion,
-    extVersion,
   });
 
   cachedTowerStatus = towerStatus;
@@ -351,7 +348,7 @@ export async function probeTowerVersion(client: TowerClient): Promise<void> {
 
   outputChannel.appendLine(
     `[${new Date().toISOString()}] [Preflight] towerStatus=${towerStatus} `
-    + `running=${runningVersion ?? 'none'} installed=${cachedVersion ?? 'none'} ext=${extVersion}`,
+    + `running=${runningVersion ?? 'none'} installed=${cachedVersion ?? 'none'}`,
   );
 
   if (towerStatus === 'ok') {
@@ -359,13 +356,13 @@ export async function probeTowerVersion(client: TowerClient): Promise<void> {
     towerDivergenceShownThisSession = false;
     return;
   }
-  if (towerStatus === 'stale' || towerStatus === 'too-old') {
-    // The version the user *should* be running: the higher of installed-CLI
-    // and extension-expected.
-    const expectedVersion = cachedVersion && compareSemver(cachedVersion, extVersion) > 0
-      ? cachedVersion
-      : extVersion;
-    showTowerDivergenceFeedback(towerStatus, runningVersion, expectedVersion, host, hostIsLocal);
+  // `unreachable` is silent — the existing "not connected to Tower" path owns
+  // it. For stale / too-old, a restart only helps if we know the installed CLI
+  // version it would load; otherwise the prompt is unactionable (and the CLI
+  // preflight already covers the "CLI missing" case). cachedVersion is the
+  // installed CLI.
+  if ((towerStatus === 'stale' || towerStatus === 'too-old') && cachedVersion) {
+    showTowerDivergenceFeedback(towerStatus, runningVersion, cachedVersion, host, hostIsLocal);
   }
 }
 
@@ -378,11 +375,11 @@ export async function probeTowerVersion(client: TowerClient): Promise<void> {
 function showTowerDivergenceFeedback(
   status: 'stale' | 'too-old',
   runningVersion: string | null,
-  expectedVersion: string,
+  installedVersion: string,
   host: string,
   hostIsLocal: boolean,
 ): void {
-  const message = towerDivergenceMessage({ status, runningVersion, expectedVersion, hostIsLocal, host });
+  const message = towerDivergenceMessage({ status, runningVersion, installedVersion, hostIsLocal, host });
 
   if (towerDivergenceShownThisSession) {
     vscode.window.setStatusBarMessage(message, 5000);

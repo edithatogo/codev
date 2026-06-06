@@ -121,74 +121,71 @@ describe('preflightFeedbackMessage', () => {
 });
 
 describe('decideTowerStatus', () => {
-  const extVersion = '3.1.5';
-
-  it('is ok when running equals installed and extension', () => {
+  it('is ok when running equals the installed CLI', () => {
     expect(decideTowerStatus({
-      probeStatus: 200, runningVersion: '3.1.5', installedCli: '3.1.5', extVersion,
+      probeStatus: 200, runningVersion: '3.1.5', installedCli: '3.1.5',
     })).toBe('ok');
   });
 
   it('is stale when running is older than the installed CLI (upgraded, not restarted)', () => {
     expect(decideTowerStatus({
-      probeStatus: 200, runningVersion: '3.1.5', installedCli: '3.1.7', extVersion,
-    })).toBe('stale');
-  });
-
-  it('is stale when running is older than the extension expects (incompatible)', () => {
-    expect(decideTowerStatus({
-      probeStatus: 200, runningVersion: '3.1.4', installedCli: '3.1.4', extVersion,
+      probeStatus: 200, runningVersion: '3.1.5', installedCli: '3.1.7',
     })).toBe('stale');
   });
 
   it('does NOT flag a running Tower newer than the installed CLI (no false positive)', () => {
     expect(decideTowerStatus({
-      probeStatus: 200, runningVersion: '3.2.0', installedCli: '3.1.5', extVersion,
+      probeStatus: 200, runningVersion: '3.2.0', installedCli: '3.1.5',
+    })).toBe('ok');
+  });
+
+  it('does NOT flag a Tower behind only the extension (CLI matches running) — that is #791, not a restart case', () => {
+    // running == installed CLI; a restart would reload the same version, so no
+    // divergence is reported here even if the extension itself is newer.
+    expect(decideTowerStatus({
+      probeStatus: 200, runningVersion: '3.1.7', installedCli: '3.1.7',
     })).toBe('ok');
   });
 
   it('is too-old when the probe returns 404 (endpoint absent)', () => {
     expect(decideTowerStatus({
-      probeStatus: 404, runningVersion: null, installedCli: '3.1.7', extVersion,
+      probeStatus: 404, runningVersion: null, installedCli: '3.1.7',
     })).toBe('too-old');
   });
 
   it('is unreachable when the probe cannot connect (status 0)', () => {
     expect(decideTowerStatus({
-      probeStatus: 0, runningVersion: null, installedCli: '3.1.7', extVersion,
+      probeStatus: 0, runningVersion: null, installedCli: '3.1.7',
     })).toBe('unreachable');
   });
 
-  it('tolerates a missing installed CLI by comparing against the extension only', () => {
+  it('does not flag staleness when the installed CLI is unknown (no restart basis)', () => {
     expect(decideTowerStatus({
-      probeStatus: 200, runningVersion: '3.1.4', installedCli: null, extVersion,
-    })).toBe('stale');
-    expect(decideTowerStatus({
-      probeStatus: 200, runningVersion: '3.1.5', installedCli: null, extVersion,
+      probeStatus: 200, runningVersion: '3.1.4', installedCli: null,
     })).toBe('ok');
   });
 });
 
 describe('towerDivergenceMessage', () => {
-  it('names the running and expected versions for a stale Tower with a local restart', () => {
+  it('names the running and installed versions for a stale Tower with a local restart', () => {
     const msg = towerDivergenceMessage({
-      status: 'stale', runningVersion: '3.1.5', expectedVersion: '3.1.7', hostIsLocal: true, host: 'localhost',
+      status: 'stale', runningVersion: '3.1.5', installedVersion: '3.1.7', hostIsLocal: true, host: 'localhost',
     });
     expect(msg).toContain('3.1.5');
-    expect(msg).toContain('3.1.7');
+    expect(msg).toContain('3.1.7 is installed');
     expect(msg).toContain('Restart Tower');
   });
 
   it('uses stronger wording for a too-old Tower', () => {
     const msg = towerDivergenceMessage({
-      status: 'too-old', runningVersion: null, expectedVersion: '3.1.7', hostIsLocal: true, host: 'localhost',
+      status: 'too-old', runningVersion: null, installedVersion: '3.1.7', hostIsLocal: true, host: 'localhost',
     });
     expect(msg).toContain('too old');
   });
 
   it('names the remote host instead of a local restart when non-local', () => {
     const msg = towerDivergenceMessage({
-      status: 'stale', runningVersion: '3.1.5', expectedVersion: '3.1.7', hostIsLocal: false, host: 'dev.example.com',
+      status: 'stale', runningVersion: '3.1.5', installedVersion: '3.1.7', hostIsLocal: false, host: 'dev.example.com',
     });
     expect(msg).toContain('dev.example.com');
     expect(msg).not.toContain('Restart Tower to load it.');

@@ -147,10 +147,23 @@ export function preflightFeedbackMessage(status: PreflightStatus): string {
 export type TowerStatus = 'ok' | 'stale' | 'too-old' | 'unreachable' | 'pending';
 
 /**
- * Decide the Tower-version dimension from the probe outcome and the known
- * versions. The divergence rule is `running < max(installedCli, extVersion)` —
- * a running Tower *newer* than the installed CLI (local-dev / global-install
- * lag) is deliberately **not** flagged, so the healthy path stays silent.
+ * Decide the Tower-version dimension from the probe outcome and the *installed
+ * CLI* version. The divergence rule is `running < installedCli` — i.e. the
+ * user upgraded the on-disk binary but Tower is still serving the old
+ * in-memory code. That is the only case a Tower **restart** actually fixes
+ * (it reloads the installed binary).
+ *
+ * Deliberately **not** compared against the extension's own version: a Tower
+ * older than the extension but equal to the installed CLI cannot be fixed by a
+ * restart (there's no newer code on disk to load) — that's the installed CLI
+ * being behind the extension, which the #791 CLI preflight already surfaces as
+ * an "update the CLI" toast. Folding it in here produced a futile "Restart
+ * Tower" prompt with a version that isn't actually installed.
+ *
+ * A running Tower *newer* than the installed CLI (local-dev / global-install
+ * lag) is likewise not flagged, so the healthy path stays silent. When the
+ * installed CLI version is unknown there's no basis for a restart, so the
+ * caller suppresses the toast.
  *
  * `probeStatus` is the raw HTTP status from `TowerClient.getVersion()`
  * (`0` = unreachable, `404` = endpoint absent, `200` = reported).
@@ -159,7 +172,6 @@ export function decideTowerStatus(input: {
   probeStatus: number;
   runningVersion: string | null;
   installedCli: string | null;
-  extVersion: string;
 }): TowerStatus {
   if (input.probeStatus === 404) {
     return 'too-old';
@@ -167,24 +179,25 @@ export function decideTowerStatus(input: {
   if (input.probeStatus !== 200 || !input.runningVersion) {
     return 'unreachable';
   }
-  const baselines = input.installedCli
-    ? [input.extVersion, input.installedCli]
-    : [input.extVersion];
-  const isStale = baselines.some((b) => compareSemver(input.runningVersion!, b) < 0);
-  return isStale ? 'stale' : 'ok';
+  if (input.installedCli && compareSemver(input.runningVersion, input.installedCli) < 0) {
+    return 'stale';
+  }
+  return 'ok';
 }
 
 /**
  * Toast wording for a divergent Tower (`stale` / `too-old`). The action button
  * itself is attached by the vscode glue; this is just the message body, kept
- * pure so the wording is unit-tested without a vscode mock. When the Tower is
- * non-local (tunnelled / remote `towerHost`) the local `Restart Tower` action
- * would target the wrong machine, so the wording names the host instead.
+ * pure so the wording is unit-tested without a vscode mock. `installedVersion`
+ * is the on-disk CLI version a restart would load — so "X is installed" is
+ * literally true. When the Tower is non-local (tunnelled / remote `towerHost`)
+ * the local `Restart Tower` action would target the wrong machine, so the
+ * wording names the host instead.
  */
 export function towerDivergenceMessage(input: {
   status: 'stale' | 'too-old';
   runningVersion: string | null;
-  expectedVersion: string;
+  installedVersion: string;
   hostIsLocal: boolean;
   host: string;
 }): string {
@@ -194,5 +207,5 @@ export function towerDivergenceMessage(input: {
   const restartClause = input.hostIsLocal
     ? 'Restart Tower to load it.'
     : `Restart the Tower on ${input.host} to load it.`;
-  return `${runningClause}, but ${input.expectedVersion} is installed. ${restartClause}`;
+  return `${runningClause}, but ${input.installedVersion} is installed. ${restartClause}`;
 }
