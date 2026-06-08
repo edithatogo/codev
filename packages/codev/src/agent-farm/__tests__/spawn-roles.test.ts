@@ -363,6 +363,45 @@ describe('spawn-roles', () => {
       expect(prompt).toContain('SPIR prompt for a v3 feature');
     });
 
+    it('inlines protocol.md content under a Protocol Reference delimiter (issue #1011)', async () => {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      fs.writeFileSync(
+        path.join(skeletonRoot, 'protocols', 'spir', 'protocol.md'),
+        '# SPIR Protocol\n\nMETA_DOC_SENTINEL: gate semantics and when-to-use guidance.',
+      );
+
+      const ctx: TemplateContext = {
+        protocol_name: 'SPIR',
+        mode: 'strict',
+        mode_soft: false,
+        mode_strict: true,
+        input_description: 'a v3 feature',
+      };
+      const prompt = buildPromptFromTemplate(makeConfig(), 'spir', ctx);
+
+      // Still carries the rendered builder-prompt template...
+      expect(prompt).toContain('SPIR prompt for a v3 feature');
+      // ...plus the inlined protocol meta-doc under a clear delimiter heading.
+      expect(prompt).toContain('## Protocol Reference (full text)');
+      expect(prompt).toContain('META_DOC_SENTINEL: gate semantics and when-to-use guidance.');
+    });
+
+    it('builds the prompt without error and omits the reference when protocol.md is absent (issue #1011)', () => {
+      // The skeleton-fallback beforeEach creates spir/ with no protocol.md.
+      const ctx: TemplateContext = {
+        protocol_name: 'SPIR',
+        mode: 'strict',
+        mode_soft: false,
+        mode_strict: true,
+        input_description: 'a v3 feature',
+      };
+      const prompt = buildPromptFromTemplate(makeConfig(), 'spir', ctx);
+
+      expect(prompt).toContain('SPIR prompt for a v3 feature');
+      expect(prompt).not.toContain('## Protocol Reference (full text)');
+    });
+
     it('local codev/protocols/ takes precedence over skeleton', async () => {
       const fs = await import('node:fs');
       const path = await import('node:path');

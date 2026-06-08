@@ -101,10 +101,34 @@ function loadBuilderPromptTemplate(config: Config, protocolName: string): string
     `protocols/${protocolName}/builder-prompt.md`,
     config.workspaceRoot,
   );
-  if (templatePath) {
-    return readFileSync(templatePath, 'utf-8');
+  if (!templatePath) {
+    return null;
   }
-  return null;
+  let template = readFileSync(templatePath, 'utf-8');
+
+  // Inline protocol.md so the builder has the protocol meta-doc in its initial
+  // context instead of fetching it. Post-Spec-618 fresh installs don't copy
+  // protocol files locally; the resolver finds protocol.md in the embedded
+  // skeleton (tier 4), but the builder-prompt's literal `cat codev/protocols/...`
+  // instruction can't — it would hit an empty path and waste turns hunting.
+  // Delivering it inline at spawn means the builder never runs a shell command
+  // that bypasses the resolver, and the meta-doc is in early conversation
+  // context for the whole session (read once, never re-shipped per phase).
+  const protocolDocPath = resolveCodevFile(
+    `protocols/${protocolName}/protocol.md`,
+    config.workspaceRoot,
+  );
+  if (protocolDocPath) {
+    template += `\n\n---\n\n## Protocol Reference (full text)\n\n` +
+      readFileSync(protocolDocPath, 'utf-8');
+  } else {
+    // Missing protocol.md is not fatal here: validateProtocol() runs earlier in
+    // the spawn flow and already aborts if both protocol.json and protocol.md
+    // are absent. Reaching this point means the json exists; spawn proceeds
+    // without the inline reference rather than failing.
+    logger.debug(`No protocol.md found for ${protocolName}; spawning without inlined reference`);
+  }
+  return template;
 }
 
 /**
