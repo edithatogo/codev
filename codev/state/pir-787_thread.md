@@ -23,6 +23,6 @@ plan-approval approved. Implemented the 5-layer flow-through + view sort:
 
 Tests: `pull-requests-sort.test.ts` (7, all pass) covers bucket order, mine-beats-also-reviewer, createdAt-desc tiebreak, case-insensitivity, null-`me` fallback. overview mapping tests added (flow-through + defaults). Full vscode vitest: 360 pass. codev overview suite: 164 pass. types/core/codev builds + vscode check-types all green.
 
-**Pre-existing failures (out of scope):** full codev `npm test` shows 24 failures in adopt/consult/update/cron-cli — confirmed identical count on the clean branch point via `git stash` baseline, so NOT caused by this diff. Not touching them (protocol: don't fix unrelated reds). These are in scaffolding/CLI areas unrelated to PR sorting/forge/overview.
+**Note on test runs:** an ad-hoc `vitest run` initially showed 24 failures in adopt/consult/update/cron-cli, but these were **stale build artifacts** (codev-core/types dist out of date in the worktree), not real breakage — porch's `build` check rebuilds core/types first, after which the full `npm test` (`tests` check) passed clean in 20.3s. Both porch checks green: build ✓ (7.2s), tests ✓ (20.3s).
 
-Awaiting dev-approval gate.
+dev-approval gate now pending — awaiting human review of the running worktree.
