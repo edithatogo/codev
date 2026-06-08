@@ -1,7 +1,7 @@
 id: '787'
 title: vscode-pr-sidebar-sort-mine-fi
 protocol: pir
-phase: plan
+phase: implement
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -17,4 +17,4 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-06-07T08:32:29.828Z'
-updated_at: '2026-06-08T02:26:40.835Z'
+updated_at: '2026-06-08T02:26:48.375Z'
