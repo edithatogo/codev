@@ -33,6 +33,25 @@
     6. Re-cp the template back to UNRELEASED.md to start the next cycle
 -->
 
+## Gemini consult lane swaps to Antigravity CLI (`agy`) before Gemini-CLI retires (#778, PR #988)
+
+Google retires the Gemini CLI subscription serving (Pro / Ultra / free) on **2026-06-18**. After that date the old binary that Codev's `gemini` consult lane shells out to will stop returning valid responses. This release swaps the lane's backend to the **Antigravity CLI (`agy`)** so consults keep working past the deadline.
+
+This is a backend swap, not a redesign. The user-facing surface is unchanged: the model identifier stays `gemini`, the `pro` alias is retained, `consult -m gemini` works the same way, porch's `consultation` lane continues to address gemini by name. Only the binary that the lane shells out to changed.
+
+A few design calls worth noting:
+
+- **OAuth-only backend.** `agy` cannot take an API key (verified), so there is no separate Gemini Developer API backend. Users authenticate via `agy auth` (OAuth subscription) — same Google account that powers Antigravity.
+- **agy's default model, no version pin.** Stays on whatever model `agy` defaults to. Codev doesn't pin a specific Gemini version anymore (the old Gemini CLI accepted explicit `--model gemini-2.5-pro` etc).
+- **Non-blocking skip when agy isn't ready.** Missing binary, unauthenticated, IDE-symlink stub, or per-call timeout all produce a `VERDICT: COMMENT`. Porch's `allApprove` treats this as non-blocking, so phases still advance with a 2-way consult (Claude + Codex). This is the failure mode the swap defends against — your consults keep working with a degraded panel rather than blocking.
+- **Real-binary preference.** `resolveAgyBin()` rejects the Antigravity IDE's `agy` symlink (by realpath) and prefers the real headless CLI. `CODEV_AGY_BIN` env var overrides if needed.
+
+**Operationally important if you use the `gemini` consult lane**: install `agy` and run `agy auth` before 2026-06-18 to keep your gemini consults blocking-equivalent to today. After that date, without agy, the lane skips with `COMMENT` and your consults run 2-way (Claude + Codex) instead of 3-way. The skip is non-blocking but you lose Gemini's review opinion.
+
+`codev doctor` now checks for `agy` presence and authentication state; install guidance is surfaced in its output.
+
+**Note on the builder harness.** The Gemini-CLI **builder** harness (`harness.ts` plus README CLI flag and config examples) stays on the retired CLI per the approved spec scope. That migration is tracked as a follow-up — different surface from consult, different timing pressure.
+
 ## Tower version preflight: warn when running Tower is behind installed CLI (#983, PR #1000)
 
 The v3.1.7 #791 CLI preflight verified that the installed `codev` CLI was at least as new as the VS Code extension. That check inspects the binary on disk. It does not, and could not, tell whether the running Tower process is executing that same code. After an `npm install -g @cluesmith/codev` upgrade without a Tower restart, the two diverge silently: the installed binary is the new version, the running Tower is still serving stale handlers from whatever code was loaded when it last started. The user hits 404s on new routes, stale wire shapes, and bug fixes that don't seem to apply, with no signal anywhere that an upgrade hasn't fully taken effect.
