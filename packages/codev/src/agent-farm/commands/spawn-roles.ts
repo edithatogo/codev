@@ -45,6 +45,7 @@ export interface TemplateContext {
   task_text?: string;
   spec_missing?: boolean;
   existing_branch?: string;  // Spec 609: when --branch is used, the name of the existing branch
+  protocol_reference?: string;  // #1011: protocol.md text, resolved fresh at spawn and inlined via the {{protocol_reference}} placeholder
 }
 
 /**
@@ -104,31 +105,50 @@ function loadBuilderPromptTemplate(config: Config, protocolName: string): string
   if (!templatePath) {
     return null;
   }
-  let template = readFileSync(templatePath, 'utf-8');
+  return readFileSync(templatePath, 'utf-8');
+}
 
-  // Inline protocol.md so the builder has the protocol meta-doc in its initial
-  // context instead of fetching it. Post-Spec-618 fresh installs don't copy
-  // protocol files locally; the resolver finds protocol.md in the embedded
-  // skeleton (tier 4), but the builder-prompt's literal `cat codev/protocols/...`
-  // instruction can't — it would hit an empty path and waste turns hunting.
-  // Delivering it inline at spawn means the builder never runs a shell command
-  // that bypasses the resolver, and the meta-doc is in early conversation
-  // context for the whole session (read once, never re-shipped per phase).
+/**
+ * Resolve `{{> <skeleton-relative-path>}}` include directives by reading the
+ * referenced framework file fresh through the resolver and substituting its
+ * content in place (recursively, so an included file may itself include).
+ *
+ * This is how framework files are delivered to the builder without committing
+ * a duplicated copy anywhere: the canonical file (e.g. a protocol's template)
+ * stays the single source of truth and is read at spawn time, so it can never
+ * go stale. Unresolvable includes collapse to empty (the file genuinely isn't
+ * shipped — e.g. an optional template), never an error.
+ */
+function resolveIncludes(content: string, config: Config, depth = 0): string {
+  if (depth > 5) return content; // cycle / runaway guard
+  return content.replace(/\{\{>\s*([^}\s]+)\s*\}\}/g, (_match, relPath: string) => {
+    const resolved = resolveCodevFile(relPath, config.workspaceRoot);
+    if (!resolved) {
+      logger.debug(`Include not resolved: ${relPath} (skipped)`);
+      return '';
+    }
+    return resolveIncludes(readFileSync(resolved, 'utf-8'), config, depth + 1);
+  });
+}
+
+/**
+ * Compute the protocol meta-doc text to inline into the spawn prompt via the
+ * `{{protocol_reference}}` placeholder. Reads `protocol.md` fresh through the
+ * resolver (tier 4 reaches the embedded skeleton in fresh installs) and
+ * resolves any `{{> ...}}` template includes inside it. Returns '' when the
+ * protocol ships no `protocol.md` (e.g. bugfix) — the builder-prompt's
+ * `{{#if protocol_reference}}` guard then renders cleanly with no reference.
+ */
+function resolveProtocolReference(config: Config, protocolName: string): string {
   const protocolDocPath = resolveCodevFile(
     `protocols/${protocolName}/protocol.md`,
     config.workspaceRoot,
   );
-  if (protocolDocPath) {
-    template += `\n\n---\n\n## Protocol Reference (full text)\n\n` +
-      readFileSync(protocolDocPath, 'utf-8');
-  } else {
-    // Missing protocol.md is not fatal here: validateProtocol() runs earlier in
-    // the spawn flow and already aborts if both protocol.json and protocol.md
-    // are absent. Reaching this point means the json exists; spawn proceeds
-    // without the inline reference rather than failing.
-    logger.debug(`No protocol.md found for ${protocolName}; spawning without inlined reference`);
+  if (!protocolDocPath) {
+    logger.debug(`No protocol.md for ${protocolName}; spawning without inlined reference`);
+    return '';
   }
-  return template;
+  return resolveIncludes(readFileSync(protocolDocPath, 'utf-8'), config);
 }
 
 /**
@@ -187,7 +207,10 @@ export function buildPromptFromTemplate(
   const template = loadBuilderPromptTemplate(config, protocolName);
   if (template) {
     logger.info(`Using template: protocols/${protocolName}/builder-prompt.md`);
-    return renderTemplate(template, context);
+    // Deliver the protocol meta-doc (and any templates it includes) fresh at
+    // spawn via the {{protocol_reference}} placeholder — never a committed copy.
+    const protocol_reference = resolveProtocolReference(config, protocolName);
+    return renderTemplate(template, { ...context, protocol_reference });
   }
   // Fallback: no template found, return a basic prompt
   logger.debug(`No template found for ${protocolName}, using inline prompt`);

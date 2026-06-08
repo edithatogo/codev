@@ -25,7 +25,7 @@ You are running in STRICT mode. This means:
 {{/if}}
 
 ## Protocol
-Follow the BUGFIX protocol.
+Follow the BUGFIX protocol. Read and internalize the protocol before starting any work.{{#if protocol_reference}} The full protocol text is included below under **## Protocol Reference (full text)**.{{/if}}
 
 {{#if issue}}
 ## Issue #{{issue.number}}
@@ -67,3 +67,11 @@ If you encounter **pre-existing flaky tests** (intermittent failures unrelated t
 1. Read the BUGFIX protocol
 2. Review the issue details
 3. Reproduce the bug before fixing
+
+{{#if protocol_reference}}
+
+---
+
+## Protocol Reference (full text)
+
+{{protocol_reference}}{{/if}}

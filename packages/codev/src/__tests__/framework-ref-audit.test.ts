@@ -97,17 +97,20 @@ describe('skeleton sweep + embeds (issue #1011 Layers 1/2, Patch 2)', () => {
     }
   });
 
-  it('experiment/spike embed the canonical template verbatim (drift guard)', () => {
+  it('experiment/spike reference templates via fresh-at-delivery include, not a static embed', () => {
     const cases = [
       { protocol: 'experiment', tmpl: 'notes.md' },
       { protocol: 'spike', tmpl: 'findings.md' },
     ];
     for (const { protocol, tmpl } of cases) {
       const md = readFileSync(join(SKELETON, 'protocols', protocol, 'protocol.md'), 'utf-8');
-      const canonical = readFileSync(join(SKELETON, 'protocols', protocol, 'templates', tmpl), 'utf-8');
-      expect(md).toContain('## Template: ' + tmpl);
-      // The full canonical template must be present verbatim — drift fails here.
-      expect(md).toContain(canonical.trimEnd());
+      // Uses the include placeholder, so the canonical template stays single-source
+      // and is read fresh at spawn — it cannot drift.
+      expect(md).toContain(`{{> protocols/${protocol}/templates/${tmpl}}}`);
+      // The static embed (BEGIN/END markers) is gone — that was the drift risk.
+      expect(md).not.toContain('EMBEDDED TEMPLATE');
+      // The canonical template still exists for the include to resolve against.
+      expect(existsSync(join(SKELETON, 'protocols', protocol, 'templates', tmpl))).toBe(true);
     }
   });
 });

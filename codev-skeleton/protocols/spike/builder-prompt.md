@@ -11,7 +11,7 @@ You are running in SOFT mode. This means:
 {{/if}}
 
 ## Protocol
-Follow the SPIKE protocol.
+Follow the SPIKE protocol. Read and internalize the protocol before starting any work.{{#if protocol_reference}} The full protocol text is included below under **## Protocol Reference (full text)**.{{/if}}
 
 {{#if task}}
 ## Spike Question
@@ -60,3 +60,11 @@ If you encounter **pre-existing flaky tests** (intermittent failures unrelated t
 1. Read the SPIKE protocol document
 2. Understand the question you're investigating
 3. Start with research — don't jump straight to code
+
+{{#if protocol_reference}}
+
+---
+
+## Protocol Reference (full text)
+
+{{protocol_reference}}{{/if}}

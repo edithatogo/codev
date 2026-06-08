@@ -32,26 +32,26 @@ when the file lives only in the embedded skeleton (fresh post-618 installs). The
 
 ## Locked Decisions (the 5 plan-gate decisions)
 
-**1 — Delimiter / heading format.**
-- Patch 1 (protocol.md): `\n\n---\n\n## Protocol Reference (full text)\n\n<contents>` (done).
-- Patch 2 embeds (experiment/spike): a `## Template` section near the reworded instruction,
-  with drift-anchor sentinels that use the **skeleton-relative** path (no `codev/` prefix, so the
-  Layer 3 doctor grep does not self-flag them):
-  ```
-  ## Template
-  > Embedded copy of the <name> template — delivered inline; recreate the target file from this.
-  <!-- BEGIN EMBEDDED TEMPLATE: protocols/<name>/templates/<file> -->
-  <template contents>
-  <!-- END EMBEDDED TEMPLATE: protocols/<name>/templates/<file> -->
-  ```
+**1 — Delivery: fresh-at-delivery placeholder substitution (NOT a committed copy).**
+*(Revised at the dev-approval gate: the earlier static-embed committed a duplicate that would go
+stale; the reviewer rejected it.)*
+- protocol.md: the builder-prompt `## Protocol` section keeps "Follow the X protocol. Read and
+  internalize the protocol before starting any work." and, under `{{#if protocol_reference}}`,
+  references the full text below. A `{{protocol_reference}}` placeholder near the end of the
+  prompt is filled **fresh at spawn** by reading `protocol.md` through the resolver, so nothing
+  is committed into `builder-prompt.md` (no stale copy). `{{#if}}` makes bugfix (no protocol.md)
+  render cleanly with neither the reference sentence nor the section.
+- Templates (experiment/spike): the `## Template:` section in `protocol.md` carries a
+  `{{> protocols/<name>/templates/<file>}}` include directive, resolved fresh (recursively, while
+  building `{{protocol_reference}}`). The canonical `templates/*.md` stays single-source.
 
-**2 — Patch 2 mechanism: Option B (explicit-embed). [agree, strengthened]**
-Sub-handled by reference kind (finding #1): drop the redundant pointer in `spir`/`aspir`
-plan prompts (no embed — prompt already self-contained); embed `notes.md`/`findings.md` into
-`experiment`/`spike` `protocol.md`. Rationale beyond the architect's: auto-detect (A) would
-inline the 184-line canonical plan template *on top of* the existing `### Plan Structure`,
-delivering two conflicting layouts. B is correct, not just simpler; and cheaper than feared
-(~164 embedded lines, the big template dropped not duplicated).
+**2 — A.2 mechanism: fresh-at-delivery include placeholder. [revised from explicit-embed]**
+Sub-handled by reference kind (finding #1): drop the redundant pointer in `spir`/`aspir` plan
+prompts (already self-contained via `### Plan Structure`); in `experiment`/`spike` `protocol.md`
+reword the cp/use-template step to point at the `## Template:` section, which holds a `{{> ...}}`
+include resolved fresh at delivery. Auto-detect (blanket scan) is still rejected — it would
+double-deliver a conflicting plan layout for spir/aspir. The include directive is explicit (the
+author marks exactly what to inline) so it keeps that discrimination without committing a copy.
 
 **3 — A.3 disposition: Option 2 (strip). [agree]**
 Remove the `> Quick Reference: See codev/resources/workflow-reference.md …` line from
@@ -138,8 +138,11 @@ sub-decision above. Doc hygiene tracked in #1013.)
 
 ## Risks & Alternatives Considered
 
-- **Drift:** embedded `notes.md`/`findings.md` vs canonical. Mitigation: unit test asserts the
-  `BEGIN/END EMBEDDED TEMPLATE` block byte-matches the canonical file. Drift fails CI.
+- **Drift:** eliminated by design — templates and protocol.md are delivered via fresh-at-spawn
+  placeholder substitution (`{{protocol_reference}}` / `{{> ...}}`), so no duplicate copy is
+  committed to drift. A test asserts the include placeholder is present and no static embed
+  remains. (Pre-existing, out-of-scope: `experiment/protocol.md` already has a `## notes.md
+  Template` section quoting part of `notes.md` via a relative ref — noted, not touched.)
 - **Doctor false positives:** scoping the grep to absolute `codev/…` paths (decision 5) keeps it
   aligned with the sweep; relative refs intentionally not matched.
 - **Auto-detect (Patch 2 = A):** rejected — double-delivers a conflicting plan layout (finding #1).
@@ -150,10 +153,11 @@ sub-decision above. Doc hygiene tracked in #1013.)
 ## Test Plan
 
 **Automated (`npm test` → `@cluesmith/codev`):**
-- Patch 1 (exist): protocol.md inlined under delimiter; omitted-without-error when absent.
+- Delivery (new): `buildPromptFromTemplate` fills `{{protocol_reference}}` from protocol.md fresh;
+  omits cleanly when absent; resolves `{{> ...}}` template includes recursively.
 - A.2 guard (new): `spir`/`aspir` `plan.md` no longer reference the template path and still carry
-  `### Plan Structure`; `experiment`/`spike` `protocol.md` embed-block byte-matches the canonical
-  template (drift guard).
+  `### Plan Structure`; `experiment`/`spike` `protocol.md` carry the `{{> ...}}` include and no
+  static embed.
 - Layer 2 guard (new): no `builder-prompt.md` references `protocol.md`; `roles/builder.md` has no
   `cat codev/protocols/…`; `spir/protocol.md` has no `workflow-reference.md`.
 - Layer 3 doctor (new, in `doctor.test.ts`): clean skeleton → check `ok`; a fixture with a

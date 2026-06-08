@@ -24,7 +24,7 @@ You are running in STRICT mode. This means:
 {{/if}}
 
 ## Protocol
-Follow the EXPERIMENT protocol.
+Follow the EXPERIMENT protocol. Read and internalize the protocol before starting any work.{{#if protocol_reference}} The full protocol text is included below under **## Protocol Reference (full text)**.{{/if}}
 
 ## EXPERIMENT Overview
 The EXPERIMENT protocol ensures disciplined experimentation:
@@ -74,3 +74,11 @@ If you encounter **pre-existing flaky tests** (intermittent failures unrelated t
 1. Read the EXPERIMENT protocol document
 2. Define your hypothesis clearly
 3. Follow the phases in order
+
+{{#if protocol_reference}}
+
+---
+
+## Protocol Reference (full text)
+
+{{protocol_reference}}{{/if}}

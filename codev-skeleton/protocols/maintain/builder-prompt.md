@@ -23,7 +23,7 @@ You are running in STRICT mode. This means:
 {{/if}}
 
 ## Protocol
-Follow the MAINTAIN protocol.
+Follow the MAINTAIN protocol. Read and internalize the protocol before starting any work.{{#if protocol_reference}} The full protocol text is included below under **## Protocol Reference (full text)**.{{/if}}
 
 ## MAINTAIN Overview
 
@@ -54,3 +54,11 @@ If you encounter **pre-existing flaky tests** (intermittent failures unrelated t
 2. Run `porch next` to get your first task
 3. Work through audit → clean → sync → verify in a single pass
 4. Document everything in the maintenance run file
+
+{{#if protocol_reference}}
+
+---
+
+## Protocol Reference (full text)
+
+{{protocol_reference}}{{/if}}

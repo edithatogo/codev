@@ -39,3 +39,15 @@ bugfix sub-decision RESOLVED → drop its dead pointer, embed nothing. Evidence:
 Also found + left out-of-scope: `codev/protocols/release/protocol.md:43` cats maintain/protocol.md (architect-run, codev/-only, not in skeleton). And relative-path template refs inside protocol.md (spir:215/301, experiment:90) — relative, informational.
 
 Two pre-existing tests updated (legit staleness from the sweep): baked-decisions.test.ts baselines (3 fixtures swept to match) + bugfix-619 assertion (now asserts no protocol.md path at all, preserving #619 intent). Build ✓, full suite ✓ (3270 passed, 13 pre-existing skips). Still at dev-approval gate.
+
+## Reworked at dev-approval gate: static embed/append → fresh-at-delivery placeholders (2026-06-08)
+
+Reviewer feedback: (a) "Follow the X protocol." is too terse + don't drop "Read and internalize..."; want a reference + a literal placeholder that's replaced; (b) embedding notes.md/findings.md inline causes staleness.
+
+Reworked the whole delivery mechanism:
+- spawn-roles.ts: removed the append; added `resolveIncludes()` (recursive `{{> path}}` resolution) + `resolveProtocolReference()`; buildPromptFromTemplate now sets a `{{protocol_reference}}` context var (protocol.md read FRESH at spawn, with its `{{> ...}}` template includes resolved). No committed copy anywhere → no staleness.
+- builder-prompts (9, both trees): `## Protocol` restored to "Follow the X protocol. Read and internalize the protocol before starting any work.{{#if protocol_reference}} ...included below...{{/if}}" + appended `{{#if protocol_reference}} ## Protocol Reference (full text) {{protocol_reference}}{{/if}}`.
+- experiment/spike protocol.md: replaced my static embed with `{{> protocols/<name>/templates/<file>}}` include (resolved fresh). Found + left a PRE-EXISTING out-of-scope partial copy of notes.md in experiment's `## notes.md Template` section (relative ref).
+- Tests: spawn-roles placeholder + include tests; framework-ref-audit drift test now asserts include-present + no static embed; baked-decisions baselines re-swept to the new `## Protocol` line.
+
+Build ✓, full suite ✓ (3271 passed, 13 skips). Still at dev-approval gate.

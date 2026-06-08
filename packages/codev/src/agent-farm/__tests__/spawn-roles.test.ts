@@ -319,7 +319,10 @@ describe('spawn-roles', () => {
       );
       fs.writeFileSync(
         path.join(skeletonRoot, 'protocols', 'spir', 'builder-prompt.md'),
-        '# {{protocol_name}} prompt for {{input_description}}',
+        // #1011: the {{protocol_reference}} placeholder is filled fresh at spawn
+        // from protocol.md (and its {{> ...}} includes); {{#if}} guards it.
+        '# {{protocol_name}} prompt for {{input_description}}\n' +
+          '{{#if protocol_reference}}\n## Protocol Reference (full text)\n{{protocol_reference}}{{/if}}\n',
       );
       fs.mkdirSync(path.join(skeletonRoot, 'protocols', 'bugfix'), { recursive: true });
       fs.writeFileSync(
@@ -363,7 +366,7 @@ describe('spawn-roles', () => {
       expect(prompt).toContain('SPIR prompt for a v3 feature');
     });
 
-    it('inlines protocol.md content under a Protocol Reference delimiter (issue #1011)', async () => {
+    it('fills {{protocol_reference}} with protocol.md content fresh at delivery (issue #1011)', async () => {
       const fs = await import('node:fs');
       const path = await import('node:path');
       fs.writeFileSync(
@@ -382,9 +385,39 @@ describe('spawn-roles', () => {
 
       // Still carries the rendered builder-prompt template...
       expect(prompt).toContain('SPIR prompt for a v3 feature');
-      // ...plus the inlined protocol meta-doc under a clear delimiter heading.
+      // ...plus the protocol meta-doc, substituted into the {{protocol_reference}}
+      // placeholder under the template's delimiter heading (read fresh, not committed).
       expect(prompt).toContain('## Protocol Reference (full text)');
       expect(prompt).toContain('META_DOC_SENTINEL: gate semantics and when-to-use guidance.');
+    });
+
+    it('resolves {{> ...}} template includes inside protocol.md fresh at delivery (issue #1011)', async () => {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      // protocol.md references a template via an include directive rather than a
+      // committed copy — the resolver reads the template fresh, so it can't drift.
+      fs.mkdirSync(path.join(skeletonRoot, 'protocols', 'spir', 'templates'), { recursive: true });
+      fs.writeFileSync(
+        path.join(skeletonRoot, 'protocols', 'spir', 'templates', 'plan.md'),
+        'TEMPLATE_SENTINEL: the canonical plan template body.',
+      );
+      fs.writeFileSync(
+        path.join(skeletonRoot, 'protocols', 'spir', 'protocol.md'),
+        '# SPIR Protocol\n\nUse the template below:\n\n{{> protocols/spir/templates/plan.md}}\n',
+      );
+
+      const ctx: TemplateContext = {
+        protocol_name: 'SPIR',
+        mode: 'strict',
+        mode_soft: false,
+        mode_strict: true,
+        input_description: 'a v3 feature',
+      };
+      const prompt = buildPromptFromTemplate(makeConfig(), 'spir', ctx);
+
+      // The include directive is gone (resolved), replaced by the template body.
+      expect(prompt).not.toContain('{{> protocols/spir/templates/plan.md}}');
+      expect(prompt).toContain('TEMPLATE_SENTINEL: the canonical plan template body.');
     });
 
     it('builds the prompt without error and omits the reference when protocol.md is absent (issue #1011)', () => {
