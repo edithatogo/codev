@@ -233,6 +233,11 @@ Projects currently in development (conceived through committed), sorted by prior
 
 ```yaml
 releases:
+  - version: "v3.1.8"
+    name: "Jacobean"
+    status: released
+    target_date: "2026-06-08"
+    notes: "Tower-restart story closes its loop plus a deadline-driven consult lane migration. Cross-package: Tower restart no longer leaves builder/architect terminals stranded — unfiltered `lsof` no longer kills client sockets (including the VSCode extension host's), and persistent sessions keep their ids across restart (#991/#999); startup-readiness barrier closes the rare reconcile-race edge case with an optional `/health.ready` signal (#997/#1004); web terminal matches VSCode's near-instant give-up on dead sessions via Origin-discriminated 4404 close code (#971/#992). Gemini consult lane swaps from the retiring Gemini CLI to the Antigravity CLI (`agy`) ahead of Google's 2026-06-18 deprecation, with non-blocking COMMENT skip when agy isn't installed or authenticated (#778/#988); `codev doctor` now checks agy presence + auth state. VSCode What's new: Tower version preflight on connect with `Restart Tower` action when the running Tower is behind the installed CLI (#983/#1000), Codev Dev surface — bottom-panel tab + status-bar chip on top of the existing PTY (#921/#996), Codev tab joins the bottom panel as scaffold for upcoming view migrations (#812/#990). VSCode Bug fixes: 'No active terminal' toast self-heals via bounded retry and surfaces a Recover Builders action when retries genuinely fail (#982/#1006), builders no longer briefly flash into UNCATEGORIZED during cleanup via ResolvedEnrichmentCache gating on source reachability (#907/#1003), terminal reconnect notice overwrites in place and wipes on successful reconnect (#1001/#1002), guarded commands always give feedback via modal-first/ephemeral-after pattern through a reusable showPreflightFeedback helper (#989/#995). Other fixes: dashboard Needs Attention no longer drops merged-but-gate-pending builders (#966/#980), `consult -m claude` bills against the Claude subscription when OAuth and API key are both set in the environment (#985/#986), CI runs vscode + dashboard vitest (#967/#993)."
   - version: "v3.1.7"
     name: "Jacobean"
     status: released
