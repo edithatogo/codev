@@ -8,6 +8,10 @@
 #   created          -> createdAt
 #   author (string)  -> author.login
 #   reviewDecision   -> ""  (Gitea has no GitHub-equivalent review-decision summary)
+#   reviewRequests   -> []  (no GitHub-equivalent per-user review-request list;
+#                            the VSCode sort silently skips the review-requested
+#                            bucket when empty)
+#   isDraft          -> false (not exposed via these fields)
 exec tea pulls list --limit 200 \
   --fields index,title,state,author,url,created,description \
   --output json \
@@ -19,5 +23,7 @@ exec tea pulls list --limit 200 \
       reviewDecision: "",
       body: (.description // ""),
       createdAt: .created,
-      author: {login: .author}
+      author: {login: .author},
+      reviewRequests: [],
+      isDraft: false
     }]'
