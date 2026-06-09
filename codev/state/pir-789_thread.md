@@ -15,3 +15,16 @@ CodeLensProvider on the right-side `file:` documents. New pure helpers (`diff-in
 CodeLenses may not render inside the `vscode.changes` multi-diff editor (document-scoped lenses + multi-diff embedding has historical gaps). Fallback if so: same provider/registry on the per-file `vscode.diff` (`openBuilderFileDiff`). This is exactly what PIR's dev-approval gate (run the worktree) is for.
 
 Plan written to `codev/plans/789-vscode-inject-file-hunk-refere.md`, committed. Awaiting `plan-approval`.
+
+## Implement phase (iteration 1)
+
+plan-approval approved. Implemented per plan, 3 commits:
+- `diff-inject-ref.ts` (pure helpers: parseHunkRanges/parseUnifiedDiff/buildBuilderFileRef/buildBuilderHunkRef/buildLensDescriptors) + `diff-inject-codelens.ts` (provider, `{scheme:'file'}`, per-viewDiff-run registry) + `diff-inject-ref.test.ts` (12 tests).
+- `terminal-manager.ts`: added `injectBuilderText`; `openBuilderByRoleOrId` now returns the resolved canonical id (non-breaking).
+- `view-diff.ts`: one extra `git diff -M --unified=3` parsed into the registry before `vscode.changes` (patch failure non-fatal). `extension.ts`: palette-hidden `codev.injectBuilderFileRef` + `activateDiffInjectCodeLens`.
+
+Validation: `pnpm test:unit` 372 pass (had to build core+types dist first — the 7 import-resolution failures were pre-existing unbuilt-dep, not my diff), `check-types` clean, `lint` clean, esbuild bundles.
+
+**Primary risk still unvalidated**: whether CodeLenses render inside the `vscode.changes` multi-diff editor. Needs the human to run the worktree at the dev-approval gate. Fallback documented in plan if they don't render.
+
+Awaiting `dev-approval`.
