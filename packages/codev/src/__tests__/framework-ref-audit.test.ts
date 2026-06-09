@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { auditFrameworkRefs } from '../lib/framework-ref-audit.js';
+import { auditFrameworkRefs, hasFrameworkOverrides } from '../lib/framework-ref-audit.js';
 import { resolveCodevIncludes } from '../lib/skeleton.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -75,6 +75,27 @@ describe('auditFrameworkRefs (issue #1011 Layer 3)', () => {
     const bare = mkdtempSync(join(tmpdir(), 'fw-ref-bare-'));
     mkdirSync(join(bare, 'specs'), { recursive: true }); // user dirs, no protocols/roles
     expect(auditFrameworkRefs(bare)).toEqual([]);
+  });
+
+  // #1011 (Codex iter-2): doctor must be a *true* no-op (print nothing) for a
+  // project with no overrides, not merely return an empty audit. That decision is
+  // hasFrameworkOverrides — an empty audit result alone can't distinguish
+  // "nothing to scan" from "scanned, clean", which is what made doctor print a
+  // spurious success line for projects with nothing to audit.
+  it('hasFrameworkOverrides: true when protocols/ (or roles/) exists', () => {
+    expect(hasFrameworkOverrides(dir)).toBe(true); // beforeEach created protocols/ + roles/
+  });
+
+  it('hasFrameworkOverrides: true when only roles/ exists', () => {
+    const rolesOnly = mkdtempSync(join(tmpdir(), 'fw-ref-roles-'));
+    mkdirSync(join(rolesOnly, 'roles'), { recursive: true });
+    expect(hasFrameworkOverrides(rolesOnly)).toBe(true);
+  });
+
+  it('hasFrameworkOverrides: false when neither protocols/ nor roles/ exists (true doctor no-op)', () => {
+    const noOverrides = mkdtempSync(join(tmpdir(), 'fw-ref-noov-'));
+    mkdirSync(join(noOverrides, 'specs'), { recursive: true });
+    expect(hasFrameworkOverrides(noOverrides)).toBe(false);
   });
 });
 

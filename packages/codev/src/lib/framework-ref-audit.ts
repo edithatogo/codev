@@ -80,6 +80,16 @@ export function auditFrameworkRefs(rootDir: string): FrameworkRefFinding[] {
   return findings;
 }
 
+/**
+ * Whether the project has any local framework overrides to scan, i.e. a
+ * `codev/protocols` or `codev/roles` directory exists. doctor uses this to stay
+ * a true no-op (no output) for projects that ship no overrides: an empty audit
+ * result alone cannot distinguish "nothing to scan" from "scanned, all clean".
+ */
+export function hasFrameworkOverrides(codevRoot: string): boolean {
+  return FRAMEWORK_DIRS.some((sub) => existsSync(join(codevRoot, sub)));
+}
+
 export function formatFrameworkRefFinding(f: FrameworkRefFinding): string {
   return `${f.file}:${f.line} shell-fetches a framework file by literal path: ${f.text}`;
 }
