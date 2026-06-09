@@ -85,8 +85,20 @@ phase that closes it.
       `onAddComment(line: number): void`, optional `onError?(err: unknown): void`).
 - [ ] `src/styles/default-theme.css` — the 8 v1 `--codev-canvas-*` tokens with fallbacks.
 - [ ] `src/index.ts` — public API exports (component placeholder, all interfaces/types).
-- [ ] Workspace wiring (picked up by `packages/*`; `pnpm install` resolves).
-- [ ] Tests: import-boundary (no `vscode`/`node:*`/`fs`/`fetch`); build-smoke (CJS `require` + ESM `import`).
+- [ ] **Repo build/test/release wiring (iter-1 Codex):** the package is auto-discovered by
+      `pnpm-workspace.yaml` (`packages/*`), but the repo's flows must be updated explicitly:
+  - [ ] **root `package.json`** — extend the `build` script (currently
+        `… --filter @cluesmith/codev-core build && … --filter @cluesmith/codev build`) to also
+        build `@cluesmith/codev-artifact-canvas`, and the `test` script to run its Vitest suite.
+  - [ ] **`scripts/bump-all.sh`** — add `@cluesmith/codev-artifact-canvas` so version bumps stay
+        aligned with the monorepo (it currently bumps only core/types/codev).
+  - [ ] Confirm `local-install.sh` needs no change (the package isn't published standalone or
+        consumed by a host yet) — note the finding either way.
+- [ ] `vitest.config.ts` uses a **DOM environment** (jsdom/happy-dom) so the renderer,
+      sanitization, and overlay tests (which touch the DOM/DOMPurify) run (iter-1 Claude).
+- [ ] Tests: import-boundary (no `vscode`/`node:*`/`fs`/`fetch`); build-smoke (CJS `require` +
+      ESM `import`). *(Optional, iter-1 Claude:* a React-18 install-and-import smoke to guard
+      the `^18` peer floor.*)*
 
 #### Implementation Details
 - **Deferred #1 (logger):** define the error contract here — `onError?` on `ArtifactCanvasProps`
@@ -101,6 +113,8 @@ phase that closes it.
 - [ ] `pnpm --filter @cluesmith/codev-artifact-canvas build` produces `dist/` with CJS, ESM, `.d.ts`, and the stylesheet.
 - [ ] Import-boundary + build-smoke tests pass.
 - [ ] Public API exports the three interfaces + `ReviewMarker` + `Disposable` + `ArtifactCanvasProps`.
+- [ ] The root `build` and `test` scripts include the new package (running each from the repo
+      root builds/tests it); `scripts/bump-all.sh` lists it. *(Closes iter-1 Codex #1.)*
 
 #### Test Plan
 - **Unit**: import-boundary scan; type-export presence.
@@ -198,21 +212,32 @@ Revert overlay/component modules; renderer (P2) and skeleton (P1) remain usable.
 - Prove the package end-to-end against a realistic (stub-adapter) host and document the contract.
 
 #### Deliverables
-- [ ] `examples/` — a Vite dev page with stub `FileAdapter`/`MarkerAdapter`/`ThemeAdapter`,
-      a sample artifact, demonstrating load → render → hover → click `+` → adapter receives
-      intent → host add → marker round-trips. Excluded from the published package.
+- [ ] **Automated end-to-end test (iter-1 Codex #2)** at
+      `src/__tests__/end-to-end.test.tsx` — the primary contract proof. Using Vitest +
+      Testing Library (jsdom) it: mounts `<ArtifactCanvas>` with in-test stub adapters
+      (`stubFileAdapter`, `stubMarkerAdapter`, `stubThemeAdapter` from
+      `src/__tests__/fixtures/`) and a sample markdown fixture; asserts render; simulates
+      hover + click (and keyboard Enter) on the `+` → asserts `onAddComment(line)` fired with
+      the expected 0-based line; the test's stub `MarkerAdapter.add` records the marker and the
+      stub `FileAdapter.watch` emits updated content → asserts the new marker renders. This is
+      the locked, automated form of the round-trip — not a manual step.
+- [ ] `examples/` — a Vite dev **page** (developer aid, not the proof) reusing the same stub
+      adapters + sample artifact for hands-on/visual exercise. Excluded from the published package.
 - [ ] `README.md` — the three adapter contracts, `ArtifactCanvasProps`, the `--codev-canvas-*`
-      tokens + override example, and a host-implementation walkthrough.
-- [ ] Any remaining cross-cutting tests (end-to-end smoke via the example harness).
+      tokens + override example, a host-implementation walkthrough, and a short note on **why
+      `tsup`** was chosen (so maintainers don't "normalize" it away — iter-1 Claude).
 
 #### Acceptance Criteria
-- [ ] Smoke-test host demonstrates the full round-trip.
-- [ ] README documents adapters + a host example.
+- [ ] The automated `end-to-end.test.tsx` round-trip passes (render → intent → host add →
+      watch/re-list → marker renders), via mouse and keyboard.
+- [ ] `examples/` Vite page runs and exercises the same flow by hand.
+- [ ] README documents adapters + a host example + the tsup rationale.
 - [ ] Full package `test` script green.
 
 #### Test Plan
-- **Manual**: run the Vite harness; exercise hover/click/keyboard/round-trip.
-- **Integration**: end-to-end via the harness fixtures.
+- **Integration (automated, primary)**: `src/__tests__/end-to-end.test.tsx` — full round-trip
+  with stub adapters + fixtures at known paths (above).
+- **Manual (dev aid)**: run the `examples/` Vite harness; exercise hover/click/keyboard.
 
 #### Rollback Strategy
 `examples/` and README are additive; removing them doesn't affect the published package.
@@ -234,6 +259,26 @@ Phase 1 ──→ Phase 2 ──→ Phase 3 ──→ Phase 4
 | Sanitize step silently ineffective | Low | High | Deferred-#3 test targets a vector only DOMPurify catches |
 | Marker scope creep into #863 | Med | Med | Deferred-#4 boundary explicit; reviewed against it |
 | React peer-version skew (18 vs 19) | Low | Med | Peer range `^18 || ^19`; avoid React-19-only APIs; (optional) React-18 CI smoke |
+| DOMPurify/renderer tests need a DOM | Low | Low | `vitest.config.ts` uses a jsdom/happy-dom environment (P1) |
+
+## Consultation Log
+
+### Plan iteration 1 (2026-06-09)
+**Verdicts (per the verdict files):** Gemini SKIPPED (agy lane unavailable); **Codex
+REQUEST_CHANGES (HIGH)**; **Claude APPROVE (HIGH)**. Not a clean 2/3.
+
+Codex's two blockers, both addressed in iteration 2:
+1. **Repo build/test/release wiring not named** — Phase 1 now explicitly updates root
+   `package.json` (build + test) and `scripts/bump-all.sh`, and notes the `local-install.sh`
+   finding, with a matching acceptance criterion. (The package would otherwise be an orphan
+   despite the "version aligned / build-graph integration" claim.)
+2. **Phase 4 end-to-end proof too vague** — locked an *automated* round-trip test at
+   `src/__tests__/end-to-end.test.tsx` (Vitest + Testing Library + stub-adapter fixtures) as
+   the primary contract proof; the `examples/` Vite page is now explicitly a dev aid, not the proof.
+
+Claude APPROVE'd; folded its non-blocking notes: jsdom test environment (P1 + risk table),
+tsup-rationale note in the README (P4), optional React-18 smoke (P1), and the P3-density /
+P3a-P3b split called out as a builder escape hatch.
 
 ## Notes
 This plan keeps host integration out of scope (per spec Non-Goals). The smoke-test host uses

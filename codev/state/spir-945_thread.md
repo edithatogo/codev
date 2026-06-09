@@ -133,3 +133,18 @@ error). Corrected: running the protocol autonomously to the plan-approval gate f
 
 Next: commit plan, run porch checks (plan_exists / has_phases_json / min_two_phases), porch done
 → plan 3-way consult (Codex + Claude; Gemini agy lane unavailable).
+
+## 2026-06-09 — Plan iter-1 consult + iter-2 revision
+
+Plan committed (5a28aa17), porch checks passed, porch done → plan consult.
+**Verdicts:** Gemini SKIPPED (agy), **Codex REQUEST_CHANGES (HIGH)**, **Claude APPROVE (HIGH)**.
+Codex's 2 (both valid, both fixed in iter-2):
+1. Plan never named the repo-wiring files — added P1 deliverables to update root `package.json`
+   (build+test) + `scripts/bump-all.sh` + acceptance criterion (else the package is an orphan).
+2. Phase 4 end-to-end proof too vague — locked an automated round-trip test at
+   `src/__tests__/end-to-end.test.tsx` (Vitest+TL+stub fixtures); `examples/` Vite page is now
+   a dev aid, not the proof.
+Folded Claude's cheap notes (jsdom test env, tsup-rationale README note, optional React-18
+smoke, P3-density split as an escape hatch). Added a Consultation Log to the plan.
+
+Next: commit iter-2, re-consult (iter-2 plan).
