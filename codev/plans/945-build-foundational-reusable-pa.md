@@ -82,7 +82,9 @@ phase that closes it.
 - [ ] Dev type deps: `@types/markdown-it` + `@types/dompurify` (this is a `.d.ts`-emitting TS
       project) + `vite` (for the `examples/` dev page in P4) — iter-2 Claude.
 - [ ] `tsconfig.json` extending `../config/tsconfig.base.json` (the repo base, as core/types do),
-      adding `jsx` + DOM libs; `vitest.config.ts`.
+      adding `jsx` + DOM libs, and **overriding `module`/`moduleResolution` to `ESNext`/`bundler`**
+      (the base is `NodeNext`; tsup owns module output — matches the dashboard's pattern, iter-3
+      Claude); `vitest.config.ts`.
 - [ ] `src/adapters/{FileAdapter,MarkerAdapter,ThemeAdapter}.ts` — **interfaces only**.
 - [ ] `src/types.ts` — `ReviewMarker`, `Disposable`, `ArtifactCanvasProps` (incl.
       `onAddComment(line: number): void`, optional `onError?(err: unknown): void`).
@@ -94,17 +96,25 @@ phase that closes it.
         `scripts/check-main-fresh.sh && pnpm --filter @cluesmith/codev-types build && pnpm --filter @cluesmith/codev-core build && pnpm --filter @cluesmith/codev build`
         (iter-2 Claude — accurate form). Insert the `@cluesmith/codev-artifact-canvas` build
         **after** `codev-core` and **before** `@cluesmith/codev`.
-  - [ ] **root `package.json` `test` — match existing convention, don't blindly extend.** Today
-        root `test` runs only `@cluesmith/codev` (the dashboard is *not* aggregated either). So:
-        give the package its own `test` script (Vitest), ensure **CI runs it**
-        (`pnpm --filter @cluesmith/codev-artifact-canvas test`), and only add it to the root
-        aggregate `test` if that matches the repo's actual approach. (iter-2 Claude — resolves the
-        iter-1 "wire into test flow" item without a convention-breaking change.)
+  - [ ] **root `package.json` `test` — do NOT extend it.** Today it runs only
+        `@cluesmith/codev` (the dashboard isn't aggregated either) and CI does not use it. The
+        package gets its **own** `test` script (Vitest) and is run in CI via the next bullet —
+        matching the repo's per-package convention. (iter-3 Codex/Claude — removes the iter-3
+        self-contradiction between this deliverable and the acceptance criterion.)
+  - [ ] **`.github/workflows/test.yml`** — add a dedicated artifact-canvas build+test step
+        alongside the existing per-package steps (core / codev / dashboard / vscode). This is the
+        repo's actual CI mechanism — *not* the root `test` script. (iter-3 Codex/Claude.)
   - [ ] **`scripts/bump-all.sh`** — add `@cluesmith/codev-artifact-canvas` at the monorepo
-        version (`3.1.x`, like the published packages — NOT the dashboard's private `0.0.0`),
-        so version bumps stay aligned (it currently bumps core/types/codev, conditionally vscode).
-  - [ ] Confirm `local-install.sh` needs no change (the package isn't published standalone or
-        consumed by a host yet) — note the finding either way.
+        version (`3.1.x`, like the published packages — NOT the dashboard's private `0.0.0`).
+  - [ ] **`codev/protocols/release/protocol.md`** — the release process still enumerates only
+        codev/core/types (+ vscode) for version bump/publish. Add the new package to its
+        version-bump enumeration. **Publish decision:** in v1 the package is consumed by hosts via
+        `workspace:*` and bundled by them (mirroring `@cluesmith/codev-core`, which is
+        packed/bundled and not on the public npm registry) — so it is **not independently
+        npm-published in v1**; add it to the publish list only when a consumer needs it
+        standalone. State this finding explicitly in the release doc. (iter-3 Codex.)
+  - [ ] Confirm `local-install.sh` needs no change (package not consumed by a host or published
+        standalone yet) — note the finding either way.
 - [ ] `vitest.config.ts` uses a **DOM environment** (jsdom/happy-dom) so the renderer,
       sanitization, and overlay tests (which touch the DOM/DOMPurify) run (iter-1 Claude).
 - [ ] Tests: import-boundary (no `vscode`/`node:*`/`fs`/`fetch`); build-smoke (CJS `require` +
@@ -124,8 +134,10 @@ phase that closes it.
 - [ ] `pnpm --filter @cluesmith/codev-artifact-canvas build` produces `dist/` with CJS, ESM, `.d.ts`, and the stylesheet.
 - [ ] Import-boundary + build-smoke tests pass.
 - [ ] Public API exports the three interfaces + `ReviewMarker` + `Disposable` + `ArtifactCanvasProps`.
-- [ ] The root `build` and `test` scripts include the new package (running each from the repo
-      root builds/tests it); `scripts/bump-all.sh` lists it. *(Closes iter-1 Codex #1.)*
+- [ ] The root `build` script includes the new package; the package has its own `test` script
+      run via a dedicated `.github/workflows/test.yml` step (root `test` is **not** extended);
+      `scripts/bump-all.sh` and the release protocol list it. *(Closes iter-1 Codex #1 + the
+      iter-3 wiring items; no internal contradiction.)*
 
 #### Test Plan
 - **Unit**: import-boundary scan; type-export presence.
@@ -316,6 +328,23 @@ Claude APPROVE'd; folded its accuracy nits: accurate root `build` script form + 
 root `test` convention clarified (per-package + CI, not a convention-breaking root extension);
 `@types/markdown-it`/`@types/dompurify` + `vite` devDeps; tsconfig base = `../config/tsconfig.base.json`;
 scenario-6 invariant assertion echoed in P3.
+
+### Plan iteration 3 (2026-06-09)
+**Verdicts:** Gemini SKIPPED (agy); **Codex REQUEST_CHANGES (HIGH)**; **Claude APPROVE (HIGH)**.
+Not a clean 2/3. Codex's three (all wiring; the first a contradiction introduced in iter-2/3),
+addressed in iteration 4:
+1. **P1 test-wiring self-contradiction** — deliverable said "don't extend root `test`" while the
+   AC said "root build *and test* include the package." Resolved decisively: root `build`
+   includes it; root `test` is **not** extended; the package's own `test` runs in CI. AC reworded
+   to match.
+2. **Release wiring incomplete** — added a deliverable to update `codev/protocols/release/protocol.md`
+   (version-bump enumeration) + an explicit publish decision: not independently npm-published in
+   v1 (consumed via `workspace:*` + bundled by hosts, mirroring `@cluesmith/codev-core`).
+3. **CI too abstract** — named `.github/workflows/test.yml` explicitly: add a dedicated
+   artifact-canvas build+test step alongside the existing per-package steps.
+
+Claude APPROVE'd; folded its tsconfig note (override `module`/`moduleResolution` to
+`ESNext`/`bundler` since the base is `NodeNext` and tsup owns module output).
 
 ## Notes
 This plan keeps host integration out of scope (per spec Non-Goals). The smoke-test host uses

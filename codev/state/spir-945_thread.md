@@ -163,3 +163,19 @@ Folded Claude's accuracy nits (accurate root build-script form + insertion point
 convention = per-package + CI; @types/* + vite devDeps; tsconfig base; scenario-6 echo).
 
 Next: commit iter-3, re-consult (iter-3 plan).
+
+## 2026-06-09 — Plan iter-3 consult + iter-4 revision
+
+Plan iter-3 (58be1b5d): Gemini SKIPPED, **Codex REQUEST_CHANGES (HIGH)**, **Claude APPROVE (HIGH)**.
+Codex's 3 (all repo-wiring; #1 a contradiction I introduced), fixed in iter-4:
+1. P1 test-wiring self-contradiction (deliverable "don't extend root test" vs AC "root test
+   includes it") → resolved: root build includes; root test NOT extended; package test runs in CI.
+2. Release wiring incomplete → added deliverable to update release protocol + explicit publish
+   decision (not independently npm-published in v1; bundled by hosts via workspace:*).
+3. CI too abstract → named `.github/workflows/test.yml` (dedicated step).
+Folded Claude's tsconfig note (override module/moduleResolution to ESNext/bundler).
+
+Pattern: Codex finds progressively smaller but legitimate repo-integration nits each round
+(mirrors the spec phase); Claude has APPROVED all 3 plan iterations. Continuing per autonomy.
+
+Next: commit iter-4, re-consult (iter-4 plan).
