@@ -14,31 +14,63 @@ import {
 } from '../diff-inject-ref.js';
 
 describe('parseHunkRanges', () => {
-  it('reads the new-side start and length from each hunk header', () => {
+  it('reads the header span and the first/last actually-changed new-side lines', () => {
     const patch = [
       '@@ -1,4 +1,6 @@',
-      ' a',
-      '+b',
+      ' a',     // new line 1 (context)
+      '+b',     // new line 2 (added) ← first/last change
+      ' c',     // new line 3 (context)
       '@@ -20,3 +22,10 @@ func()',
-      ' c',
+      ' x',     // new line 22 (context)
+      ' y',     // new line 23 (context)
+      '+z1',    // new line 24 (added) ← first change
+      '+z2',    // new line 25 (added) ← last change
+      ' w',     // new line 26 (context)
     ].join('\n');
     expect(parseHunkRanges(patch)).toEqual([
-      { newStart: 1, newEnd: 6 },
-      { newStart: 22, newEnd: 31 },
+      { newStart: 1, newEnd: 6, changeStart: 2, changeEnd: 2 },
+      { newStart: 22, newEnd: 31, changeStart: 24, changeEnd: 25 },
+    ]);
+  });
+
+  it('does not let deleted (-) lines advance the new-side line counter', () => {
+    const patch = [
+      '@@ -10,4 +10,3 @@',
+      ' ctx',   // new line 10
+      '-gone1',  // old-side only
+      '-gone2',  // old-side only
+      '+added',  // new line 11 ← the change
+      ' tail',   // new line 12
+    ].join('\n');
+    expect(parseHunkRanges(patch)).toEqual([
+      { newStart: 10, newEnd: 12, changeStart: 11, changeEnd: 11 },
     ]);
   });
 
   it('treats an absent new-side length as a single line', () => {
-    expect(parseHunkRanges('@@ -10 +11 @@')).toEqual([{ newStart: 11, newEnd: 11 }]);
+    expect(parseHunkRanges('@@ -10 +11 @@\n+added')).toEqual([
+      { newStart: 11, newEnd: 11, changeStart: 11, changeEnd: 11 },
+    ]);
   });
 
-  it('clamps a pure-deletion hunk (+c,0) to a single anchor line', () => {
-    expect(parseHunkRanges('@@ -5,3 +4,0 @@')).toEqual([{ newStart: 4, newEnd: 4 }]);
+  it('falls back to the header start for a pure-deletion hunk (no + lines)', () => {
+    expect(parseHunkRanges('@@ -5,3 +4,0 @@\n-gone')).toEqual([
+      { newStart: 4, newEnd: 4, changeStart: 4, changeEnd: 4 },
+    ]);
+  });
+
+  it('ignores the "\\ No newline at end of file" marker', () => {
+    const patch = ['@@ -1,1 +1,2 @@', ' a', '+b', '\\ No newline at end of file'].join('\n');
+    expect(parseHunkRanges(patch)).toEqual([
+      { newStart: 1, newEnd: 2, changeStart: 2, changeEnd: 2 },
+    ]);
   });
 
   it('ignores non-hunk lines, including content that looks like @@', () => {
-    const patch = ['+const x = "@@ not a header";', '@@ -1,1 +1,2 @@'].join('\n');
-    expect(parseHunkRanges(patch)).toEqual([{ newStart: 1, newEnd: 2 }]);
+    const patch = ['+const x = "@@ not a header";', '@@ -1,1 +1,2 @@', '+real'].join('\n');
+    expect(parseHunkRanges(patch)).toEqual([
+      { newStart: 1, newEnd: 2, changeStart: 1, changeEnd: 1 },
+    ]);
   });
 });
 
@@ -61,8 +93,12 @@ describe('parseUnifiedDiff', () => {
       '+q',
     ].join('\n');
     const map = parseUnifiedDiff(patch);
-    expect(map.get('src/a.ts')).toEqual([{ newStart: 1, newEnd: 3 }]);
-    expect(map.get('src/b.ts')).toEqual([{ newStart: 11, newEnd: 12 }]);
+    expect(map.get('src/a.ts')).toEqual([
+      { newStart: 1, newEnd: 3, changeStart: 2, changeEnd: 2 },
+    ]);
+    expect(map.get('src/b.ts')).toEqual([
+      { newStart: 11, newEnd: 12, changeStart: 11, changeEnd: 12 },
+    ]);
   });
 
   it('uses the new path for a rename (+++ b/<new>)', () => {
@@ -78,7 +114,9 @@ describe('parseUnifiedDiff', () => {
     ].join('\n');
     const map = parseUnifiedDiff(patch);
     expect([...map.keys()]).toEqual(['new/name.ts']);
-    expect(map.get('new/name.ts')).toEqual([{ newStart: 3, newEnd: 4 }]);
+    expect(map.get('new/name.ts')).toEqual([
+      { newStart: 3, newEnd: 4, changeStart: 3, changeEnd: 3 },
+    ]);
   });
 
   it('omits deleted files (new side is /dev/null)', () => {
@@ -106,10 +144,10 @@ describe('ref builders', () => {
 });
 
 describe('buildLensDescriptors', () => {
-  it('emits a file-level lens at line 0 plus one lens per hunk', () => {
+  it('emits a file-level lens at line 0 plus one lens per hunk, anchored on the change', () => {
     const lenses = buildLensDescriptors('a/b.ts', [
-      { newStart: 5, newEnd: 9 },
-      { newStart: 30, newEnd: 30 },
+      { newStart: 2, newEnd: 12, changeStart: 5, changeEnd: 9 },
+      { newStart: 28, newEnd: 32, changeStart: 30, changeEnd: 30 },
     ]);
     expect(lenses).toEqual([
       { line: 0, title: 'Send to builder PTY', refText: 'a/b.ts ' },
@@ -119,7 +157,9 @@ describe('buildLensDescriptors', () => {
   });
 
   it('clamps a hunk anchored at line 1 to a non-negative index', () => {
-    const lenses = buildLensDescriptors('a/b.ts', [{ newStart: 1, newEnd: 1 }]);
+    const lenses = buildLensDescriptors('a/b.ts', [
+      { newStart: 1, newEnd: 1, changeStart: 1, changeEnd: 1 },
+    ]);
     expect(lenses[1]!.line).toBe(0);
   });
 

@@ -9,10 +9,21 @@
  * command. All the line-math and ref-string logic lives here.
  */
 
-/** New-side line range of one diff hunk (1-based, inclusive). */
+/**
+ * New-side line numbers of one diff hunk (1-based, inclusive).
+ *
+ * `newStart`/`newEnd` are the hunk header's full new-side span (context
+ * included — what `@@ … +c,d @@` reports). `changeStart`/`changeEnd` are the
+ * first and last lines that are *actually added* on the new side (the `+`
+ * lines), so a lens anchored there sits on the real change rather than on the
+ * up-to-3 lines of leading context git emits with `--unified=3`. For a
+ * pure-deletion hunk (no `+` lines) both change fields collapse to `newStart`.
+ */
 export interface HunkRange {
   newStart: number;
   newEnd: number;
+  changeStart: number;
+  changeEnd: number;
 }
 
 /**
@@ -40,18 +51,45 @@ const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
  *   a sane location near the change.
  */
 export function parseHunkRanges(patch: string): HunkRange[] {
+  const lines = patch.split('\n');
   const ranges: HunkRange[] = [];
-  for (const line of patch.split('\n')) {
-    const m = HUNK_HEADER.exec(line);
+  for (let i = 0; i < lines.length; i++) {
+    const m = HUNK_HEADER.exec(lines[i]!);
     if (!m) { continue; }
     const newStart = Number(m[1]);
     const len = m[2] === undefined ? 1 : Number(m[2]);
-    if (len <= 0) {
-      const anchor = Math.max(newStart, 1);
-      ranges.push({ newStart: anchor, newEnd: anchor });
-    } else {
-      ranges.push({ newStart, newEnd: newStart + len - 1 });
+    const newEnd = len <= 0 ? Math.max(newStart, 1) : newStart + len - 1;
+
+    // Walk the hunk body to find the first/last lines actually added on the
+    // new side. `cur` tracks the new-side line number: context (' ') and
+    // additions ('+') advance it; deletions ('-') are old-side only; the
+    // "\ No newline at end of file" marker advances nothing.
+    let cur = newStart;
+    let firstChange = -1;
+    let lastChange = -1;
+    for (let j = i + 1; j < lines.length; j++) {
+      const l = lines[j]!;
+      if (HUNK_HEADER.test(l) || l.startsWith('diff --git')) { break; }
+      if (l.startsWith('\\')) { continue; }
+      if (l.startsWith('+')) {
+        if (firstChange === -1) { firstChange = cur; }
+        lastChange = cur;
+        cur++;
+      } else if (l.startsWith('-')) {
+        // old-side only — does not advance the new-side counter
+      } else {
+        cur++; // context line
+      }
     }
+
+    const changeStart = firstChange === -1 ? Math.max(newStart, 1) : firstChange;
+    const changeEnd = lastChange === -1 ? changeStart : lastChange;
+    ranges.push({
+      newStart: len <= 0 ? Math.max(newStart, 1) : newStart,
+      newEnd,
+      changeStart,
+      changeEnd,
+    });
   }
   return ranges;
 }
@@ -110,10 +148,14 @@ export function buildLensDescriptors(relPath: string, hunks: HunkRange[]): LensD
     { line: 0, title: 'Send to builder PTY', refText: buildBuilderFileRef(relPath) },
   ];
   for (const h of hunks) {
+    // Anchor and label on the first/last *changed* new-side lines, not the
+    // hunk header's context-inclusive span — so the lens sits on the real edit
+    // (e.g. inside the right function) rather than on the up-to-3 leading
+    // context lines git emits with --unified=3.
     lenses.push({
-      line: Math.max(h.newStart - 1, 0),
-      title: `Send to builder PTY (lines ${h.newStart}-${h.newEnd})`,
-      refText: buildBuilderHunkRef(relPath, h.newStart, h.newEnd),
+      line: Math.max(h.changeStart - 1, 0),
+      title: `Send to builder PTY (lines ${h.changeStart}-${h.changeEnd})`,
+      refText: buildBuilderHunkRef(relPath, h.changeStart, h.changeEnd),
     });
   }
   return lenses;
