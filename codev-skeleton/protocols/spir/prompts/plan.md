@@ -74,7 +74,7 @@ After completing the plan draft, signal completion. Porch will run 3-way consult
 
 ## Output
 
-Create the plan file at `codev/plans/{{artifact_name}}.md`, following the template below. It includes the **machine-readable phases JSON** that porch requires (the plan gate checks for a `"phases": [...]` block with at least two `"id"` entries), so keep that block and fill in real phases.
+Create the plan file at `codev/plans/{{artifact_name}}.md`, following the template below:
 
 {{> protocols/spir/templates/plan.md}}
 
