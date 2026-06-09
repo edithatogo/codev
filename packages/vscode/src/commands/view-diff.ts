@@ -28,8 +28,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
 import type { ConnectionManager } from '../connection-manager.js';
-import { parseUnifiedDiff } from '../diff-inject-ref.js';
-import { setDiffInjectSession, type DiffInjectSessionEntry } from '../diff-inject-codelens.js';
+import { parseUnifiedDiff, parseHunkRanges, type HunkRange } from '../diff-inject-ref.js';
+import { setDiffInjectSession, upsertDiffInjectEntry, type DiffInjectSessionEntry } from '../diff-inject-codelens.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -391,6 +391,42 @@ export async function viewDiff(
     `Reviewing #${builder.issueId ?? builder.id} (${defaultBranch} ↔ HEAD)`,
     resources,
   );
+}
+
+/**
+ * Populate the inject-codelens registry for a single changed file — the
+ * per-file `vscode.diff` opened from the Builders tree (`openBuilderFileDiff`).
+ * Mirrors what `viewDiff` does for the whole delta, but for one file, so the
+ * "Send to builder PTY" lenses appear even when the reviewer opens a file diff
+ * without first running View Diff. Non-fatal on git failure (the file-level
+ * lens still shows; only the per-hunk lenses are dropped).
+ */
+export async function registerFileInjectSession(args: {
+  worktreePath: string;
+  baseRef: string;
+  builderId: string;
+  plan: ResourcePlan;
+}): Promise<void> {
+  // Deleted/binary files have no right-side `file:` document to host a lens.
+  if (args.plan.right.kind !== 'file') { return; }
+  const relPath = args.plan.resourcePath;
+  let hunks: HunkRange[] = [];
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['-C', args.worktreePath, 'diff', '-M', '--unified=3', args.baseRef, '--', relPath],
+      { maxBuffer: 64 * 1024 * 1024 },
+    );
+    hunks = parseHunkRanges(stdout);
+  } catch {
+    // Leave hunks empty — the file-level lens is still useful.
+  }
+  upsertDiffInjectEntry({
+    fsPath: path.join(args.worktreePath, relPath),
+    builderId: args.builderId,
+    relPath,
+    hunks,
+  });
 }
 
 interface BuilderLike {

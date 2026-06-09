@@ -7,8 +7,9 @@ import { sendMessage } from './commands/send.js';
 import { approveGate } from './commands/approve.js';
 import { cleanupBuilder } from './commands/cleanup.js';
 import { openWorktreeWindow } from './commands/open-worktree-window.js';
-import { viewDiff, activateDiffView, diffUrisForChange } from './commands/view-diff.js';
+import { viewDiff, activateDiffView, diffUrisForChange, registerFileInjectSession } from './commands/view-diff.js';
 import { activateDiffInjectCodeLens } from './diff-inject-codelens.js';
+import { ensureDiffEditorCodeLens } from './ensure-diff-codelens.js';
 import { runWorktreeDev } from './commands/run-worktree-dev.js';
 import { stopWorktreeDev } from './commands/stop-worktree-dev.js';
 import { runWorkspaceDev, stopWorkspaceDev } from './commands/run-workspace-dev.js';
@@ -822,6 +823,17 @@ export async function activate(context: vscode.ExtensionContext) {
 		}),
 		reg('codev.openBuilderFileDiff', async (arg: unknown) => {
 			if (!(arg instanceof BuilderFileTreeItem)) { return; }
+			// Populate the inject-codelens registry for this file so the
+			// "Send to builder PTY" lenses (#789) render on the diff without a
+			// prior View Diff run, then offer to enable diffEditor.codeLens (off
+			// by default — VS Code hides CodeLens in diff editors).
+			await registerFileInjectSession({
+				worktreePath: arg.worktreePath,
+				baseRef: arg.baseRef,
+				builderId: arg.builderId,
+				plan: arg.plan,
+			});
+			await ensureDiffEditorCodeLens(context);
 			const { left, right } = diffUrisForChange(arg.plan, { wt: arg.worktreePath, ref: arg.baseRef });
 			const title = `${arg.plan.resourcePath} (#${arg.builderId})`;
 			await vscode.commands.executeCommand('vscode.diff', left, right, title);

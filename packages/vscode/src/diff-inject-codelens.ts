@@ -45,6 +45,14 @@ class DiffInjectCodeLensProvider implements vscode.CodeLensProvider {
     this._onDidChangeCodeLenses.fire();
   }
 
+  /** Add/replace a single file's entry without clearing the rest — used by the
+   *  per-file diff path (`codev.openBuilderFileDiff`), which can be opened
+   *  without a prior `viewDiff` run. */
+  upsert(entry: DiffInjectSessionEntry): void {
+    this.registry.set(entry.fsPath, entry);
+    this._onDidChangeCodeLenses.fire();
+  }
+
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
     const entry = this.registry.get(document.uri.fsPath);
     if (!entry) { return []; }
@@ -80,4 +88,10 @@ export function activateDiffInjectCodeLens(context: vscode.ExtensionContext): vo
  *  multi-file diff editor. */
 export function setDiffInjectSession(entries: DiffInjectSessionEntry[]): void {
   provider.setSession(entries);
+}
+
+/** Add/replace one file's entry without clearing the rest — called by the
+ *  per-file diff path so its lenses appear without a prior `viewDiff` run. */
+export function upsertDiffInjectEntry(entry: DiffInjectSessionEntry): void {
+  provider.upsert(entry);
 }
