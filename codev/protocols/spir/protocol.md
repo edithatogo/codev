@@ -211,7 +211,7 @@ When filing an issue for SPIR, you can pin architectural decisions you don't wan
 - All consultation feedback incorporated directly into this document
 - Include a "Consultation Log" section summarizing key feedback and changes
 - Version control captures evolution through commits
-**Structure**: provided in the specify-phase prompt (delivered via `porch next`)
+**Structure**: developed through the specify phase
 **Review Required**: Yes - Human approval AFTER consultations
 
 ### P - Plan (Structured Decomposition)
@@ -297,7 +297,7 @@ Each phase should be:
 - Include phase status tracking within this document
 - **DO NOT include time estimates** - Focus on deliverables and dependencies, not hours/days
 - Version control captures evolution through commits
-**Structure**: provided in the plan-phase prompt (delivered via `porch next`)
+**Structure**: follows the plan template provided by the plan phase
 **Review Required**: Yes - Technical lead approval AFTER consultations
 
 ### (IDE) - Implementation Loop
