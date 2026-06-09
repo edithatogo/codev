@@ -79,7 +79,10 @@ phase that closes it.
       Testing Library; `exports` for the main entry and `./default-theme.css`; `files`
       excluding `examples/`.
 - [ ] `tsup.config.ts` — CJS + ESM + `.d.ts`; externalize React; copy/emit the stylesheet.
-- [ ] `tsconfig.json` extending the repo base; `vitest.config.ts`.
+- [ ] Dev type deps: `@types/markdown-it` + `@types/dompurify` (this is a `.d.ts`-emitting TS
+      project) + `vite` (for the `examples/` dev page in P4) — iter-2 Claude.
+- [ ] `tsconfig.json` extending `../config/tsconfig.base.json` (the repo base, as core/types do),
+      adding `jsx` + DOM libs; `vitest.config.ts`.
 - [ ] `src/adapters/{FileAdapter,MarkerAdapter,ThemeAdapter}.ts` — **interfaces only**.
 - [ ] `src/types.ts` — `ReviewMarker`, `Disposable`, `ArtifactCanvasProps` (incl.
       `onAddComment(line: number): void`, optional `onError?(err: unknown): void`).
@@ -87,11 +90,19 @@ phase that closes it.
 - [ ] `src/index.ts` — public API exports (component placeholder, all interfaces/types).
 - [ ] **Repo build/test/release wiring (iter-1 Codex):** the package is auto-discovered by
       `pnpm-workspace.yaml` (`packages/*`), but the repo's flows must be updated explicitly:
-  - [ ] **root `package.json`** — extend the `build` script (currently
-        `… --filter @cluesmith/codev-core build && … --filter @cluesmith/codev build`) to also
-        build `@cluesmith/codev-artifact-canvas`, and the `test` script to run its Vitest suite.
-  - [ ] **`scripts/bump-all.sh`** — add `@cluesmith/codev-artifact-canvas` so version bumps stay
-        aligned with the monorepo (it currently bumps only core/types/codev).
+  - [ ] **root `package.json` `build`** — the actual script is
+        `scripts/check-main-fresh.sh && pnpm --filter @cluesmith/codev-types build && pnpm --filter @cluesmith/codev-core build && pnpm --filter @cluesmith/codev build`
+        (iter-2 Claude — accurate form). Insert the `@cluesmith/codev-artifact-canvas` build
+        **after** `codev-core` and **before** `@cluesmith/codev`.
+  - [ ] **root `package.json` `test` — match existing convention, don't blindly extend.** Today
+        root `test` runs only `@cluesmith/codev` (the dashboard is *not* aggregated either). So:
+        give the package its own `test` script (Vitest), ensure **CI runs it**
+        (`pnpm --filter @cluesmith/codev-artifact-canvas test`), and only add it to the root
+        aggregate `test` if that matches the repo's actual approach. (iter-2 Claude — resolves the
+        iter-1 "wire into test flow" item without a convention-breaking change.)
+  - [ ] **`scripts/bump-all.sh`** — add `@cluesmith/codev-artifact-canvas` at the monorepo
+        version (`3.1.x`, like the published packages — NOT the dashboard's private `0.0.0`),
+        so version bumps stay aligned (it currently bumps core/types/codev, conditionally vscode).
   - [ ] Confirm `local-install.sh` needs no change (the package isn't published standalone or
         consumed by a host yet) — note the finding either way.
 - [ ] `vitest.config.ts` uses a **DOM environment** (jsdom/happy-dom) so the renderer,
@@ -174,15 +185,22 @@ Revert the renderer module; Phase 1 surface remains intact.
 - [ ] `src/overlays/` — hover-`+` affordance → invokes `onAddComment(line)` (0-based). The
       package never calls `MarkerAdapter.add` (D6). **Keyboard-accessible**: focusable,
       Enter/Space activation, ARIA label.
-- [ ] `src/components/ArtifactCanvas.tsx` — wires `FileAdapter` (read + watch),
-      `MarkerAdapter` (list), `ThemeAdapter`; subscriptions via `useEffect` with idempotent
-      `dispose()`; auto re-`list` when `watch` fires (D6); errors → `console` + `onError?`.
+- [ ] `src/components/ArtifactCanvas.tsx` — wires `FileAdapter` (read + watch) and
+      `MarkerAdapter` (list). It **subscribes only to `FileAdapter.watch`** (via `useEffect`,
+      idempotent `dispose()`) and auto re-calls `MarkerAdapter.list` when `watch` fires (D6).
+      Errors → `console` + `onError?`.
+- [ ] **ThemeAdapter stays off the v1 render path (iter-2 Codex; spec D4 Model A).**
+      `themeAdapter` is accepted as a prop, but the v1 component **does NOT** subscribe to its
+      `onChange` nor call `resolve()` for rendering — theming is entirely CSS-variable-driven.
+      `resolve()`/`onChange` exist for #863's JS-side canvas and are exercised **only** by the
+      standalone contract test (scenario 4), never by `ArtifactCanvas`. (Explicitly: do not add
+      theme-driven re-render to v1.)
 - [ ] **v1 marker rendering (deferred #4):** minimal line-level indicator for lines bearing a
       `ReviewMarker`, author + text via the overlay; no inline bubbles / minimap (those = #863).
-- [ ] Theme binding via CSS variables only; `resolve()` not on the render path (D4 Model A).
 - [ ] Tests: overlay intent (scenario 2), marker round-trip (scenario 3), ThemeAdapter
-      contract (scenario 4), invariant (scenario 6), subscription teardown (scenario 9),
-      keyboard activation.
+      contract (scenario 4), invariant (scenario 6 — asserts the overlay's *only* output channel
+      is the `onAddComment` intent event; no side-channel writes), subscription teardown
+      (scenario 9), keyboard activation.
 
 #### Implementation Details
 - **Deferred #5:** while touching Current State references, correct the spec's
@@ -218,9 +236,12 @@ Revert overlay/component modules; renderer (P2) and skeleton (P1) remain usable.
       (`stubFileAdapter`, `stubMarkerAdapter`, `stubThemeAdapter` from
       `src/__tests__/fixtures/`) and a sample markdown fixture; asserts render; simulates
       hover + click (and keyboard Enter) on the `+` → asserts `onAddComment(line)` fired with
-      the expected 0-based line; the test's stub `MarkerAdapter.add` records the marker and the
-      stub `FileAdapter.watch` emits updated content → asserts the new marker renders. This is
-      the locked, automated form of the round-trip — not a manual step.
+      the expected 0-based line; the test's stub `MarkerAdapter.add` **serializes a positional
+      `<!-- REVIEW(@author): text -->` into the markdown fixture *string*** (the
+      text-as-source-of-truth form, D3/#857), the stub `FileAdapter.watch` emits that updated
+      **text**, and `read`/`list` **derive their state from the updated text — not an in-memory
+      side store** → asserts the new marker renders. This proves the round-trip goes *through
+      text* (satisfying the text-as-source-of-truth invariant), not merely UI refresh (iter-2 Codex).
 - [ ] `examples/` — a Vite dev **page** (developer aid, not the proof) reusing the same stub
       adapters + sample artifact for hands-on/visual exercise. Excluded from the published package.
 - [ ] `README.md` — the three adapter contracts, `ArtifactCanvasProps`, the `--codev-canvas-*`
@@ -279,6 +300,22 @@ Codex's two blockers, both addressed in iteration 2:
 Claude APPROVE'd; folded its non-blocking notes: jsdom test environment (P1 + risk table),
 tsup-rationale note in the README (P4), optional React-18 smoke (P1), and the P3-density /
 P3a-P3b split called out as a builder escape hatch.
+
+### Plan iteration 2 (2026-06-09)
+**Verdicts:** Gemini SKIPPED (agy); **Codex REQUEST_CHANGES (HIGH)**; **Claude APPROVE (HIGH)**.
+Not a clean 2/3. Codex's two spec-contract issues, both addressed in iteration 3:
+1. **ThemeAdapter still on the render path** — P3 reworded: the v1 component accepts
+   `themeAdapter` as a prop but does NOT subscribe to `onChange` or call `resolve()` for
+   rendering (theming is CSS-variable-driven, D4 Model A); only `FileAdapter.watch` is
+   subscribed; `resolve()`/`onChange` are exercised solely by the scenario-4 contract test.
+2. **e2e proof didn't guarantee round-trip *through text*** — P4 e2e test now requires the stub
+   `MarkerAdapter.add` to serialize a positional `<!-- REVIEW(...) -->` into the markdown fixture
+   string, with `read`/`watch`/`list` deriving state from that updated text (not an in-memory store).
+
+Claude APPROVE'd; folded its accuracy nits: accurate root `build` script form + insertion point;
+root `test` convention clarified (per-package + CI, not a convention-breaking root extension);
+`@types/markdown-it`/`@types/dompurify` + `vite` devDeps; tsconfig base = `../config/tsconfig.base.json`;
+scenario-6 invariant assertion echoed in P3.
 
 ## Notes
 This plan keeps host integration out of scope (per spec Non-Goals). The smoke-test host uses

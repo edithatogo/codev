@@ -148,3 +148,18 @@ Folded Claude's cheap notes (jsdom test env, tsup-rationale README note, optiona
 smoke, P3-density split as an escape hatch). Added a Consultation Log to the plan.
 
 Next: commit iter-2, re-consult (iter-2 plan).
+
+## 2026-06-09 — Plan iter-2 consult + iter-3 revision
+
+Plan iter-2 (14ac8e73): Gemini SKIPPED, **Codex REQUEST_CHANGES (HIGH)**, **Claude APPROVE (HIGH)**.
+Codex's 2 (both valid spec-contract issues, fixed in iter-3):
+1. ThemeAdapter still implied on the v1 render path — P3 reworded: themeAdapter is a prop but
+   NOT subscribed/used for render (CSS-var theming only, D4 Model A); only FileAdapter.watch is
+   subscribed; resolve/onChange exercised only by the scenario-4 contract test.
+2. e2e proof didn't guarantee round-trip through TEXT — P4 e2e test now requires stub
+   MarkerAdapter.add to serialize a positional `<!-- REVIEW(...) -->` into the markdown string,
+   with read/watch/list deriving from that text (not an in-memory store).
+Folded Claude's accuracy nits (accurate root build-script form + insertion point; root test
+convention = per-package + CI; @types/* + vite devDeps; tsconfig base; scenario-6 echo).
+
+Next: commit iter-3, re-consult (iter-3 plan).
