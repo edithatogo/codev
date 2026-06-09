@@ -74,3 +74,13 @@ Build ✓, full suite ✓ (3271 passed, 13 skips). Still at dev-approval gate.
 ## Doctor check repointed: workspace overrides, not global skeleton (2026-06-09)
 
 Reviewer: "codev doctor is an end-user tool — why is its check focused on the global package skeleton?" Correct catch, and a real flaw (not just framing). Auditing the shipped skeleton from an end-user tool is pointless — the user can't fix it, and it's already CI-guaranteed clean. Repointed the `doctor()` check from `getSkeletonDir()` (global package) to the **workspace `codev/` overrides** (`resolve(workspaceRoot, 'codev')`), moved it inside the "in a codev project" block, no-op when there are no local protocol/role overrides. Shipped-skeleton guard stays in the unit test (`framework-ref-audit.test.ts` scans `codev-skeleton/`, runs in CI). Renamed lib param `skeletonDir`→`rootDir`; updated the CLAUDE.md/AGENTS.md convention line ("audits your project's local codev/ overrides"); revised plan decision #5 (was wrongly "skeleton-only" — this matches the architect's original Layer 3 intent of grepping local codev/ dirs). Build ✓, suite ✓ (3272 passed, 13 skips).
+
+## Removed the {{#if protocol_reference}} guard; enforce completeness instead (2026-06-09)
+
+Reviewer: since all protocols now have a protocol.md (bugfix got one in #1013), the `{{#if protocol_reference}}` guard is always-true / dead code — remove it. Done, safely:
+- Stripped `{{#if protocol_reference}}`/`{{/if}}` from both spots (the `## Protocol` line + the EOF `## Protocol Reference (full text)` block) in all 9 builder-prompts, both trees → the protocol reference is now **unconditional**.
+- Added a **completeness unit test** (`framework-ref-audit.test.ts`): every shipped skeleton protocol with a `protocol.json` must also ship a `protocol.md`. This makes the "every protocol has a meta-doc" invariant true-by-construction (a future json-only protocol fails CI rather than rendering an empty `## Protocol Reference` section), which is what justifies dropping the guard.
+- Updated the spawn-roles "absent" test (the omit-behavior is gone; now asserts the build still succeeds and the placeholder resolves) + the mock template (unconditional). Re-swept the 3 Spec-746 baselines to the unconditional `## Protocol` line (pure-addition diff).
+- Residual (accepted): a user's OWN `codev/protocols/` json-only override would render an empty heading — their malformed customization, low-likelihood; not guarded.
+
+Build ✓, suite ✓ (3273 passed, 13 skips). Still at dev-approval gate.

@@ -41,11 +41,14 @@ when the file lives only in the embedded skeleton (fresh post-618 installs). The
 *(Revised at the dev-approval gate: the earlier static-embed committed a duplicate that would go
 stale; the reviewer rejected it.)*
 - protocol.md: the builder-prompt `## Protocol` section keeps "Follow the X protocol. Read and
-  internalize the protocol before starting any work." and, under `{{#if protocol_reference}}`,
-  references the full text below. A `{{protocol_reference}}` placeholder near the end of the
-  prompt is filled **fresh at spawn** by reading `protocol.md` through the resolver, so nothing
-  is committed into `builder-prompt.md` (no stale copy). `{{#if}}` makes bugfix (no protocol.md)
-  render cleanly with neither the reference sentence nor the section.
+  internalize the protocol before starting any work." and references the full text below. A
+  `{{protocol_reference}}` placeholder near the end of the prompt is filled **fresh at spawn** by
+  reading `protocol.md` through the resolver, so nothing is committed into `builder-prompt.md` (no
+  stale copy). The reference is **unconditional** (no `{{#if}}` guard): every shipped protocol
+  ships a `protocol.md` (bugfix got one in #1013), and a unit test enforces that invariant so a
+  future `protocol.json`-only protocol fails CI rather than rendering an empty section. (An earlier
+  iteration wrapped it in `{{#if protocol_reference}}`; removed once the completeness invariant was
+  made explicit — the guard was always-true for the shipped set and read as dead code.)
 - Templates (experiment/spike): the `## Template:` section in `protocol.md` carries a
   `{{> protocols/<name>/templates/<file>}}` include directive, resolved fresh (recursively, while
   building `{{protocol_reference}}`). The canonical `templates/*.md` stays single-source.

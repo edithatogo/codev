@@ -24,7 +24,7 @@ You are running in STRICT mode. This means:
 {{/if}}
 
 ## Protocol
-Follow the RESEARCH protocol. Read and internalize the protocol before starting any work.{{#if protocol_reference}} The full protocol text is included below under **## Protocol Reference (full text)**.{{/if}}
+Follow the RESEARCH protocol. Read and internalize the protocol before starting any work. The full protocol text is included below under **## Protocol Reference (full text)**.
 
 ## RESEARCH Overview
 
@@ -84,10 +84,8 @@ wait
 3. Write the research brief (Phase 1)
 4. Wait for scope-approval before proceeding to investigation
 
-{{#if protocol_reference}}
-
 ---
 
 ## Protocol Reference (full text)
 
-{{protocol_reference}}{{/if}}
+{{protocol_reference}}

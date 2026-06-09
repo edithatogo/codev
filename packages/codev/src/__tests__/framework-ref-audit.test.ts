@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { auditFrameworkRefs } from '../lib/framework-ref-audit.js';
 
@@ -74,6 +74,24 @@ describe('auditFrameworkRefs (issue #1011 Layer 3)', () => {
     const bare = mkdtempSync(join(tmpdir(), 'fw-ref-bare-'));
     mkdirSync(join(bare, 'specs'), { recursive: true }); // user dirs, no protocols/roles
     expect(auditFrameworkRefs(bare)).toEqual([]);
+  });
+});
+
+describe('shipped protocol completeness (issue #1011)', () => {
+  // The builder-prompts inline `{{protocol_reference}}` UNCONDITIONALLY (no {{#if}}
+  // guard) — that is safe only because every shipped protocol ships a protocol.md
+  // for it to resolve. This test enforces that invariant: a contributor adding a
+  // protocol.json-only protocol (the shape bugfix had pre-#1013) fails CI here,
+  // rather than shipping a builder prompt with an empty `## Protocol Reference`.
+  it('every shipped skeleton protocol with a protocol.json also ships a protocol.md', () => {
+    const protocolsDir = join(SKELETON, 'protocols');
+    if (!existsSync(protocolsDir)) return; // resilient if layout shifts
+    const missing = readdirSync(protocolsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .filter((name) => existsSync(join(protocolsDir, name, 'protocol.json')))
+      .filter((name) => !existsSync(join(protocolsDir, name, 'protocol.md')));
+    expect(missing).toEqual([]);
   });
 });
 

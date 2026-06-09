@@ -320,9 +320,11 @@ describe('spawn-roles', () => {
       fs.writeFileSync(
         path.join(skeletonRoot, 'protocols', 'spir', 'builder-prompt.md'),
         // #1011: the {{protocol_reference}} placeholder is filled fresh at spawn
-        // from protocol.md (and its {{> ...}} includes); {{#if}} guards it.
+        // from protocol.md (and its {{> ...}} includes). Unconditional — every
+        // shipped protocol ships a protocol.md (guarded by the completeness test
+        // below), so there is no {{#if}} guard.
         '# {{protocol_name}} prompt for {{input_description}}\n' +
-          '{{#if protocol_reference}}\n## Protocol Reference (full text)\n{{protocol_reference}}{{/if}}\n',
+          '## Protocol Reference (full text)\n{{protocol_reference}}\n',
       );
       fs.mkdirSync(path.join(skeletonRoot, 'protocols', 'bugfix'), { recursive: true });
       fs.writeFileSync(
@@ -420,8 +422,12 @@ describe('spawn-roles', () => {
       expect(prompt).toContain('TEMPLATE_SENTINEL: the canonical plan template body.');
     });
 
-    it('builds the prompt without error and omits the reference when protocol.md is absent (issue #1011)', () => {
-      // The skeleton-fallback beforeEach creates spir/ with no protocol.md.
+    it('builds the prompt without error when protocol.md is absent (issue #1011)', () => {
+      // The skeleton-fallback beforeEach creates spir/ with no protocol.md. The
+      // reference is now unconditional (no {{#if}} guard), so {{protocol_reference}}
+      // resolves to empty rather than the prompt omitting the section — the build
+      // must still succeed without error. (Shipped protocols can't hit this: the
+      // completeness test guarantees every shipped protocol has a protocol.md.)
       const ctx: TemplateContext = {
         protocol_name: 'SPIR',
         mode: 'strict',
@@ -432,7 +438,7 @@ describe('spawn-roles', () => {
       const prompt = buildPromptFromTemplate(makeConfig(), 'spir', ctx);
 
       expect(prompt).toContain('SPIR prompt for a v3 feature');
-      expect(prompt).not.toContain('## Protocol Reference (full text)');
+      expect(prompt).not.toContain('{{protocol_reference}}'); // placeholder resolved (to empty), not left raw
     });
 
     it('local codev/protocols/ takes precedence over skeleton', async () => {
