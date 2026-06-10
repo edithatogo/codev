@@ -57,6 +57,12 @@ Validation: 368 unit tests, check-types, lint, bundle all green. **Needs human r
 
 Deferred to future issue(s): hover-triggered forward; deeper nesting; per-kind density settings.
 
+## Review phase
+
+dev-approval approved. During final testing found a ~100% CPU spike — traced (via extension-host CPU profile = 99% idle, then live `ps` of the rg processes) to a newly-installed **Extension Test Runner** extension walking the `.builders/` worktree farm, NOT this feature. Filed **#1022** (workspace excludes + drop the recommendation). Also: removed the misdiagnosed symbol cache; fixed the diffEditor.codeLens enable-toast to write Global scope (personal pref, not Workspace); identified a stray uncommitted workspace `false` (from diagnostics) shadowing it — user reverts.
+
+Review written (`codev/reviews/789-...md`), lessons-learned updated (3 entries: diff-editor CodeLens constraints, symbol- vs hunk-driven granularity, profile-before-caching). Opening PR.
+
 ## Follow-ups during dev-approval
 - Renamed lens label → "Forward to Builder"; command ids `codev.forwardToBuilder` / `codev.forwardSelectionToBuilder`.
 - Added `Cmd/Ctrl+K B` keybinding for Forward Selection (when matched to the menu so the hint renders); menu title prefixed "Codev:".
