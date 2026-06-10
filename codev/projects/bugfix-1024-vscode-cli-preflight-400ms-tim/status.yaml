@@ -1,0 +1,14 @@
+id: bugfix-1024
+title: vscode-cli-preflight-400ms-tim
+protocol: bugfix
+phase: investigate
+plan_phases: []
+current_plan_phase: null
+gates:
+  pr:
+    status: pending
+iteration: 1
+build_complete: false
+history: []
+started_at: '2026-06-10T09:25:24.642Z'
+updated_at: '2026-06-10T09:25:24.642Z'
