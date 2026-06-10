@@ -75,7 +75,7 @@ Revised approach (architect-directed at the gate):
    - Excluded: Property, Field, EnumMember, TypeParameter, Package, value kinds, one-line/non-top-level Variable/Constant.
    - A symbol lens that anchors on line 0 is skipped (the file-level lens covers it).
 2. **File-level lens** retained (whole file).
-3. **Hunk lenses removed** — the git-diff hunk parsing (`parseHunkRanges`/`parseUnifiedDiff`) is no longer used for lenses.
+3. **Hunk lenses coexist with symbol lenses** (option B, after a round of review): the symbol lenses (bare "Forward to Builder" on declarations) are layered with per-hunk lenses ("Forward to Builder (lines N-M)" on each changed region) via `buildAllLensDescriptors`. A hunk lens is skipped when its anchor collides with a symbol/file lens, so nothing stacks. (`parseHunkRanges`/`parseUnifiedDiff` retained and fed into the registry entry's `hunks`.)
 4. **Right-click "Forward Selection to Builder"** — an `editor/context` command on a non-empty selection injects `<path>:L<start>-L<end> ` for the exact selected range. Context menus are *not* suppressed in the multi-file View Diff editor, so this is the granular path that works in the scan view. Scoped via a `codev.activeEditorIsBuilderFile` context key (set when the active editor is a tracked builder-diff file) + the built-in `editorHasSelection`.
 
 Surfaces: symbol/file lenses → per-file diff + normal tab (CodeLens limitation). Selection context-menu → works in the multi-file View Diff editor too (to be validated at the gate).

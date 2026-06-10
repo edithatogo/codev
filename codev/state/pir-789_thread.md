@@ -57,6 +57,11 @@ Validation: 368 unit tests, check-types, lint, bundle all green. **Needs human r
 
 Deferred to future issue(s): hover-triggered forward; deeper nesting; per-kind density settings.
 
+## Follow-ups during dev-approval
+- Renamed lens label → "Forward to Builder"; command ids `codev.forwardToBuilder` / `codev.forwardSelectionToBuilder`.
+- Added `Cmd/Ctrl+K B` keybinding for Forward Selection (when matched to the menu so the hint renders); menu title prefixed "Codev:".
+- **Option B**: restored per-hunk lenses to coexist with symbol lenses (`buildAllLensDescriptors`, dedup by anchor line so hunk lenses don't stack on symbol/file lenses). Hunk parsing (`parseHunkRanges`/`parseUnifiedDiff`) re-added and fed into the registry entry. 373 tests green.
+
 ## Dev-approval iteration: hunk-lens placement fix
 
 Human observed hunk lenses landing on the wrong function's signature. Root cause: `--unified=3` reports each hunk's new-side start up to 3 *context* lines above the first real change, so near a function boundary the anchor lands on the preceding `def`/`return`. Fixed: `parseHunkRanges` now walks the hunk body to find the first/last actually-added (`+`) new-side lines (`changeStart`/`changeEnd`); `buildLensDescriptors` anchors AND labels on those instead of the header span. Deviation from issue's literal "hunk header range" — intentional, more accurate. 374 tests green. Needs human re-test after F5 relaunch.
