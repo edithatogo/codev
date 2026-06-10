@@ -24,3 +24,21 @@ helper + the timeout constants into `preflight-core.ts` (loads only `node:path`)
 is unchanged (not rewritten — out-of-scope respected), just moved to the file the project
 already unit-tests under vitest. Added a `timedOut` flag to the return so the glue can log
 the timeout case distinctly from spawn-error / non-zero-exit.
+
+## Fix → PR
+
+Implemented. `porch check` green (build 4.4s, tests 20.1s). Note: the porch
+`tests` check is `pnpm --filter @cluesmith/codev test` (the codev-package vitest),
+NOT the vscode-package vitest — so it doesn't touch my files, but it passes.
+The vscode-package vitest has 7 pre-existing FAILING files (unbuilt
+@cluesmith/codev-core / codev-types workspace-dep resolution, e.g.
+terminal-adapter/terminal-resolve/reconnect-link) — unrelated to this change.
+My new `preflight-version-timeout.test.ts` (12 tests) + the existing
+`preflight-core.test.ts` (31) both pass.
+
+PR #1026 created (`Fixes #1024`). Running CMAP (gemini/codex/claude, --type pr).
+
+Gotcha: consult auto-detect failed with "Multiple projects found" because this
+worktree is `.builders/bugfix-1024` (no `-<slug>` suffix), which the consult
+project-resolver regex `\.builders/[^/]*?-?(\d+)-([^/]+)` can't match. Fix:
+pass `--project-id bugfix-1024` explicitly.
