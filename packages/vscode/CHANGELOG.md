@@ -4,6 +4,7 @@
 
 ### What's new
 
+- **Codelens in the unified diff editor injects file / hunk references into the builder PTY.** When you open a builder's `View Diff`, each file header now carries a `> Send to builder PTY` codelens and each hunk header carries `> Send to builder PTY (lines N-M)`. One click injects `path/to/file.ts ` or `path/to/file.ts:L42-L58 ` into the builder's prompt buffer (no Enter pressed). You type your feedback after the injected reference and submit when ready. Closes the "type the file path by hand during review" friction that was the dominant slow step in the architect-to-builder feedback loop. The builder is taken from the diff's context (no picker), Cmd/Ctrl+K B is the keyboard shortcut for the same action, and a right-click menu entry is available on builder files in the file tree as well.
 - **PR sidebar sorts by ownership, with a `(draft)` badge.** The Pull Requests view groups PRs into one flat list ordered mine first, then review-requested, then others, newest-first within each bucket. Drafts carry a `(draft)` suffix and a draft icon so you can tell them apart at a glance. When `gh` isn't available the list falls back to plain newest-first ordering.
 
 ## [3.1.9] - 2026-06-08

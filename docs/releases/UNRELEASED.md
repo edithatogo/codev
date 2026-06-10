@@ -33,6 +33,16 @@
     6. Re-cp the template back to UNRELEASED.md to start the next cycle
 -->
 
+## Code-review feedback: codelens in the unified diff editor injects file / hunk references into the builder PTY (#789, PR #1023)
+
+Architect-side review used to slow down at one specific point: you'd see something in the unified diff editor, want to give the builder targeted feedback about it, switch to the builder PTY, and type the file path and line range by hand into the prompt before adding your actual feedback. The file path was the typing bottleneck — error-prone, slow, and outside the diff editor where your attention already was.
+
+The unified diff editor now carries inline codelens entries that close that gap. Above each file header, `> Send to builder PTY` injects `path/to/file.ts ` into the builder's prompt buffer. Above each hunk header, `> Send to builder PTY (lines N-M)` injects `path/to/file.ts:L42-L58 ` (the new-side line range parsed from the hunk). Enter is never pressed; you add the freeform feedback and submit when ready. The builder is taken from the diff's context, so there's no picker and no mode error.
+
+The same action is bound to `Cmd/Ctrl+K B` for keyboard-first use and is available as a right-click menu entry on builder files in the file tree. Direct PTY write, no `afx send` wrapper — the inject reads as if you typed it. If the builder doesn't have an active terminal, the resolver falls through to the existing terminal-manager open-terminal flow before injecting.
+
+Modelled on the established `codev.referenceIssueInArchitect` pattern that injects `#<id> ` into the architect's prompt on backlog row clicks, extended to the builder side with file and hunk awareness.
+
 ## Polish
 
 <!-- Small vscode items as bullets:
