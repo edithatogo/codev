@@ -109,7 +109,10 @@ phase that closes it.
         version (`3.1.x`, like the published packages — NOT the dashboard's private `0.0.0`).
   - [ ] **`codev/protocols/release/protocol.md`** — the release process still enumerates only
         codev/core/types (+ vscode) for version bump/publish. Add the new package to its
-        version-bump enumeration. **Publish decision:** in v1 the package is consumed by hosts via
+        version-bump enumeration **and update the hardcoded `git add` command blocks for both the
+        stable and RC flows** so `packages/artifact-canvas/package.json` is staged when
+        `bump-all.sh` bumps it (iter-5 Codex — the enumeration prose alone isn't enough; the
+        commands are explicit). **Publish decision:** in v1 the package is consumed by hosts via
         `workspace:*` and bundled by them, so it is **not independently npm-published in v1**; add
         it to the publish list only when a consumer needs it standalone. (Note: unlike
         `@cluesmith/codev-core`, it is *not* even packed for `local-install.sh` — the parallel is
@@ -212,11 +215,14 @@ Revert the renderer module; Phase 1 surface remains intact.
 - [ ] **v1 marker rendering (deferred #4):** minimal line-level indicator for lines bearing a
       `ReviewMarker`, author + text via the overlay; no inline bubbles / minimap (those = #863).
 - [ ] **Adapter error semantics (spec D2 — locked; iter-4 Codex):** the component guards every
-      adapter call it makes (`FileAdapter.read`/`.watch`, `MarkerAdapter.list`,
-      `ThemeAdapter.resolve`/`.onChange`): a rejection/throw is caught, logged to `console`, and
-      surfaced via the optional `onError?` prop; the component never throws out of an event
-      handler. A failed `MarkerAdapter.list()` **leaves the prior rendered markers in place** (no
-      clear/corrupt). (`MarkerAdapter.add` is host-invoked, so its errors are host-side.)
+      adapter call **it actually makes** — `FileAdapter.read`/`.watch` and `MarkerAdapter.list`:
+      a rejection/throw is caught, logged to `console`, and surfaced via the optional `onError?`
+      prop; the component never throws out of an event handler. A failed `MarkerAdapter.list()`
+      **leaves the prior rendered markers in place** (no clear/corrupt). (`MarkerAdapter.add` is
+      host-invoked, so its errors are host-side. `ThemeAdapter.resolve`/`.onChange` are **not
+      called by the v1 component** per D4 Model A, so they are out of its error scope — error
+      handling for them belongs to the scenario-4 contract test / the future #863 consumer.
+      iter-5 Codex: removes the contradiction with the off-render-path decision.)
 - [ ] **Out-of-range-marker policy (spec deferred → resolved here; iter-4 Codex):** a
       `ReviewMarker` whose `line` is ≥ the document's current line count (e.g. a stale marker
       after truncation) is **ignored** (not rendered, not mis-anchored) and reported once via
@@ -236,7 +242,7 @@ Revert the renderer module; Phase 1 surface remains intact.
 - [ ] Clicking `+` (mouse or keyboard) invokes `onAddComment` with the expected 0-based line; package never calls `add`.
 - [ ] Existing markers render (minimal v1 fidelity); host-side `add` + `watch` re-list refreshes them.
 - [ ] Disposing a subscription stops further re-renders; `dispose()` twice is a no-op.
-- [ ] A rejecting `read`/`list`/`watch`/`resolve`/`onChange` is caught → `onError` fired + logged; the component does not throw; a failed `list()` preserves prior markers (spec D2).
+- [ ] A rejecting `read`/`watch`/`list` is caught → `onError` fired + logged; the component does not throw; a failed `list()` preserves prior markers (spec D2). (`ThemeAdapter.resolve`/`onChange` are not called by the v1 component, so they are out of its error scope — D4 Model A.)
 - [ ] An out-of-range `ReviewMarker` (`line` ≥ document line count) is dropped (not rendered) and warned once.
 
 #### Test Plan
@@ -379,6 +385,24 @@ Minor (Codex): named the `examples/` entrypoint (`index.html` + `main.tsx` + `vi
 `dev:example` script). Folded Claude's notes: CI step placement (no core/types dep → runs right
 after install), publish-analogy precision (not even packed for local-install, unlike codev-core),
 vite devDep timing.
+
+### Plan iteration 5 (2026-06-09)
+**Verdicts:** Gemini SKIPPED (agy); **Codex REQUEST_CHANGES (HIGH)**; **Claude APPROVE (HIGH)**.
+Codex's two (fixed in iteration 6):
+1. **ThemeAdapter contradiction (self-inflicted in iter-5)** — the error-semantics item listed
+   `ThemeAdapter.resolve`/`onChange` among the component's guarded calls, contradicting D4 Model A
+   (v1 component never calls them). Fixed: the component guards only the calls it makes
+   (`read`/`watch`/`list`); `ThemeAdapter` error handling belongs to the scenario-4 contract test
+   / #863 consumer. AC updated to match.
+2. **Release git-add command blocks** — updating only the release-doc enumeration isn't enough;
+   the hardcoded stable/RC `git add` blocks must also stage `packages/artifact-canvas/package.json`.
+   P1 deliverable updated.
+
+**Decision (human, after iteration 5):** this was the 5th plan consult — Claude APPROVE ×5, Codex
+RC ×5 with progressively smaller items (two recent ones self-inflicted by the revisions). Rather
+than run a 6th consult round, the human directed: **fix these two and take the plan to the
+`plan-approval` gate**, where the human/architect is the real checkpoint (mirroring how the spec
+phase resolved over Codex's residual nits). No 6th consult run.
 
 ## Notes
 This plan keeps host integration out of scope (per spec Non-Goals). The smoke-test host uses

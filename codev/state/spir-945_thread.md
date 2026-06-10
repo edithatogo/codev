@@ -194,3 +194,20 @@ vite timing).
 isn't clean, I'll put the judgment call to the user rather than loop further.
 
 Next: commit iter-5, re-consult (iter-5 plan).
+
+## 2026-06-09 — Plan iter-5 consult → iter-6 fix → plan-approval gate
+
+Plan iter-5 (0bd1dd79): Gemini SKIPPED, **Codex REQUEST_CHANGES (HIGH)**, **Claude APPROVE (HIGH)** (5th APPROVE).
+Codex's 2 (fixed iter-6):
+1. ThemeAdapter contradiction (self-inflicted iter-5): error-semantics item listed
+   ThemeAdapter.resolve/onChange among guarded calls vs D4 Model A. Fixed: component guards only
+   read/watch/list; ThemeAdapter error-handling = scenario-4 test / #863 consumer. AC updated.
+2. Release git-add command blocks must stage packages/artifact-canvas/package.json (not just the
+   enumeration prose). P1 deliverable updated.
+
+**Human decision after iter-5:** stop the consult loop (Claude APPROVE x5; Codex RC x5 w/ shrinking,
+partly self-inflicted items) — fix the two and take it to the plan-approval gate (human is the real
+checkpoint, mirroring the spec resolution). No 6th consult.
+
+Next: commit iter-6, `porch gate` (plan-approval), notify architect, STOP for human approval.
+Will NOT self-approve.
