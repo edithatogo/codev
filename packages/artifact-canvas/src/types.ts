@@ -52,4 +52,10 @@ export interface ArtifactCanvasProps {
   onAddComment(line: number): void;
   /** Optional host error sink; the package never throws out of an event handler (spec D2). */
   onError?(err: unknown): void;
+  /**
+   * Optional refresh token (spec D6). A host **without** a `FileAdapter` watcher forces a
+   * re-read + re-list by passing a **new** value here (a number or string) whenever its
+   * underlying data changes. Hosts with a watcher can omit it — behavior is unchanged.
+   */
+  refreshKey?: number | string;
 }

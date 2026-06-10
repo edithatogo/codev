@@ -263,8 +263,11 @@ the host collects the comment text and calls its own `MarkerAdapter.add(uri, lin
 **The package never calls `MarkerAdapter.add` itself.** After the host writes, the canvas
 refreshes **automatically**: when `FileAdapter.watch` fires with new content, the component
 re-renders **and re-calls `MarkerAdapter.list(uri)`** to pick up the new marker — the host does
-not re-trigger the list itself (iter-2 Claude). A host with no file watcher forces the same
-refresh by re-rendering the component.
+not re-trigger the list itself (iter-2 Claude). A host **without** a file watcher triggers the
+same refresh by passing a **new `refreshKey`** value (a number or string) to the component:
+when its underlying data changes, the host bumps `refreshKey`, which re-runs the read +
+marker-list. (A plain same-props re-render does *not* re-fetch — that is correct React; the
+`refreshKey` prop lets a no-watcher host drive refresh without remounting or subclassing.)
 
 **Rationale:** input affordances differ per surface (VSCode `InputBox`, a dashboard modal, a
 mobile sheet) and so does write-back; forcing either into the package would couple it to a

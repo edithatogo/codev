@@ -18,7 +18,7 @@ import { CommentAffordance } from '../overlays/CommentAffordance.js';
  * `list()` leaves the prior markers in place (spec D2).
  */
 export function ArtifactCanvas(props: ArtifactCanvasProps): React.ReactElement {
-  const { uri, fileAdapter, markerAdapter, onAddComment, onError } = props;
+  const { uri, fileAdapter, markerAdapter, onAddComment, onError, refreshKey } = props;
 
   const [content, setContent] = React.useState<string>('');
   const [markers, setMarkers] = React.useState<ReviewMarker[]>([]);
@@ -105,7 +105,8 @@ export function ArtifactCanvas(props: ArtifactCanvasProps): React.ReactElement {
       disposed = true;
       sub.dispose(); // idempotent per the Disposable contract (spec D2)
     };
-  }, [fileAdapter, uri, applyLoad, report]);
+    // `refreshKey` in the deps: a host without a watcher bumps it to force a fresh read+list (D6).
+  }, [fileAdapter, uri, applyLoad, report, refreshKey]);
 
   const html = React.useMemo(() => renderMarkdown(content), [content]);
 

@@ -227,6 +227,23 @@ describe('ArtifactCanvas (Phase 3)', () => {
     expect(document.body.textContent).toContain('NEW content');
     expect(document.body.textContent).not.toContain('OLD content');
   });
+
+  it('re-fetches when refreshKey changes — the no-watcher refresh contract (D6)', async () => {
+    const host = makeHost('first.');
+    host.fileAdapter.read = vi
+      .fn()
+      .mockResolvedValueOnce('first content.')
+      .mockResolvedValueOnce('second content.');
+    const { rerender } = render(
+      <ArtifactCanvas uri="x" {...host} onAddComment={vi.fn()} refreshKey={1} />,
+    );
+    await waitFor(() => expect(document.body.textContent).toContain('first content'));
+    expect(host.fileAdapter.read).toHaveBeenCalledTimes(1);
+    // Host data changed (no watcher) → it bumps refreshKey to force a refresh.
+    rerender(<ArtifactCanvas uri="x" {...host} onAddComment={vi.fn()} refreshKey={2} />);
+    await waitFor(() => expect(document.body.textContent).toContain('second content'));
+    expect(host.fileAdapter.read).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('ThemeAdapter contract (D4 Model A, scenario 4 — not on the v1 render path)', () => {
