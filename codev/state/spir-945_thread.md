@@ -211,3 +211,27 @@ checkpoint, mirroring the spec resolution). No 6th consult.
 
 Next: commit iter-6, `porch gate` (plan-approval), notify architect, STOP for human approval.
 Will NOT self-approve.
+
+## 2026-06-10 — Plan approved → Implement Phase 1 built
+
+plan-approval gate APPROVED (status.yaml approved_at 2026-06-10T00:06:53) by architect+human
+(2nd approve-over-Codex-residual; all 5 plan-gate criteria met). Branch was diverged after the
+rebases → porch auto-push failed → force-pushed (user-approved) to reconcile; porch then
+auto-advanced to Implement. Stamped spec approval frontmatter (8847c387). gemini `agy` lane is
+healthy now (1.0.7) — attempt it fresh at the Review CMAP.
+
+**Implement Phase 1 (skeleton + dual-format build + interfaces + theme tokens):** built
+`packages/artifact-canvas/` — package.json, tsup.config.ts (CJS+ESM+dts, react external, css
+copy), tsconfig (extends config base, ESNext/bundler/jsx), vitest.config (jsdom), 3 adapter
+interfaces, types.ts (ReviewMarker/Disposable/ArtifactCanvasProps), default-theme.css (8
+tokens), index.ts, ArtifactCanvas placeholder, import-boundary test, build-smoke script.
+Repo wiring: root package.json build, scripts/bump-all.sh, .github/workflows/test.yml step,
+release protocol (enumeration + stable/RC git-add blocks; publish step untouched — not
+published in v1).
+
+**Verified green:** package build (CJS+ESM+DTS) ✓, package tests 2/2 ✓, build-smoke ✓; porch
+build check `npm run build` (full monorepo incl. dashboard) ✓; porch tests check `npm test`
+(codev suite: 3258 passed, 13 pre-existing skips) ✓. Fixed one issue: missing @types/node broke
+the dts step.
+
+Next: commit Phase 1, `porch done 945` → implement-phase 3-way consult.

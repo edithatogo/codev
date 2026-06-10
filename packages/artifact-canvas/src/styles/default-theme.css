@@ -1,0 +1,30 @@
+/*
+ * Default theme for @cluesmith/codev-artifact-canvas (spec D4, Model A).
+ *
+ * CSS custom properties are the SOLE v1 theming mechanism. Each token below has a sensible
+ * fallback; hosts override any subset by setting the variable on the canvas container, e.g.
+ * in a VSCode webview:
+ *
+ *   .codev-artifact-canvas {
+ *     --codev-canvas-foreground: var(--vscode-foreground);
+ *     --codev-canvas-background: var(--vscode-editor-background);
+ *   }
+ *
+ * Import via the package's dedicated export:
+ *   import '@cluesmith/codev-artifact-canvas/default-theme.css';
+ */
+
+.codev-artifact-canvas {
+  /* v1 token vocabulary (spec D4) */
+  --codev-canvas-foreground: #1f2328;
+  --codev-canvas-background: #ffffff;
+  --codev-canvas-accent: #0969da;
+  --codev-canvas-border: #d0d7de;
+  --codev-canvas-muted: #656d76;
+  --codev-canvas-code-background: #f6f8fa;
+  --codev-canvas-link: #0969da;
+  --codev-canvas-comment-marker: #bf8700;
+
+  color: var(--codev-canvas-foreground);
+  background: var(--codev-canvas-background);
+}
