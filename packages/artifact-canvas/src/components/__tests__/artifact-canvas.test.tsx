@@ -244,6 +244,27 @@ describe('ArtifactCanvas (Phase 3)', () => {
     await waitFor(() => expect(document.body.textContent).toContain('second content'));
     expect(host.fileAdapter.read).toHaveBeenCalledTimes(2);
   });
+
+  it('clears a stale activeLine after a reload removes the hovered block (no "+" / no onAddComment on an invalid line, iter-5 Codex)', async () => {
+    const host = makeHost('# Title\n\nFirst paragraph.\n\nSecond paragraph.');
+    const onAddComment = vi.fn();
+    render(<ArtifactCanvas uri="x" {...host} onAddComment={onAddComment} />);
+    // Hover the LAST block (highest data-line) so the overlay anchors to a line the reload removes.
+    const blocks = await waitFor(() => {
+      const els = document.querySelectorAll<HTMLElement>('p[data-line]');
+      if (els.length < 2) throw new Error('paragraphs not rendered yet');
+      return els;
+    });
+    const last = blocks[blocks.length - 1];
+    fireEvent.mouseOver(last);
+    expect(await screen.findByRole('button', { name: /add comment on line/i })).not.toBeNull();
+    // A watch reload shrinks the document so the previously-hovered block no longer exists.
+    await act(async () => { host.watchers.forEach((cb) => cb('# Title')); });
+    await waitFor(() => expect(document.querySelectorAll('p[data-line]').length).toBe(0));
+    // The stale overlay is gone — no "+" on the now-invalid line, and clicking is impossible.
+    expect(screen.queryByRole('button', { name: /add comment on line/i })).toBeNull();
+    expect(onAddComment).not.toHaveBeenCalled();
+  });
 });
 
 describe('ThemeAdapter contract (D4 Model A, scenario 4 — not on the v1 render path)', () => {

@@ -223,11 +223,17 @@ Revert the renderer module; Phase 1 surface remains intact.
       called by the v1 component** per D4 Model A, so they are out of its error scope — error
       handling for them belongs to the scenario-4 contract test / the future #863 consumer.
       iter-5 Codex: removes the contradiction with the off-render-path decision.)
-- [ ] **Out-of-range-marker policy (spec deferred → resolved here; iter-4 Codex):** a
-      `ReviewMarker` whose `line` is ≥ the document's current line count (e.g. a stale marker
-      after truncation) is **ignored** (not rendered, not mis-anchored) and reported once via
-      `onError?`/`console.warn`. Chosen over *clamp* (would mis-anchor) and *hard-error* (a stale
-      marker shouldn't break the view); #863 may add smarter re-anchoring later.
+- [ ] **Out-of-range-marker policy (spec deferred → resolved here; iter-4 Codex; channel
+      clarified iter-5 Codex):** a `ReviewMarker` whose `line` is ≥ the document's current line
+      count (e.g. a stale marker after truncation) is **ignored** (not rendered, not mis-anchored)
+      and reported via **`console.warn` (once per session per marker)**. `onError?` is **NOT** used
+      for this case: `onError?` is reserved for genuine adapter failures (`read`/`list`/`watch`
+      throwing or returning a rejected promise — and `ThemeAdapter.resolve`/`onChange` for #863's
+      consumer). An out-of-range marker is **data-hygiene during normal rendering**, not a failure;
+      routing it through `onError?` would force hosts to treat a non-failure as a failure and dilute
+      the signal for real failures. Chosen over *clamp* (would mis-anchor) and *hard-error* (a stale
+      marker shouldn't break the view); #863 may add smarter re-anchoring later. *(The earlier
+      "`onError?`/`console.warn`" phrasing was ambiguous; this fixes the channel to `console.warn`.)*
 - [ ] Tests: overlay intent (scenario 2), marker round-trip (scenario 3), ThemeAdapter
       contract (scenario 4), invariant (scenario 6 — asserts the overlay's *only* output channel
       is the `onAddComment` intent event; no side-channel writes), subscription teardown

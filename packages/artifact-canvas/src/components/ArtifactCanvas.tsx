@@ -110,6 +110,14 @@ export function ArtifactCanvas(props: ArtifactCanvasProps): React.ReactElement {
 
   const html = React.useMemo(() => renderMarkdown(content), [content]);
 
+  // Reconcile the hover/focus overlay state on every content change (watch reload OR refreshKey
+  // bump): a stale `activeLine` from the prior document could otherwise render `+` on — and emit
+  // `onAddComment` for — a line that the reloaded document no longer contains (iter-5 Codex). The
+  // user re-hovers/re-focuses to re-anchor the overlay against the fresh content.
+  React.useEffect(() => {
+    setActiveLine(null);
+  }, [content]);
+
   // Decorate the rendered (innerHTML) DOM after each render: make blocks keyboard-focusable and
   // mark lines that carry a ReviewMarker (v1 minimal marker rendering — deferred #4; #863 adds
   // polished inline markers + the canvas minimap).
