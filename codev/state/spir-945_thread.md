@@ -251,3 +251,17 @@ now *runs*, no longer silent-drops, but times out producing the review; reported
 architect per their request).
 
 Next: commit spec doc-sync, re-run implement consult iter-2 (phase_1).
+
+## 2026-06-10 — Phase 1 impl consult iter-2: CLEAN (2-way)
+
+Architect cleared a Codex+Claude 2-way (implement consults are advisory; agy timeouts aren't
+env-overridable — hardcoded AGY_PRINT_TIMEOUT=5m / AGY_TIMEOUT_MS in consult/index.ts:628-629;
+architect filing a follow-up to make them env-overrideable).
+
+iter-2: **Claude APPROVE (HIGH)** (full checklist green); **Codex COMMENT (MEDIUM)** — no longer
+REQUEST_CHANGES (spec doc-sync fixed both blockers); one trivial nit: release protocol RC comment
+still said "only codev/core/types" bumped — fixed. **Gemini: timeout pattern** (1.0.7 runs +
+explores the worktree but no structured verdict before 5m timeout). Net: zero REQUEST_CHANGES →
+Phase 1 verification clean.
+
+Phase 1 DONE. Next: advance porch to Phase 2 (renderer + data-line + DOMPurify sanitization).

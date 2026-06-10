@@ -230,8 +230,8 @@ Starting with v1.7.0, minor releases use a release candidate workflow for testin
 
 ```bash
 # Set version to RC. bump-all.sh auto-skips packages/vscode for pre-release
-# versions (VS Code Marketplace rejects semver pre-release suffixes), so only
-# codev, core, and types are bumped here. vscode catches up at RC → stable.
+# versions (VS Code Marketplace rejects semver pre-release suffixes), so
+# codev, core, types, and artifact-canvas are bumped here. vscode catches up at RC → stable.
 pnpm bump-version 1.7.0-rc.1
 
 # Commit and tag (note: no packages/vscode/package.json — it wasn't bumped)
