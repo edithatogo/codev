@@ -11,10 +11,21 @@ integration of its own — hosts wire it up by implementing the adapters below.
 
 ## Install
 
-```bash
-pnpm add @cluesmith/codev-artifact-canvas
-# react / react-dom are peer deps (^18 || ^19)
+This package is **not independently published to npm in v1** (per spec-945). It is consumed inside
+this monorepo via the workspace protocol and **bundled by each host** — version-aligned with the
+other `@cluesmith/*` packages but absent from the `pnpm publish` step. Add it as a workspace
+dependency of a host package:
+
+```jsonc
+// packages/<your-host>/package.json
+{
+  "dependencies": {
+    "@cluesmith/codev-artifact-canvas": "workspace:*"
+  }
+}
 ```
+
+`react` / `react-dom` are peer deps (`^18 || ^19`), supplied by the host.
 
 ```tsx
 import { ArtifactCanvas } from '@cluesmith/codev-artifact-canvas';

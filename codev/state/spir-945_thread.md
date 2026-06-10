@@ -447,3 +447,12 @@ committed + advanced to phase_4. Implemented phase_4 deliverables:
 Verification: build 0, **33/33 tests** (5 files; +3 e2e), check-types 0, dist clean (index.* +
 theme only — no test/example/fixture leak; tsup entry = src/index.ts; files=["dist"]). Next:
 commit + porch done → phase_4 consult.
+
+## Phase 4 — iter-1 consult [2026-06-10]
+
+Codex REQUEST_CHANGES (HIGH); Claude APPROVE; Gemini COMMENT (skipped). One legitimate item:
+README Install said `pnpm add @cluesmith/codev-artifact-canvas`, contradicting the locked v1
+decision (not independently npm-published; consumed via `workspace:*`, bundled by hosts — per
+release/protocol.md:56). Fixed: Install section now shows `"@cluesmith/codev-artifact-canvas":
+"workspace:*"` as a host dependency; removed all npm-install guidance. Docs-only; tests/types
+unaffected. Rebuttal written; porch done → iter-2 re-consult.
