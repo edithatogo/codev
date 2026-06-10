@@ -64,4 +64,15 @@ describe('data-line source mapping', () => {
     );
     expect(tableDoc.querySelector('table')?.getAttribute('data-line')).toBe('0');
   });
+
+  // Focusability is stamped at RENDER time (not via a post-render effect) so a block is
+  // keyboard-reachable the instant it mounts. This guards against the CI-only race where a test
+  // (or a screen reader) read tabindex before a decoration effect had run. (DOMPurify preserves
+  // the standard `tabindex` attribute.)
+  it('stamps tabindex="0" on every mapped block at render time (accessibility AC)', () => {
+    for (const sel of ['h1', 'p', 'ul', 'li', 'blockquote']) {
+      expect(doc.querySelector(sel)?.getAttribute('tabindex')).toBe('0');
+    }
+    expect(doc.querySelector('[data-line="9"]')?.getAttribute('tabindex')).toBe('0');
+  });
 });

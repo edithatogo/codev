@@ -122,8 +122,10 @@ export function ArtifactCanvas(props: ArtifactCanvasProps): React.ReactElement {
       arr.push(m);
       byLine.set(m.line, arr);
     }
+    // (tabindex is stamped at render time by the renderer, not here — keeps focusability free of
+    // this effect's timing.) This effect only applies marker decoration, which depends on the
+    // asynchronously-loaded markers.
     root.querySelectorAll<HTMLElement>('[data-line]').forEach((el) => {
-      el.tabIndex = 0; // keyboard-reachable (accessibility AC)
       const line = Number(el.getAttribute('data-line'));
       const ms = byLine.get(line);
       if (ms && ms.length > 0) {

@@ -485,3 +485,30 @@ REQUEST_CHANGES (2 items, both legit + fixed); Claude APPROVE; Gemini skip:
    (approved 2026-06-10, validated [claude]) + flipped Status to approved.
 Both are doc/version hygiene, no code-behavior change. build + 34 tests green; lockfile unchanged.
 Pushing; pr gate stays held for the human.
+
+## CI fix #2 — Phase 3 keyboard test (CI-only, tabindex effect-timing race) [2026-06-10]
+
+3rd CI failure: "is keyboard-activatable ... emits onAddComment", AssertionError "expected -1 to
+be +0". Architect read it as onAddComment(-1), but EVIDENCE shows it's actually
+`expect(p.tabIndex).toBe(0)` getting -1 (a <p>'s default tabIndex):
+- markdown-it (14.2.0, lockfile-pinned, identical CI) DETERMINISTICALLY yields paragraph map [0,1]
+  → data-line="0"; proven via direct `md.parse`. No code emits -1. So onAddComment(-1) is impossible.
+- `data-line.test.ts` PASSES in the same failing CI run → renderer is correct in CI.
+- The "Tests" workflow passed on efad0983 and failed on 0bf30c9c/55d272dc whose only diff is
+  status.yaml + review.md (docs) — no code change → non-deterministic = a timing race.
+- p.tabIndex default = -1; the decoration effect set it to 0 AFTER render; the test read it
+  synchronously the moment p appeared → raced the effect. Local flushes fast; CI's slower
+  scheduling lands the effect after the read. Same race FAMILY as the e2e activeLine fix (effect
+  timing vs synchronous test read), different decoration.
+
+Root fix: stamp `tabindex="0"` at RENDER time in the renderer core rule (alongside data-line), so
+focusability is in the HTML the instant a block mounts — no effect dependency. Removed the now-
+redundant `el.tabIndex=0` from the decoration effect (it only does marker classes now). Added a
+deterministic renderer test asserting tabindex="0" on every mapped block. Also preempts the same
+latent race in the e2e KEYBOARD test (end-to-end.test.tsx:90 read p.tabIndex synchronously too).
+DOMPurify preserves tabindex. types 0, build 0, 35/35 tests ×12 runs (8 full + 4 shuffle) green.
+
+Systemic note for a follow-up tracker: both CI-only failures were "test reads an effect-decorated
+DOM synchronously after the element appears, racing the post-render effect." Render-time attributes
+(or waitFor on the decorated state) avoid it. Remaining effect-driven decoration (marker classes)
+is already asserted via waitFor in tests, so it's safe.
