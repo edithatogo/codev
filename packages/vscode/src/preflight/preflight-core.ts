@@ -1,14 +1,89 @@
 /**
- * Pure, vscode-free logic for the startup CLI preflight (#791).
+ * vscode-free logic for the startup CLI preflight (#791).
  *
  * Kept free of any `vscode` import so it can be unit-tested under vitest
- * (`src/__tests__/preflight-core.test.ts`). The vscode-dependent glue —
- * spawning the CLI, toasts, walkthrough, the Status-view row — lives in
- * `preflight.ts` and is reviewed by running the worktree at the
- * `dev-approval` gate.
+ * (`src/__tests__/preflight-core.test.ts`). This includes the `codev --version`
+ * probe (`runCodevVersion`): it only needs `spawn` + a timer, no vscode, so it
+ * lives here where it's directly testable. The genuinely vscode-dependent glue
+ * — reading the timeout setting, toasts, walkthrough, the Status-view row —
+ * lives in `preflight.ts` and is reviewed by running the worktree.
  */
 
+import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
+
+/**
+ * Default hard cap on the `codev --version` probe so a hung binary can't stall
+ * startup. Bumped from 400ms to 5000ms (#1024): 400ms was too tight against the
+ * legitimate latency sources on slow envs (remote SSH, WSL, nvm/fnm/volta shim
+ * re-resolution, AV scanning, network filesystems), causing a false `missing`
+ * → the `Get started with Codev` walkthrough opening despite a healthy install.
+ * Overridable per-workspace via the `codev.cliVersionTimeoutMs` setting.
+ */
+export const DEFAULT_VERSION_TIMEOUT_MS = 5000;
+/** Floor for `codev.cliVersionTimeoutMs` (matches the package.json `minimum`). */
+export const MIN_VERSION_TIMEOUT_MS = 100;
+/**
+ * Ceiling for `codev.cliVersionTimeoutMs` (matches the package.json `maximum`).
+ * A soft sanity check: beyond 60s something else is genuinely wrong (binary
+ * actually hung, PATH broken) and a longer cap just hides it.
+ */
+export const MAX_VERSION_TIMEOUT_MS = 60000;
+
+/**
+ * Resolve the effective probe timeout from the (possibly unset / out-of-range)
+ * `codev.cliVersionTimeoutMs` setting value. Falls back to the default when the
+ * setting is unset or non-numeric, and clamps to [MIN, MAX] otherwise — VSCode
+ * surfaces the min/max in its settings UI but a hand-edited settings.json can
+ * still pass an out-of-range number.
+ */
+export function resolveVersionTimeout(configured: number | undefined | null): number {
+  if (typeof configured !== 'number' || !Number.isFinite(configured)) {
+    return DEFAULT_VERSION_TIMEOUT_MS;
+  }
+  return Math.min(MAX_VERSION_TIMEOUT_MS, Math.max(MIN_VERSION_TIMEOUT_MS, configured));
+}
+
+/**
+ * Spawn `codev --version` with a hard timeout. Resolves `{ ok, stdout, timedOut }`;
+ * `ok` is false on spawn error (binary not on PATH), non-zero exit, or timeout
+ * (the child is killed). `timedOut` distinguishes the timeout case so the glue
+ * can log it — the false-`missing` symptom #1024 is about — distinctly from a
+ * genuinely absent / broken binary.
+ */
+export function runCodevVersion(
+  codevPath: string,
+  cwd: string | null,
+  timeoutMs: number = DEFAULT_VERSION_TIMEOUT_MS,
+): Promise<{ ok: boolean; stdout: string; timedOut: boolean }> {
+  return new Promise((resolveResult) => {
+    let stdout = '';
+    let settled = false;
+    const finish = (ok: boolean, timedOut: boolean) => {
+      if (!settled) {
+        settled = true;
+        resolveResult({ ok, stdout, timedOut });
+      }
+    };
+
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(codevPath, ['--version'], { cwd: cwd ?? undefined });
+    } catch {
+      finish(false, false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch { /* already gone */ }
+      finish(false, true);
+    }, timeoutMs);
+
+    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.on('error', () => { clearTimeout(timer); finish(false, false); });
+    child.on('close', (code) => { clearTimeout(timer); finish(code === 0, false); });
+  });
+}
 
 /**
  * The outcome of a preflight check.

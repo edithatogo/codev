@@ -16,7 +16,6 @@
  */
 
 import * as vscode from 'vscode';
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import type { TowerClient } from '@cluesmith/codev-core/tower-client';
 import {
@@ -25,6 +24,8 @@ import {
   parseCliVersion,
   preflightFeedbackMessage,
   resolveCodevPath,
+  resolveVersionTimeout,
+  runCodevVersion,
   towerDivergenceMessage,
   type PreflightStatus,
   type TowerStatus,
@@ -38,8 +39,8 @@ const WALKTHROUGH_ID = 'cluesmith.codev-vscode#codevGettingStarted';
 const WALKTHROUGH_SHOWN_KEY = 'codev.preflight.walkthroughShown';
 /** Install docs surfaced from the outdated-CLI notification and walkthrough. */
 export const INSTALL_DOCS_URL = 'https://github.com/cluesmith/codev#quick-start';
-/** Hard cap on the `codev --version` probe so a hung binary can't stall startup. */
-const VERSION_TIMEOUT_MS = 400;
+/** The setting that overrides the `codev --version` probe timeout (#1024). */
+const VERSION_TIMEOUT_SETTING = 'cliVersionTimeoutMs';
 /** The command users / UI invoke to re-verify after fixing the CLI. */
 export const RECHECK_COMMAND = 'codev.recheckCli';
 
@@ -93,50 +94,11 @@ export function getPreflightState(): PreflightState {
 
 /**
  * Whether CLI-dependent commands may run. Optimistic: `pending` (preflight
- * hasn't finished its <400ms background probe yet) counts as ready so a
- * command fired during the startup window isn't falsely blocked.
+ * hasn't finished its background `codev --version` probe yet) counts as ready
+ * so a command fired during the startup window isn't falsely blocked.
  */
 export function isCliReady(): boolean {
   return cachedStatus === 'ok' || cachedStatus === 'pending';
-}
-
-/**
- * Spawn `codev --version` with a hard timeout. Resolves `{ ok, stdout }`;
- * `ok` is false on spawn error (binary not on PATH), non-zero exit, or
- * timeout (the child is killed).
- */
-function runCodevVersion(
-  codevPath: string,
-  cwd: string | null,
-  timeoutMs = VERSION_TIMEOUT_MS,
-): Promise<{ ok: boolean; stdout: string }> {
-  return new Promise((resolveResult) => {
-    let stdout = '';
-    let settled = false;
-    const finish = (ok: boolean) => {
-      if (!settled) {
-        settled = true;
-        resolveResult({ ok, stdout });
-      }
-    };
-
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(codevPath, ['--version'], { cwd: cwd ?? undefined });
-    } catch {
-      finish(false);
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      try { child.kill(); } catch { /* already gone */ }
-      finish(false);
-    }, timeoutMs);
-
-    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
-    child.on('error', () => { clearTimeout(timer); finish(false); });
-    child.on('close', (code) => { clearTimeout(timer); finish(code === 0); });
-  });
 }
 
 /**
@@ -151,7 +113,10 @@ async function performPreflight(): Promise<PreflightStatus> {
   const extVersion = context.extension.packageJSON.version as string;
 
   const codevPath = resolveCodevPath(workspacePath, existsSync);
-  const { ok, stdout } = await runCodevVersion(codevPath, workspacePath);
+  const timeoutMs = resolveVersionTimeout(
+    vscode.workspace.getConfiguration('codev').get<number>(VERSION_TIMEOUT_SETTING),
+  );
+  const { ok, stdout, timedOut } = await runCodevVersion(codevPath, workspacePath, timeoutMs);
   const cliVersion = parseCliVersion(stdout);
   const status = decidePreflight({ cliFound: ok, cliVersion, extVersion });
 
@@ -168,6 +133,17 @@ async function performPreflight(): Promise<PreflightStatus> {
     `[${new Date().toISOString()}] [Preflight] status=${status} `
     + `cli=${cliVersion ?? 'none'} ext=${extVersion}`,
   );
+
+  // #1024: a timeout (not a genuinely absent binary) is the false-`missing`
+  // case. Surface it so the next person who hits a slow-env false-negative can
+  // diagnose it instead of being silently told their CLI is missing.
+  if (timedOut) {
+    outputChannel.appendLine(
+      `[${new Date().toISOString()}] [Preflight] codev --version timed out after `
+      + `${timeoutMs}ms, falling back to 'missing'. Run \`codev --version\` manually; `
+      + `if it succeeds slowly, raise the 'codev.cliVersionTimeoutMs' setting.`,
+    );
+  }
 
   if (status === 'missing') {
     maybeOpenWalkthrough(context);
