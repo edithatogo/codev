@@ -310,3 +310,51 @@ Also fixed one self-authored flawed test (string-matched "onerror=" in escaped t
 positive; rewrote as a DOM assertion for no live [onerror]/[onclick]/<img> nodes).
 
 Next: commit Phase 2, porch done → Phase 2 implement consult (Codex+Claude 2-way; retry gemini).
+
+## 2026-06-10 — BLOCKED: porch Phase 2 tests check fails on flaky CODEV tests
+
+Phase 2 committed (eac99fcb); package build+tests+smoke green (13/13). But `porch done` → build ✓,
+**tests ✗**. porch's tests check = whole codev suite (`pnpm --filter @cluesmith/codev test`).
+Full run: **7 failed / 3251 passed / 13 skipped** in 4 files — tunnel-integration (config
+file-watcher), default-branch, non-main-default-branch (#777/#784), team-cli (deprecation).
+
+**Confirmed pre-existing FLAKY, not my change:** (a) re-run of the same 4 files → only 1 failed
+(7→1, non-deterministic); (b) identical check passed 0-fail in Phase 1; (c) Phase 2 touched ONLY
+artifact-canvas (zero codev changes); (d) no worktree git pollution (stray branches were temp-repo
+fixtures). file-watcher timing + git-fixture isolation flakiness.
+
+Escalated to architect (won't bypass porch; won't unilaterally skip non-deterministic codev tests).
+Options offered: (a) authorize a porch done retry; (b) architect handles known-flaky codev tests;
+(c) scope porch tests check to changed package. HOLDING for architect guidance.
+
+### Architect authorized option (a) — single porch done retry (2026-06-10T07:53)
+Retrying `porch done 945` ONCE on the documented flake evidence (non-deterministic 7→1 re-run;
+unrelated to artifact-canvas, which made zero codev changes). The four flaky codev files:
+**tunnel-integration.test.ts, default-branch.test.ts, non-main-default-branch.test.ts,
+team-cli.test.ts** — confirmed unrelated to my Phase 2. **Boundary (architect):** if this retry
+ALSO fails back-to-back on the same four files, that disproves the flake hypothesis → STOP and
+re-escalate; do NOT retry a second time without further diagnostic. Architect is separately
+quarantining the four files (it.skip + // FLAKY:#<issue>) and filing a tracker, landing on main
+independently of this cycle — not my work to do.
+
+### Retry FAILED back-to-back → STOPPED per architect boundary (2026-06-10)
+The authorized single `porch done` retry: build ✓ (32.6s), **tests ✗ (66.1s) again**. Per the
+architect's explicit rule ("if it fails back-to-back, stop and re-escalate; do NOT retry a second
+time without further diagnostic"), I STOPPED — no second retry. (porch's output was truncated and
+did not list this run's specific failing tests; the full-suite check runs under more
+timing/concurrency pressure than the isolated 4-file re-run that gave 7→1.) Re-escalated to the
+architect: their planned quarantine of the 4 flaky files (tunnel-integration, default-branch,
+non-main-default-branch, team-cli) on main is the clean unblock — once it lands I'd rebase + retry.
+HOLDING for architect guidance; not retrying, not skipping codev tests, not bypassing porch.
+
+### Architect reversed → skip flakes on my branch (protocol-prescribed) (2026-06-10T08:31)
+Architect stood down the land-on-main plan: the builder-prompt "Handling Flaky Tests" section
+authorizes me to skip them on my own branch (I was over-conservative escalating). Applied
+`describe.skip` + `// FLAKY:` annotations:
+- tunnel-integration.test.ts → skip `tunnel integration (Phase 4)` (file-watcher timing)
+- default-branch.test.ts → skip `resolveDefaultBranch` (git-fixture isolation)
+- non-main-default-branch.test.ts → skip all 3 describes (#784, #777 Defect A, #777 architect impl) (git-fixture)
+- team-cli.test.ts → skip ONLY `afx team deprecation` (spy ordering); left the 4 stable describes active
+Documented in codev/reviews/945-…md §Flaky Tests (4 files, patterns, predate spir-945, unrelated to
+artifact-canvas). Architect filing the flake-fix tracker (references this skip commit). Next:
+commit skips, porch done → suite should be green → Phase 2 consult.
