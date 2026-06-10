@@ -812,7 +812,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		// the reviewer keeps typing feedback before hitting Enter. Mirrors
 		// `codev.referenceIssueInArchitect`. Not declared in
 		// `contributes.commands` → never appears in the Command Palette.
-		reg('codev.injectBuilderFileRef', async (builderId: string, text: string) => {
+		reg('codev.forwardToBuilder', async (builderId: string, text: string) => {
 			// openBuilderByRoleOrId resolves to the canonical id and runs the
 			// no-terminal recovery flow on a miss; inject against that id so the
 			// terminal lookup hits the same key that was just opened.
@@ -911,7 +911,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	activateDiffView(context);
 
 	// CodeLens "Forward to Builder" actions inside the View Diff editor (#789).
-	// The backing command `codev.injectBuilderFileRef` is registered below and
+	// The backing command `codev.forwardToBuilder` is registered below and
 	// deliberately NOT declared in `contributes.commands`, so it stays out of
 	// the Command Palette (codelens-only entry point).
 	activateDiffInjectCodeLens(context);

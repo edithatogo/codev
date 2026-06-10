@@ -10,7 +10,7 @@
  * files the reviewer just opened for diffing; any other `file:` document
  * returns `[]` and is unaffected.
  *
- * Clicking a lens runs `codev.injectBuilderFileRef` (a palette-hidden command
+ * Clicking a lens runs `codev.forwardToBuilder` (a palette-hidden command
  * registered in `extension.ts`), which opens/reveals the builder terminal and
  * types the reference into its prompt without pressing Enter — mirroring the
  * architect-reference pattern (`codev.referenceIssueInArchitect`).
@@ -21,7 +21,7 @@ import { buildLensDescriptors, type HunkRange } from './diff-inject-ref.js';
 
 /** Command id the lenses invoke. Registered in `extension.ts`, NOT declared in
  *  `contributes.commands`, so it never appears in the Command Palette. */
-export const INJECT_BUILDER_FILE_REF = 'codev.injectBuilderFileRef';
+export const FORWARD_TO_BUILDER_COMMAND = 'codev.forwardToBuilder';
 
 /** One changed file in the active diff session, keyed by its right-side fs path. */
 export interface DiffInjectSessionEntry {
@@ -62,7 +62,7 @@ class DiffInjectCodeLensProvider implements vscode.CodeLensProvider {
       const range = new vscode.Range(line, 0, line, 0);
       return new vscode.CodeLens(range, {
         title: d.title,
-        command: INJECT_BUILDER_FILE_REF,
+        command: FORWARD_TO_BUILDER_COMMAND,
         arguments: [entry.builderId, d.refText],
       });
     });
