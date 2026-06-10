@@ -11,11 +11,11 @@ plan_phases:
     status: complete
   - id: phase_3
     title: Comment overlay (intent-only) + v1 marker rendering + adapter wire-up
-    status: in_progress
+    status: complete
   - id: phase_4
     title: Smoke-test host, README, cross-cutting tests
-    status: pending
-current_plan_phase: phase_3
+    status: in_progress
+current_plan_phase: phase_4
 gates:
   spec-approval:
     status: approved
@@ -29,8 +29,8 @@ gates:
     status: pending
   verify-approval:
     status: pending
-iteration: 6
-build_complete: true
+iteration: 1
+build_complete: false
 history:
   - iteration: 1
     plan_phase: phase_1
@@ -129,4 +129,4 @@ history:
         file: >-
           /Users/amrmohamed/repos/cluesmith/codev/.builders/spir-945/codev/projects/945-build-foundational-reusable-pa/945-phase_3-iter5-claude.txt
 started_at: '2026-05-30T23:09:36.579Z'
-updated_at: '2026-06-10T09:52:03.444Z'
+updated_at: '2026-06-10T09:55:08.363Z'
