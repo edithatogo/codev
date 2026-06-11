@@ -2,6 +2,7 @@
  * Tower command - launches the tower dashboard showing all instances
  */
 
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { existsSync, mkdirSync, appendFileSync } from 'node:fs';
 import http from 'node:http';
@@ -11,6 +12,7 @@ import { getConfig } from '../utils/config.js';
 import { execSync } from 'node:child_process';
 import { DEFAULT_TOWER_PORT, AGENT_FARM_DIR } from '../lib/tower-client.js';
 import { isPortAvailable } from '../utils/shell.js';
+import { SessionManager } from '../../terminal/session-manager.js';
 
 // Log file location
 const LOG_FILE = resolve(AGENT_FARM_DIR, 'tower.log');
@@ -21,12 +23,17 @@ const STARTUP_CHECK_INTERVAL_MS = 200;
 
 export interface TowerStartOptions {
   port?: number;
-  wait?: boolean; // Wait for server to start before returning
+  wait?: boolean; // Defaults to true. Set false for fire-and-forget startup.
 }
 
 export interface TowerStopOptions {
   port?: number;
   forceKillAllChildProcesses?: boolean;
+  preserveShellpers?: boolean;
+}
+
+export function shouldWaitForTowerStart(options: TowerStartOptions = {}): boolean {
+  return options.wait ?? true;
 }
 
 /**
@@ -112,6 +119,7 @@ function getProcessesOnPort(port: number): number[] {
  */
 export async function towerStart(options: TowerStartOptions = {}): Promise<void> {
   const port = options.port || DEFAULT_TOWER_PORT;
+  const wait = shouldWaitForTowerStart(options);
 
   // Check if already running and responding
   if (await isServerResponding(port)) {
@@ -185,7 +193,7 @@ export async function towerStart(options: TowerStartOptions = {}): Promise<void>
 
   const dashboardUrl = `http://localhost:${port}`;
 
-  if (options.wait) {
+  if (wait) {
     // Wait for server to actually start responding
     logger.info('Waiting for server to start...');
     const started = await waitForServer(port);
@@ -210,12 +218,28 @@ export async function towerStart(options: TowerStartOptions = {}): Promise<void>
   }
 }
 
+function getShellperSocketDir(): string {
+  return process.env.SHELLPER_SOCKET_DIR || resolve(homedir(), '.codev', 'run');
+}
+
+async function cleanupScopedShellpers(): Promise<number> {
+  const config = getConfig();
+  const manager = new SessionManager({
+    socketDir: getShellperSocketDir(),
+    shellperScript: resolve(config.serversDir, '../terminal/shellper-main.js'),
+    nodeExecutable: process.execPath,
+    logger: (message) => logToFile(message),
+  });
+  return manager.killScopedShellpers();
+}
+
 /**
  * Stop the tower dashboard
  */
 export async function towerStop(options: TowerStopOptions = {}): Promise<void> {
   const port = options.port || DEFAULT_TOWER_PORT;
   const forceKill = options.forceKillAllChildProcesses || false;
+  const preserveShellpers = options.preserveShellpers || false;
 
   logger.header(forceKill ? 'Force-Killing Tower and All Child Processes' : 'Stopping Tower');
 
@@ -223,6 +247,12 @@ export async function towerStop(options: TowerStopOptions = {}): Promise<void> {
 
   if (pids.length === 0) {
     logger.info('Tower is not running');
+    if (!preserveShellpers) {
+      const killed = await cleanupScopedShellpers();
+      if (killed > 0) {
+        logger.success(`Cleaned up ${killed} scoped shellper process${killed > 1 ? 'es' : ''}`);
+      }
+    }
     return;
   }
 
@@ -288,6 +318,18 @@ export async function towerStop(options: TowerStopOptions = {}): Promise<void> {
 
   if (stopped > 0) {
     logger.success(`Tower stopped (${stopped} process${stopped > 1 ? 'es' : ''}: PIDs ${pids.join(', ')})`);
+  }
+
+  if (preserveShellpers) {
+    logger.info('Preserving shellper processes');
+    return;
+  }
+
+  const killed = await cleanupScopedShellpers();
+  if (killed > 0) {
+    logger.success(`Cleaned up ${killed} scoped shellper process${killed > 1 ? 'es' : ''}`);
+  } else {
+    logger.info('No scoped shellper processes found');
   }
 }
 

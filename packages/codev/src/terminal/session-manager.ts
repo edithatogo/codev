@@ -182,7 +182,7 @@ export class SessionManager extends EventEmitter {
     // Read PID + startTime from stdout
     let info: { pid: number; startTime: number };
     try {
-      info = await this.readShellperInfo(child);
+      info = await this.readShellperInfo(child, stderrLogPath);
     } catch (err) {
       this.log(`Session ${opts.sessionId} creation failed: ${(err as Error).message}`);
       // Kill orphaned child process using handle (not PID — may not be available yet)
@@ -602,6 +602,40 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Kill all shellper-main.js processes scoped to this manager's socketDir.
+   *
+   * This is intentionally stronger than killOrphanedShellpers(): it is for an
+   * explicit operator stop/cleanup path, so responsive shellpers are reclaimed
+   * too. Startup reconciliation should keep using killOrphanedShellpers().
+   */
+  async killScopedShellpers(): Promise<number> {
+    let killed = 0;
+    try {
+      const entries = await this.findShellperProcesses();
+      for (const { pid, socketPath } of entries) {
+        if (pid === process.pid) continue;
+
+        this.log(`Killing scoped shellper process: pid=${pid}${socketPath ? `, socket=${socketPath}` : ''}`);
+        const terminated = await this.terminateShellperProcess(pid);
+        if (terminated) {
+          killed++;
+        }
+
+        if (terminated && socketPath) {
+          this.unlinkSocketIfExists(socketPath);
+        }
+      }
+    } catch {
+      return 0;
+    }
+
+    if (killed > 0) {
+      this.log(`Killed ${killed} scoped shellper process(es)`);
+    }
+    return killed;
+  }
+
+  /**
    * Find shellper-main.js processes belonging to THIS Tower instance.
    *
    * Uses `ps -ww -eo pid,args` and filters for lines containing both
@@ -695,11 +729,19 @@ export class SessionManager extends EventEmitter {
 
   private readShellperInfo(
     child: ReturnType<typeof cpSpawn>,
+    stderrLogPath: string,
   ): Promise<{ pid: number; startTime: number }> {
     return new Promise((resolve, reject) => {
       let data = '';
+      let settled = false;
+      const fail = (message: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        reject(new Error(this.withShellperDiagnostics(message, data, stderrLogPath)));
+      };
       const timeout = setTimeout(() => {
-        reject(new Error('Timed out reading shellper info from stdout'));
+        fail('Timed out reading shellper info from stdout');
       }, 10_000);
 
       child.stdout!.on('data', (chunk: Buffer) => {
@@ -707,27 +749,58 @@ export class SessionManager extends EventEmitter {
       });
 
       child.stdout!.on('end', () => {
-        clearTimeout(timeout);
+        if (settled) return;
         try {
           const info = JSON.parse(data) as { pid: number; startTime: number };
+          settled = true;
+          clearTimeout(timeout);
           resolve(info);
         } catch {
-          reject(new Error(`Invalid shellper info JSON: ${data}`));
+          fail('Invalid shellper info JSON');
         }
       });
 
       child.on('error', (err) => {
-        clearTimeout(timeout);
-        reject(err);
+        fail(err.message);
       });
 
       child.on('exit', (code) => {
         if (code !== null && code !== 0 && data === '') {
-          clearTimeout(timeout);
-          reject(new Error(`Shellper exited with code ${code} before writing info`));
+          fail(`Shellper exited with code ${code} before writing info`);
         }
       });
     });
+  }
+
+  private withShellperDiagnostics(message: string, stdout: string, stderrLogPath: string): string {
+    const details: string[] = [message];
+    const stdoutSnippet = this.safeDiagnosticSnippet(stdout);
+    if (stdoutSnippet) {
+      details.push(`stdout: ${stdoutSnippet}`);
+    }
+
+    const stderrTail = this.readTextTail(stderrLogPath, 4000);
+    if (stderrTail) {
+      details.push(`stderr log (${stderrLogPath}): ${stderrTail}`);
+    }
+
+    return details.join('\n');
+  }
+
+  private safeDiagnosticSnippet(value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    return trimmed.replace(/"env"\s*:\s*\{[^}]*\}/g, '"env":"[redacted]"').slice(0, 1000);
+  }
+
+  private readTextTail(filePath: string, maxChars: number): string {
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8').trim();
+      if (!content) return '';
+      return content.length > maxChars ? content.slice(-maxChars) : content;
+    } catch {
+      return '';
+    }
   }
 
   private waitForSocket(socketPath: string, timeout = 5000): Promise<void> {
@@ -774,6 +847,31 @@ export class SessionManager extends EventEmitter {
       };
       check();
     });
+  }
+
+  private async terminateShellperProcess(pid: number): Promise<boolean> {
+    let signaled = false;
+    try {
+      process.kill(-pid, 'SIGTERM');
+      signaled = true;
+    } catch {
+      try {
+        process.kill(pid, 'SIGTERM');
+        signaled = true;
+      } catch {
+        return false;
+      }
+    }
+
+    const died = await this.waitForProcessExit(pid, 5000);
+    if (!died) {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
+      }
+    }
+    return signaled;
   }
 
   private setupAutoRestart(session: ManagedSession, sessionId: string): void {

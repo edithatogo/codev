@@ -559,6 +559,65 @@ describe('SessionManager', () => {
       }
     });
 
+    it('kills scoped shellpers without probing responsive sockets', async () => {
+      const liveSocketPath = path.join(socketDir, 'shellper-live-cleanup.sock');
+
+      const logs: string[] = [];
+      const manager = new SessionManager({
+        socketDir,
+        shellperScript: '/nonexistent/shellper.js',
+        nodeExecutable: process.execPath,
+        logger: (msg) => logs.push(msg),
+      });
+
+      vi.spyOn(manager as any, 'findShellperProcesses').mockResolvedValue([
+        { pid: 7777, socketPath: liveSocketPath },
+      ]);
+      vi.spyOn(manager as any, 'waitForProcessExit').mockResolvedValue(true);
+      const probeSpy = vi.spyOn(manager as any, 'probeSocket');
+
+      const killed: Array<{ pid: number; signal: string }> = [];
+      const originalKill = process.kill;
+      process.kill = ((pid: number, signal?: string | number) => {
+        killed.push({ pid, signal: String(signal || 'SIGTERM') });
+        return true;
+      }) as typeof process.kill;
+
+      try {
+        const count = await manager.killScopedShellpers();
+        expect(count).toBe(1);
+        expect(probeSpy).not.toHaveBeenCalled();
+        expect(killed).toContainEqual({ pid: -7777, signal: 'SIGTERM' });
+        expect(logs.some(m => m.includes('Killing scoped shellper process: pid=7777'))).toBe(true);
+      } finally {
+        process.kill = originalKill;
+      }
+    });
+
+    it('killScopedShellpers does not kill shellpers from another socket dir', async () => {
+      const uniqueDir = `/tmp/codev-scoped-cleanup-test-${Date.now()}-${Math.random().toString(36)}`;
+      const manager = new SessionManager({
+        socketDir: uniqueDir,
+        shellperScript: '/nonexistent/shellper.js',
+        nodeExecutable: process.execPath,
+      });
+
+      const killed: number[] = [];
+      const originalKill = process.kill;
+      process.kill = ((pid: number) => {
+        killed.push(pid);
+        return true;
+      }) as typeof process.kill;
+
+      try {
+        const count = await manager.killScopedShellpers();
+        expect(count).toBe(0);
+        expect(killed).toEqual([]);
+      } finally {
+        process.kill = originalKill;
+      }
+    });
+
     it('returns 0 when no orphans found', async () => {
       const manager = new SessionManager({
         socketDir,
@@ -795,6 +854,30 @@ describe('SessionManager', () => {
       try { process.kill(pid, 0); alive = true; } catch { /* ESRCH = dead, good */ }
       expect(alive).toBe(false);
     }, 20000);
+
+    it('surfaces shellper stderr when startup info is missing', async () => {
+      const failScript = path.join(socketDir, 'fail-before-info.js');
+      fs.writeFileSync(failScript, [
+        `process.stderr.write('node-pty failed: posix_spawnp failed\\n');`,
+        `process.exit(1);`,
+      ].join('\n'));
+
+      const manager = new SessionManager({
+        socketDir,
+        shellperScript: failScript,
+        nodeExecutable: process.execPath,
+      });
+
+      await expect(manager.createSession({
+        sessionId: 'stderr-startup-failure',
+        command: '/bin/echo',
+        args: [],
+        cwd: '/tmp',
+        env: { PATH: process.env.PATH || '/usr/bin:/bin', SECRET_VALUE: 'do-not-log' },
+        cols: 80,
+        rows: 24,
+      })).rejects.toThrow(/(Shellper exited with code 1 before writing info|Invalid shellper info JSON)[\s\S]*posix_spawnp failed/);
+    }, 15000);
   });
 
   describe('killSession', () => {
