@@ -8,10 +8,10 @@ plan_phases:
     status: complete
   - id: phase_2
     title: Porch runtime injection (always-on, every phase)
-    status: in_progress
+    status: complete
   - id: phase_3
     title: Interactive managed block in CLAUDE.md/AGENTS.md
-    status: pending
+    status: in_progress
   - id: phase_4
     title: 'Project materialization: hot-file creation in init/adopt/update'
     status: pending
@@ -21,7 +21,7 @@ plan_phases:
   - id: phase_6
     title: MAINTAIN + skill policing, docs sweep, consistency
     status: pending
-current_plan_phase: phase_2
+current_plan_phase: phase_3
 gates:
   spec-approval:
     status: approved
@@ -35,8 +35,8 @@ gates:
     status: pending
   verify-approval:
     status: pending
-iteration: 3
-build_complete: true
+iteration: 1
+build_complete: false
 history:
   - iteration: 1
     plan_phase: phase_1
@@ -103,4 +103,4 @@ history:
         file: >-
           /Users/mwk/Development/cluesmith/codev/.builders/spir-987/codev/projects/987-engineering-wisdom-is-write-on/987-phase_2-iter2-claude.txt
 started_at: '2026-06-04T15:42:17.225Z'
-updated_at: '2026-06-12T01:22:17.105Z'
+updated_at: '2026-06-12T01:26:01.595Z'
