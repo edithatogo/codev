@@ -7,12 +7,18 @@
  *  - runtime four-tier fallback: a workspace WITHOUT local hot files still gets the
  *    installed-skeleton copy (so an upgraded-but-not-yet-seeded repo never injects empty).
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { buildHotTierContext } from '../prompts.js';
+import { buildHotTierContext, buildPhasePrompt } from '../prompts.js';
 import { getSkeletonDir } from '../../../lib/skeleton.js';
+import type { ProjectState, Protocol } from '../types.js';
+
+// Avoid a real `gh issue view` round-trip when buildPhasePrompt → getProjectSummary runs.
+vi.mock('../../../lib/github.js', () => ({
+  fetchIssue: vi.fn().mockResolvedValue(null),
+}));
 
 const HEADER = '# Always-On Engineering Context (hot tier)';
 
@@ -71,5 +77,82 @@ describe('Spec 987 — hot-tier injection (buildHotTierContext)', () => {
     // Local copies win, so the skeleton STARTER text must NOT appear.
     expect(block).toContain('ARCH_HOT_MARKER');
     expect(block).not.toContain('STARTER:');
+  });
+});
+
+// Integration: the hot tier is actually prepended by buildPhasePrompt() across phases.
+describe('Spec 987 — hot tier is prepended to every assembled phase prompt', () => {
+  let tmp: string;
+
+  const protocol = {
+    name: 'spir',
+    version: '1.0.0',
+    phases: [
+      {
+        id: 'specify',
+        name: 'Specify',
+        type: 'build_verify',
+        build: { prompt: 'specify.md', artifact: 'codev/specs/x.md' },
+        verify: { type: 'spec', models: ['codex'] },
+        max_iterations: 1,
+      },
+      {
+        id: 'implement',
+        name: 'Implement',
+        type: 'per_plan_phase',
+        build: { prompt: 'implement.md', artifact: 'src/**/*.ts' },
+        verify: { type: 'impl', models: ['codex'] },
+        max_iterations: 1,
+      },
+    ],
+  } as unknown as Protocol;
+
+  function makeState(phase: string): ProjectState {
+    return {
+      id: '0001',
+      title: 'test-feature',
+      protocol: 'spir',
+      phase,
+      plan_phases: [],
+      current_plan_phase: null,
+      gates: {},
+      iteration: 1,
+      build_complete: false,
+      history: [],
+      started_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    } as unknown as ProjectState;
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hot-tier-prompt-'));
+    // Seed local hot files (tier-2) ...
+    const res = path.join(tmp, 'codev', 'resources');
+    fs.mkdirSync(res, { recursive: true });
+    fs.writeFileSync(path.join(res, 'arch-critical.md'), '# arch\n\nARCH_HOT_MARKER\n');
+    fs.writeFileSync(path.join(res, 'lessons-critical.md'), '# lessons\n\nLESSONS_HOT_MARKER\n');
+    // ... and the phase prompt bodies the resolver will load.
+    const prompts = path.join(tmp, 'codev', 'protocols', 'spir', 'prompts');
+    fs.mkdirSync(prompts, { recursive: true });
+    fs.writeFileSync(path.join(prompts, 'specify.md'), 'SPECIFY_BODY');
+    fs.writeFileSync(path.join(prompts, 'implement.md'), 'IMPLEMENT_BODY');
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it.each([
+    ['specify', 'SPECIFY_BODY'],
+    ['implement', 'IMPLEMENT_BODY'],
+  ])('prepends both hot files ahead of the %s phase body', async (phase, body) => {
+    const prompt = await buildPhasePrompt(tmp, makeState(phase), protocol);
+
+    expect(prompt.startsWith(HEADER)).toBe(true);
+    expect(prompt).toContain('ARCH_HOT_MARKER');
+    expect(prompt).toContain('LESSONS_HOT_MARKER');
+    expect(prompt).toContain(body);
+    // Hot tier comes BEFORE the phase-specific body.
+    expect(prompt.indexOf(HEADER)).toBeLessThan(prompt.indexOf(body));
   });
 });
