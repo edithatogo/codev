@@ -32,3 +32,17 @@ refactor from `plan-review.ts` is still valid and shared between editor + previe
 offered cheaper alternatives (defer/close; editor-side bridge) for the architect to choose.
 
 Notified architect of the premise break. Plan committed, sitting at plan-approval gate.
+
+## HOLD at plan-approval (2026-05-30, architect instruction)
+
+Architect put #859 on hold at the plan-approval gate. Reframe in progress: the Codev
+preview will be extracted as a **reusable cross-surface package** (consumable from vscode +
+dashboard + future mobile) rather than a vscode-only webview. A new issue is being filed to
+track the package. Once it ships, #859 will be re-planned against that foundation.
+
+My investigation is preserved and will inform the package work: infeasibility finding
+(no preview->host messaging on the built-in preview), markdown-it + data-line source-map
+choice, CustomTextEditor pattern.
+
+Action: NOT proceeding, NOT touching the plan, NOT re-planning. Sitting at the gate awaiting
+the architect's signal to re-plan.
