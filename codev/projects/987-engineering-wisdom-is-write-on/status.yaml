@@ -35,8 +35,24 @@ gates:
     status: pending
   verify-approval:
     status: pending
-iteration: 1
-build_complete: true
-history: []
+iteration: 2
+build_complete: false
+history:
+  - iteration: 1
+    plan_phase: phase_1
+    build_output: ''
+    reviews:
+      - model: gemini
+        verdict: COMMENT
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-987/codev/projects/987-engineering-wisdom-is-write-on/987-phase_1-iter1-gemini.txt
+      - model: codex
+        verdict: REQUEST_CHANGES
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-987/codev/projects/987-engineering-wisdom-is-write-on/987-phase_1-iter1-codex.txt
+      - model: claude
+        verdict: APPROVE
+        file: >-
+          /Users/mwk/Development/cluesmith/codev/.builders/spir-987/codev/projects/987-engineering-wisdom-is-write-on/987-phase_1-iter1-claude.txt
 started_at: '2026-06-04T15:42:17.225Z'
-updated_at: '2026-06-12T00:16:02.545Z'
+updated_at: '2026-06-12T00:23:10.471Z'
