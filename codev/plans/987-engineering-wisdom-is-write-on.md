@@ -1,8 +1,13 @@
+---
+approved: 2026-06-06
+validated: [codex, claude]
+---
+
 # Plan: Symmetric Hot/Cold Governance Docs — `arch.md` & `lessons-learned.md` Consumed at Decision Time
 
 ## Metadata
 - **ID**: plan-2026-06-06-987-engineering-wisdom-write-only
-- **Status**: draft
+- **Status**: approved 2026-06-06 (codex, claude)
 - **Specification**: `codev/specs/987-engineering-wisdom-is-write-on.md`
 - **Created**: 2026-06-06
 

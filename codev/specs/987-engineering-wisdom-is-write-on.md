@@ -1,9 +1,14 @@
+---
+approved: 2026-06-06
+validated: [codex, claude]
+---
+
 # Specification: Symmetric Hot/Cold Governance Docs — Make `arch.md` and `lessons-learned.md` Consumed at Decision Time
 
 ## Metadata
 - **ID**: spec-2026-06-05-987-engineering-wisdom-write-only
 - **Issue**: #987
-- **Status**: draft (revised per architect instruction 2026-06-05)
+- **Status**: approved 2026-06-06 (codex, claude; gemini lane scoped out — defect #1032/#1033)
 - **Created**: 2026-06-04 · **Revised**: 2026-06-05
 - **Protocol**: SPIR (strict)
 
