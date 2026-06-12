@@ -75,6 +75,8 @@ MAINTAIN polices the cap and keeps the map in sync with lessons-learned.md's sec
 
 <!-- END CODEV HOT CONTEXT -->
 
+> **Always-on governance docs (Spec 987 — hot/cold tiers).** The block above is **auto-generated** from the HOT tier (`codev/resources/arch-critical.md` and `lessons-critical.md`) and refreshed by `codev init` / `codev update` — edit those source files, not the block. Each hot file is tiny, hard-capped, and injected into *every* porch phase prompt as well as here, so the most decision-relevant facts are always in context. Their full COLD counterparts (`codev/resources/arch.md` and `lessons-learned.md`) are the on-demand reference archives; the "consult when…" maps in the hot files point into them. New facts/lessons are **routed** by tier at review time and policed (cap + map accuracy) during MAINTAIN.
+
 > **Note**: This file is specific to Claude Code. An identical [AGENTS.md](AGENTS.md) file is also maintained following the [AGENTS.md standard](https://agents.md/) for cross-tool compatibility with Cursor, GitHub Copilot, and other AI coding assistants. Both files contain the same content and should be kept synchronized.
 
 ## Project Context

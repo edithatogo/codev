@@ -115,7 +115,7 @@ The `update-arch-docs` skill (at `.claude/skills/update-arch-docs/SKILL.md`) is 
 
 #### Step 3a: Audit documentation
 
-Invoke the `update-arch-docs` skill in **audit-mode**. The skill reads `codev/resources/arch.md` and `codev/resources/lessons-learned.md` end-to-end against the discipline below and produces a candidate-cuts list (with reasons) recorded in the run file (`codev/maintain/NNNN.md`) under a new `## Audit Findings` section before any edits land.
+Invoke the `update-arch-docs` skill in **audit-mode**. The skill reads all four governance files — `codev/resources/arch.md` / `arch-critical.md` and `codev/resources/lessons-learned.md` / `lessons-critical.md` — end-to-end against the discipline below, applies the cuts via the Edit tool, and records each cut's reason in the run file (`codev/maintain/NNNN.md`) under a `## Audit Findings` section. The diff plus the recorded reasons **is** the proposal; the architect's PR review is the human-confirmation step (consistent with the skill's audit-mode).
 
 **Per-arch.md-section pruning checklist** — for each section in `arch.md`, ask:
 - Does it describe **current state**? If aspirational, the section moves to a meta-spec; `arch.md` keeps a 1-paragraph summary + pointer (or nothing, if the meta-spec stands on its own).
@@ -142,9 +142,9 @@ Audit all four governance files — codev/resources/arch.md + arch-critical.md a
 lessons-learned.md + lessons-critical.md — against the discipline in the
 update-arch-docs skill. For each cold section/entry run the cold pruning checklists,
 and for each hot file check the cap, displacement, and map accuracy (Step 3a).
-Produce a candidate-cuts list with one-line reasons. Bias toward fewer,
-higher-confidence cuts ("when in doubt, KEEP"). Record the findings in the current
-run file's ## Audit Findings section before applying.
+Apply the cuts with one-line reasons. Bias toward fewer, higher-confidence
+cuts ("when in doubt, KEEP"). Record each cut's reason in the current run
+file's ## Audit Findings section as you go — the diff plus those reasons is the proposal.
 ```
 
 **When in doubt, KEEP.** This rule is preserved from the older Step 3. A confident cut is better than three speculative ones. The audit pass is a *proposal*; the architect's PR review confirms it.
@@ -200,13 +200,13 @@ Each run creates `codev/maintain/NNNN.md`:
 
 ## Audit Findings
 
-Recorded by Step 3a (Audit documentation) before any edits land. One line per candidate cut.
+Recorded by Step 3a (Audit documentation) as the cuts are applied — one line per cut, with its reason. The diff plus these reasons is the proposal; the architect's PR review is the gate.
 
-### arch.md
-- <section-name>: <reason for proposed cut/compression>
+### arch.md (cold) / arch-critical.md (hot)
+- <section or hot entry>: <reason for cut / compression / demotion>
 
-### lessons-learned.md
-- <entry>: <reason>
+### lessons-learned.md (cold) / lessons-critical.md (hot)
+- <entry>: <reason; note hot→cold demotions and any cold-doc-map fixes>
 
 ## What Was Done
 
@@ -215,8 +215,8 @@ Recorded by Step 3a (Audit documentation) before any edits land. One line per ca
 - Removed `some-package` dependency — zero imports
 
 ### Documentation Updated
-- arch.md: Added VS Code extension section, removed old dashboard-server refs
-- lessons-learned.md: Extracted 3 lessons from reviews 653, 672
+- arch.md / arch-critical.md: Added VS Code extension section + removed old dashboard-server refs (cold); routed 1 invariant to the hot tier, demoted 1 stale entry to cold
+- lessons-learned.md / lessons-critical.md: Extracted 3 lessons from reviews 653, 672 (cold); promoted 1 behavior-changer to the hot tier, refreshed its cold-doc map
 
 ### Documentation Changes Log
 | Document | Section | Action | Reason |
