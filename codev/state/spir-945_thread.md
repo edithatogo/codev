@@ -512,3 +512,20 @@ Systemic note for a follow-up tracker: both CI-only failures were "test reads an
 DOM synchronously after the element appears, racing the post-render effect." Render-time attributes
 (or waitFor on the decorated state) avoid it. Remaining effect-driven decoration (marker classes)
 is already asserted via waitFor in tests, so it's safe.
+
+## Smoke-host visual review → overlay anchoring fix [2026-06-12]
+
+Human ran the examples dev page and found two visual issues:
+1. The `+` comment affordance (and marker list) always rendered at the BOTTOM of the canvas, not
+   beside the hovered block — because the overlay was a normal-flow sibling after the body. This was
+   the Phase 3 "visual positioning deferred" item. **Fixed (this PR):** record the active block's
+   offsetTop on hover/focus (`activateFromTarget`) + position the overlay absolutely at that offset;
+   `.codev-artifact-canvas` is now position:relative with a left gutter for the `+`. Real-browser
+   (Playwright) verified: `+` aligns with the hovered block (225 vs 226, 399 vs 400 px) and moves
+   174px to follow a lower block. 35/35 unit tests + build + types green.
+2. Raw `<!-- REVIEW(...) -->` marker comment renders as body text (html:false escapes it). Deeper:
+   stripping the line would shift data-line numbers, so it's entangled with host serialization /
+   source-mapping. Deferred to **#1036** (relates to #859). Not changed in this PR.
+
+Also filed #1029 earlier (package layering: defer core/web/native split until native is committed).
+Real-browser smoke (8/8) had already validated render/tabindex/theming/round-trip before this fix.

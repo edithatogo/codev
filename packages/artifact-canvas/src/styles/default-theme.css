@@ -27,6 +27,13 @@
 
   color: var(--codev-canvas-foreground);
   background: var(--codev-canvas-background);
+  /* Positioning context for the comment overlay, which anchors to the active block. */
+  position: relative;
+}
+
+/* Left gutter so the anchored "+" affordance sits beside a block, not over its text. */
+.codev-artifact-canvas-body {
+  padding-left: 1.9rem;
 }
 
 /* Phase 3 — comment overlay + minimal marker rendering */
@@ -58,8 +65,17 @@
 .codev-artifact-canvas-body pre,
 .codev-artifact-canvas-body code { background: var(--codev-canvas-code-background); }
 
-/* Overlay: the "+" affordance + the active line's existing comments (author + text) */
-.codev-canvas-overlay { display: flex; gap: 8px; align-items: flex-start; }
+/* Overlay: the "+" affordance + the active line's existing comments (author + text).
+   Anchored to the active block: positioned absolutely in the canvas, with `top` set inline from
+   the block's offset (the `+` lands in the left gutter beside the hovered/focused block). */
+.codev-canvas-overlay {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  position: absolute;
+  left: 0;
+  z-index: 5;
+}
 .codev-canvas-marker-list {
   list-style: none;
   margin: 0;

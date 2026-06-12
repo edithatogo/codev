@@ -23,6 +23,8 @@ export function ArtifactCanvas(props: ArtifactCanvasProps): React.ReactElement {
   const [content, setContent] = React.useState<string>('');
   const [markers, setMarkers] = React.useState<ReviewMarker[]>([]);
   const [activeLine, setActiveLine] = React.useState<number | null>(null);
+  // Vertical offset (px, relative to the canvas) of the active block, so the overlay anchors to it.
+  const [overlayTop, setOverlayTop] = React.useState(0);
   const bodyRef = React.useRef<HTMLDivElement>(null);
 
   const report = React.useCallback(
@@ -153,6 +155,18 @@ export function ArtifactCanvas(props: ArtifactCanvasProps): React.ReactElement {
     return Number.isNaN(n) ? null : n;
   };
 
+  // Activate the hovered/focused block AND anchor the overlay to it: record the block's vertical
+  // offset so the `+` affordance renders next to that block instead of at the bottom of the canvas.
+  // (`offsetTop` is relative to `.codev-artifact-canvas`, which is the positioned ancestor.)
+  const activateFromTarget = (target: EventTarget | null): void => {
+    const el = (target as HTMLElement | null)?.closest?.('[data-line]') as HTMLElement | null;
+    if (!el) return;
+    const n = Number(el.getAttribute('data-line'));
+    if (Number.isNaN(n)) return;
+    setActiveLine(n);
+    setOverlayTop(el.offsetTop);
+  };
+
   // Markers on the currently-active (hovered/focused) line — surfaced author + text via the
   // overlay (deferred #4: minimal v1 marker rendering; #863 adds polished inline markers).
   const activeMarkers = activeLine === null ? [] : markers.filter((m) => m.line === activeLine);
@@ -163,14 +177,8 @@ export function ArtifactCanvas(props: ArtifactCanvasProps): React.ReactElement {
     React.createElement('div', {
       ref: bodyRef,
       className: 'codev-artifact-canvas-body',
-      onMouseOver: (e: React.MouseEvent) => {
-        const l = lineFromEvent(e.target);
-        if (l !== null) setActiveLine(l);
-      },
-      onFocus: (e: React.FocusEvent) => {
-        const l = lineFromEvent(e.target);
-        if (l !== null) setActiveLine(l);
-      },
+      onMouseOver: (e: React.MouseEvent) => activateFromTarget(e.target),
+      onFocus: (e: React.FocusEvent) => activateFromTarget(e.target),
       onKeyDown: (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' || e.key === ' ') {
           const l = lineFromEvent(e.target);
@@ -185,7 +193,7 @@ export function ArtifactCanvas(props: ArtifactCanvasProps): React.ReactElement {
     activeLine !== null
       ? React.createElement(
           'div',
-          { className: 'codev-canvas-overlay' },
+          { className: 'codev-canvas-overlay', style: { top: overlayTop } },
           React.createElement(CommentAffordance, { line: activeLine, onActivate: onAddComment }),
           activeMarkers.length > 0
             ? React.createElement(

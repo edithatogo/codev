@@ -205,3 +205,17 @@ package-scoped change; (3) enumerate stateful-component reload edge cases before
   consumer). Explicitly out of v1 scope.
 - **Flaky-test tracker** (architect-filed): fix the 4 quarantined codev tests, then remove the
   `.skip`s on a follow-up.
+- **#1029**: package-layering decision (DOM vs universal; defer a core/web/native split until
+  native rendering is committed).
+- **#1036**: marker comments render as body text — the renderer/host must hide marker lines while
+  preserving `data-line` accounting (entangled with host serialization, #859). Surfaced via the
+  smoke host; the companion overlay-anchoring half was fixed in this PR (below).
+
+## Post-review polish (smoke-host feedback)
+
+During visual review of the smoke host, the comment overlay was found to render at the bottom of
+the canvas rather than beside the active block (the Phase 3 "visual positioning deferred" item). It
+now **anchors to the active block**: the component records the block's `offsetTop` on hover/focus
+and positions the overlay absolutely at that offset (left gutter for the `+`), verified in a real
+browser (Playwright) to align with, and follow, the hovered/focused block. The marker-comment-as-
+text issue noticed at the same time is the separate, deeper item tracked as #1036.
