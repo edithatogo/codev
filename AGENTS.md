@@ -317,7 +317,7 @@ Pick PIR when ONE or BOTH of the following apply to a GitHub-issue-driven change
 - Removing dead code and unused dependencies
 - Quarterly codebase maintenance
 - Before releases (clean slate for shipping)
-- Syncing documentation (arch.md, lessons-learned.md, CLAUDE.md/AGENTS.md)
+- Syncing documentation (arch.md/arch-critical.md, lessons-learned.md/lessons-critical.md, CLAUDE.md/AGENTS.md)
 
 ### Use RESEARCH for:
 - Competitive analysis and technology evaluation
@@ -353,9 +353,11 @@ project-root/
 │   ├── plans/              # Implementation plans (HOW to build)
 │   ├── reviews/            # Reviews and lessons learned from each feature
 │   └── resources/          # Reference materials
-│       ├── arch.md         # Architecture documentation (updated during MAINTAIN)
+│       ├── arch.md         # Architecture (COLD reference; maintained during MAINTAIN)
+│       ├── arch-critical.md # Architecture HOT tier — capped, always-injected (Spec 987)
 │       ├── testing-guide.md # Local testing, Playwright, regression prevention
-│       └── lessons-learned.md  # Extracted wisdom from reviews (generated during MAINTAIN)
+│       ├── lessons-learned.md   # Engineering wisdom (COLD reference; maintained during MAINTAIN)
+│       └── lessons-critical.md  # Engineering wisdom HOT tier — capped, always-injected (Spec 987)
 ├── .claude/
 │   └── agents/             # AI agent definitions (custom project agents)
 ├── AGENTS.md              # Universal AI agent instructions (AGENTS.md standard)
