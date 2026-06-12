@@ -1,7 +1,7 @@
 id: '945'
 title: build-foundational-reusable-pa
 protocol: spir
-phase: review
+phase: verify
 plan_phases:
   - id: phase_1
     title: Package skeleton, dual-format build, locked interfaces, theme tokens
@@ -35,5 +35,5 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-05-30T23:09:36.579Z'
-updated_at: '2026-06-12T10:01:35.467Z'
+updated_at: '2026-06-12T10:02:16.108Z'
 pr_ready_for_human: false
