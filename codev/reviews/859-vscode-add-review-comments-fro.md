@@ -111,6 +111,34 @@ given as an SVG file path render with no color context (`currentColor` → black
   - A non-codev `.md` (e.g. README) is NOT offered the preview in "Reopen With…".
   - Editor gutter-`+` Comments path and existing markers unchanged.
 
+## Consultation (PR, single advisory pass)
+
+PIR runs one advisory 3-way pass (`max_iterations: 1`); it is **not** re-reviewed, so dispositions
+are recorded here for the human at the `pr` gate.
+
+- **Claude — APPROVE (HIGH)**: clean; one non-blocking nit (a `void`-prefixed floating promise at
+  `preview-provider.ts:77`). **Addressed** — removed the `void` prefix (matches the project's
+  bare-call convention).
+- **Gemini — no usable verdict**: the gemini consult lane derailed on two consecutive runs (first
+  an off-topic `agy --sandbox` tangent, then an "empty workspace" prompt). This is a lane/infra
+  failure, not a review of this PR. Escalated to the human; effectively a 2-of-3 pass.
+- **Codex — REQUEST_CHANGES (HIGH)**, two findings, both **rebutted** (no PIR re-review, so flagged
+  for the human):
+  1. *Editor-authored comments on a continuation line of a multi-line block won't render in the
+     canvas* (they anchor to a line with no `data-line`). **Real but a documented, architect-approved
+     limitation**: the block-start-parity promise came from the *original* re-plan's markdown-it
+     resolver, which the architect explicitly directed me to drop (codec simplification), then we
+     landed on the strip-pre-parse + nearest-non-marker convention through a series of approved
+     decisions. Canvas-authored comments always target the block start and never hit this; markers
+     are never lost (still in the file, still rendered in the editor's Comments thread). Richer
+     anchoring is explicitly **#863**. Not fixed here to avoid unrequested scope creep into the
+     canvas component's anchoring (which is #863's domain).
+  2. *No `packages/vscode/src/__tests__/` bridge tests*. The pure, regression-prone logic (the marker
+     codec: serialize / parse / strip / anchor) is fully unit-tested in `core` (29 tests). The host
+     bridge is thin `vscode`-API glue (`onDidReceiveMessage` → `showInputBox` → `WorkspaceEdit`) that
+     isn't unit-testable without a heavy `vscode` mock; it was exercised live at the `dev-approval`
+     gate. Judged not worth a brittle mock harness for this surface.
+
 ## Follow-ups (filed)
 
 - **#1042** — relax artifact-canvas HTML policy (done in this PR; issue tracks the D7 amendment).

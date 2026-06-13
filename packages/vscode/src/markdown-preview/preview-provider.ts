@@ -74,7 +74,7 @@ export class MarkdownPreviewProvider implements vscode.CustomTextEditorProvider 
       const m = msg as { type?: string; line?: number };
       if (m.type === 'ready') { pushUpdate(); return; }
       if (m.type === 'addComment' && typeof m.line === 'number') {
-        void this.addComment(document, m.line);
+        this.addComment(document, m.line);
       }
     });
   }
