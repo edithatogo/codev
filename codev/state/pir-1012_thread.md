@@ -19,3 +19,11 @@ Issue #1012 — scaffold: `codev init` bootstraps `codev/resources/` with arch.m
 - The update-backfill "scope amendment" I discussed with the architect is now MOOT: 987 already ships update backfilling resources. Extending to cold is consistent house style, not a deviation.
 - Revised plan: add `copyColdTierDefaults` (sibling of `copyHotTierDefaults`) + wire into the same 3 sites. Main open question for the gate: copy skeleton cold templates (consistent with 987) vs the issue's original "minimal inline content" preference. Plan recommends skeleton templates; awaiting architect sign-off.
 - Dead `copyResourceTemplates` still dead; 987's own comment flags it. Out of scope.
+
+## Gate iter: "why copy at all / use the proper code path"
+
+- Architect challenged the inline-content idea: don't fork the mechanism, use the existing materialization code.
+- Verified: (a) NO production code reads templates/arch.md or templates/lessons-learned.md (pure copy sources — safe to edit); (b) no resolver/lazy path serves cold files — review prompts read literal `codev/resources/arch.md`, which is project-owned user-data (templates.ts:83-84) with no fallback by design. So the file MUST physically exist; materialization is unavoidable.
+- Also found: the skeleton `templates/arch.md` has a "Note on propagation" section asserting it is NOT copied into projects — copying it verbatim would be self-contradicting. That's the real reason inline content was tempting.
+- Final design (plan revised): generalize `copyHotTierDefaults` body into a private `copyResourceDefaults(files,...)`, redefine hot in terms of it (no behavior change), add `copyColdTierDefaults` for ['arch.md','lessons-learned.md']; wire at the same 3 sites. Fix the SOURCE: trim the propagation note from skeleton arch.md + false footer from lessons-learned.md. One mechanism, one source of truth, no inline strings.
+- Open sub-decision for gate: how lean to trim the templates (light trim keeping structural stubs [recommended] vs ultra-minimal one-liner).
