@@ -1,0 +1,123 @@
+/**
+ * Review-marker codec — the single, host-agnostic home for the on-disk `REVIEW`
+ * comment format and the transforms a rendered review surface needs.
+ *
+ * Background (#859): `@cluesmith/codev-artifact-canvas` renders Codev artifacts
+ * (specs/plans/reviews) and lets a reviewer add inline comments. A comment is
+ * serialized into the markdown as a positional HTML comment:
+ *
+ *     <!-- REVIEW(@<author>): <text> -->
+ *
+ * written on the line **after** the block it annotates. There is no `line=N`
+ * attribute — the marker's *position in the file* is the entire line
+ * association (a marker on file line `i` annotates logical line `i - 1`). This
+ * matches both the existing VSCode editor Comments-API path
+ * (`packages/vscode/src/comments/plan-review.ts`) and the canvas package's own
+ * tested adapter contract, so the two authoring surfaces round-trip through the
+ * same bytes.
+ *
+ * This module lives in `core` (not in a host) because the convention is a
+ * cross-host contract: the VSCode host consumes it now, and the dashboard /
+ * future hosts consume the same functions so they cannot drift. It is pure
+ * (no `vscode`, no DOM, no I/O) and therefore safe in both Node and the browser.
+ *
+ * One transform is canvas-specific: `stripMarkersForRender`. The canvas renderer
+ * runs markdown-it with `html: false`, which escapes a raw `<!-- REVIEW … -->`
+ * line to *visible literal text*. So the host hands the renderer a copy with
+ * every marker line blanked (replaced by an empty line, NOT deleted — deleting
+ * would shift line numbers and could merge adjacent blocks). Blank-replacement
+ * keeps the rendered text's line count identical to the on-disk text, so a
+ * marker's logical line still lines up with the renderer's `data-line`. This is
+ * the host side of #1036.
+ */
+
+/**
+ * In-memory model of one review marker. Structurally matches
+ * `ReviewMarker` from `@cluesmith/codev-artifact-canvas` (kept as a local
+ * declaration so `core` does not depend on the React rendering package).
+ */
+export interface ReviewMarker {
+  author: string;
+  /** 0-based logical line the marker annotates (the line *above* the marker). */
+  line: number;
+  text: string;
+  /** Original on-disk marker text, for lossless round-tripping. */
+  raw: string;
+  /** Reserved for region anchors (unused in v1). */
+  lineRange?: { start: number; end: number };
+}
+
+/**
+ * Eligible artifact paths — the `+` affordance and the canvas editor are gated
+ * to these. Shared so the editor path and the canvas host agree on one rule.
+ */
+export const ELIGIBLE_PATH_REGEX = /\/codev\/(plans|specs|reviews)\//;
+
+/**
+ * Per-line marker matcher. Capture groups: [1] indent, [2] author, [3] body.
+ * A marker occupies its own line by convention; the body is single-line
+ * (whitespace-normalized at write time). Tolerant of surrounding whitespace to
+ * stay compatible with markers authored by the editor path and by hand.
+ */
+const REVIEW_MARKER_RE = /^(\s*)<!--\s*REVIEW\s*\(@([^)]+)\)\s*:\s*([\s\S]*?)\s*-->\s*$/;
+
+/** True if `fsPath` (forward-slash normalized or not) is a review-eligible artifact. */
+export function isEligibleReviewPath(fsPath: string): boolean {
+  return ELIGIBLE_PATH_REGEX.test(fsPath.replace(/\\/g, '/'));
+}
+
+/** True if a single line is a review marker. */
+export function isReviewMarkerLine(line: string): boolean {
+  return REVIEW_MARKER_RE.test(line);
+}
+
+/**
+ * Serialize a marker to its canonical on-disk form. The body is
+ * whitespace-normalized to a single line (markers are single-line by
+ * convention; the canvas/editor decorations assume one line). `indent` is
+ * prepended so a marker inside an indented list item keeps the list's
+ * indentation.
+ */
+export function serializeReviewMarker(author: string, body: string, indent = ''): string {
+  const normalized = body.replace(/\s+/g, ' ').trim();
+  return `${indent}<!-- REVIEW(@${author}): ${normalized} -->`;
+}
+
+/**
+ * The file line a new marker is written to, given the 0-based line it annotates:
+ * the line *after* the annotated line. Encoded here so every caller (editor +
+ * canvas host) shares one definition of the convention and cannot drift.
+ */
+export function markerInsertionLine(annotatedLine: number): number {
+  return annotatedLine + 1;
+}
+
+/**
+ * Parse all review markers out of `text` into `ReviewMarker`s, mapping each to
+ * the 0-based logical line it annotates (`fileLine - 1`). A marker on line 0
+ * annotates nothing and is skipped (matches the canvas package's contract).
+ */
+export function parseReviewMarkers(text: string): ReviewMarker[] {
+  const out: ReviewMarker[] = [];
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = REVIEW_MARKER_RE.exec(lines[i]);
+    if (m && i > 0) {
+      out.push({ author: m[2], line: i - 1, text: m[3], raw: lines[i].trim() });
+    }
+  }
+  return out;
+}
+
+/**
+ * Return a copy of `text` with every marker line replaced by an empty line, so
+ * the renderer never shows raw `<!-- REVIEW … -->` text (the #1036 host fix).
+ * Line count is preserved, so marker logical lines still align with the
+ * renderer's `data-line` attribution.
+ */
+export function stripMarkersForRender(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => (isReviewMarkerLine(line) ? '' : line))
+    .join('\n');
+}
