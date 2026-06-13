@@ -11,3 +11,20 @@ Key findings beyond the issue text:
 - In-session group collapse memory comes free from VSCode's native per-id behavior, so no in-memory store replaces the deleted persisted one. Cross-reload defaults to expanded because contributed trees don't persist expansion natively (that's why the store existed).
 
 Plan written to `codev/plans/913-vscode-accordion-shouldn-t-aff.md`. Sitting at plan-approval gate.
+
+Plan-approval feedback: dropped the per-builder salt map in favor of a single monotonic `gen` counter + `openBuilderId`/`openGen` pin (architect questioned why a map was needed). Revised and re-pushed before approval.
+
+## Implement phase
+
+Plan approved. Implemented:
+
+- `builder-grouping.ts`: dropped the `expansion` field from `BuilderGrouping` and both strategy factories (`stageGrouping()` / `areaGrouping()` now take no args).
+- `builders.ts`: added `gen`/`openBuilderId`/`openGen` + `collapseBuildersExcept(item)`; `makeBuilderRow` renders `item.id = ${b.id}#${gen}` (open builder pinned to `openGen`); `rootChildren` renders groups always Expanded; removed the expansion store/wrapper and the `workspaceState` ctor param; added exported `generationOf` helper (guards empty/non-numeric suffix).
+- `extension.ts`: removed `BuilderGroupTreeItem` import + builders `persistAreaGroupExpansion` wiring; one-shot cleanup deletes both `codev.buildersGroupExpansion` and `codev.buildersStageGroupExpansion` on activation; rewrote the accordion handler to be synchronous and call `collapseBuildersExcept` (no more `collapseAll`, `reveal(expand:3)`, or `reconciling`).
+- Tests: trimmed `builder-grouping.test.ts`; new `builders-accordion.test.ts` (7 cases) pinning the salting contract + always-Expanded groups + `generationOf`.
+
+Note: building requires `packages/core` and `packages/types` to be built first (their `dist/` was empty in the fresh worktree) — `tsc` subpath exports don't resolve otherwise. `pnpm compile` (check-types + lint + esbuild) green; `pnpm test:unit` 390/390 green.
+
+One thing for the human to eyeball at dev-approval: `collapseBuildersExcept` fires the tree-data change event synchronously from inside the `onDidExpandElement` handler (during `openBuilderRow`'s `reveal`). Behaves correctly in tests/logic, but worth a visual check that the open builder's file tree doesn't flicker.
+
+Sitting at dev-approval gate.
