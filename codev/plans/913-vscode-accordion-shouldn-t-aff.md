@@ -23,15 +23,15 @@ Both are `AreaGroupExpansionStore` instances created in `BuildersProvider` (`pac
 
 ## Proposed Change
 
-### 1. Accordion: replace `collapseAll` + reveal with targeted id-salting
+### 1. Accordion: replace `collapseAll` + reveal with a generation-salted row id
 
-Add to `BuildersProvider`:
+A collapsed-by-accordion row must never render under a previously-used id (VSCode would resurrect the remembered "expanded" state for that id), so the salt has to be sticky. A single monotonic generation counter achieves that with three scalars and no per-builder map. Add to `BuildersProvider`:
 
-- a private `Map<string, number>` of per-builder id salts plus a monotonic counter;
-- a public `collapseBuildersExcept(builderId: string): void` that bumps the salt for every builder currently in the overview data except the given one, then fires the change emitter;
-- `makeBuilderRow` renders `item.id` as the salted form (`<b.id>#<salt>`) when a salt exists, plain `b.id` otherwise.
+- private state: `gen` (monotonic counter, starts at 0), `openBuilderId` and `openGen` (the one builder allowed to stay expanded, and the generation its row id is pinned to);
+- a public `collapseBuildersExcept(item: BuilderTreeItem): void` that pins `openBuilderId` to the clicked builder, pins `openGen` to the generation parsed from the clicked element's rendered id (bulletproof against a render landing between bump and click), bumps `gen`, then fires the change emitter;
+- `makeBuilderRow` renders `item.id` as `${b.id}#${openGen}` for the open builder and `${b.id}#${gen}` for every other builder.
 
-Effect: on the next render, every other builder row has a new id, so VSCode renders it with the provider's `Collapsed` state. The clicked builder keeps its id, so its expanded state (and its file-tree's per-folder expansion, whose ids are keyed by `builderId`, not the row id: `builder-folder-tree-item.ts:23`) is untouched. Group headers keep their stable `builder-group:<name>` ids and are never collapsed, satisfying acceptance criterion 1 for any group in any state.
+Effect: on the next render, every builder row except the open one carries a new id, so VSCode renders it with the provider's `Collapsed` state. The clicked builder keeps its id, so its expanded state (and its file-tree's per-folder expansion, whose ids are keyed by `builderId`, not the row id: `builder-folder-tree-item.ts:23`) is untouched. Group headers never carry a generation suffix: their ids stay `builder-group:<name>`, so the refresh re-renders them in place and VSCode keeps whatever state they are in, satisfying acceptance criterion 1 for any group in any state. The mechanism is level-agnostic, so the single-`Uncategorized` flatten case (builders at root, no groups) works through the same code path with nothing special.
 
 The accordion handler in `extension.ts` becomes synchronous and much smaller:
 
@@ -39,7 +39,7 @@ The accordion handler in `extension.ts` becomes synchronous and much smaller:
 - drop the `reconciling` flag (no more await chain to debounce);
 - drop the `collapseAll` command and the `reveal(e.element, { expand: 3 })` repair call. The repair existed only to undo `collapseAll`'s damage to folder rows; with salting, nothing under the clicked builder is ever collapsed.
 
-Salting all-except-clicked (rather than only the previously-open builder) makes the handler self-healing: if several builders are open because the accordion was just toggled on, the first expand collapses all of them. Re-salting an already-collapsed row is a no-op visually.
+Because the bump re-ids every builder except the open one (rather than only the previously-open builder), the handler is self-healing: if several builders are open because the accordion was just toggled on, the first expand collapses all of them. Re-iding an already-collapsed row is visually a no-op.
 
 ### 2. Group expansion: delete persistence for the Builders view
 
@@ -52,19 +52,20 @@ Salting all-except-clicked (rather than only the previously-open builder) makes 
 
 ## Files to Change
 
-- `packages/vscode/src/views/builders.ts` — add salt map + `collapseBuildersExcept`; salted `item.id` in `makeBuilderRow`; remove `expansion` wrapper, store instances, and `workspaceState` ctor param; render groups always Expanded (`builders.ts:202-208` collapses to a constant); update class docblock (lines 76-79) which documents the persistence being removed.
-- `packages/vscode/src/views/builder-grouping.ts` — drop `expansion` from the `BuilderGrouping` interface and from both strategy factories.
-- `packages/vscode/src/extension.ts` — drop builders `persistAreaGroupExpansion` wiring (346-348) and `BuilderGroupTreeItem` import (38); add two-key workspaceState cleanup near provider construction; rewrite the accordion block (442-485) to call `buildersProvider.collapseBuildersExcept(...)`; update `BuildersProvider` construction (344) for the removed parameter.
-- `packages/vscode/src/__tests__/builder-grouping.test.ts` — remove the `fakeStore` plumbing and the "exposes the passed expansion store" assertions.
-- `packages/vscode/src/__tests__/builders-accordion.test.ts` — new unit test (vitest, `vi.mock('vscode')` per the existing `__tests__` pattern): `collapseBuildersExcept('x')` changes rendered ids of all builders except `x`, keeps `x`'s id stable, keeps group ids stable, fires the change event; repeated calls keep bumping; group headers always render Expanded.
+- `packages/vscode/src/views/builders.ts`: add the `gen` / `openBuilderId` / `openGen` state and `collapseBuildersExcept`; generation-suffixed `item.id` in `makeBuilderRow`; remove `expansion` wrapper, store instances, and `workspaceState` ctor param; render groups always Expanded (`builders.ts:202-208` collapses to a constant); update class docblock (lines 76-79) which documents the persistence being removed.
+- `packages/vscode/src/views/builder-grouping.ts`: drop `expansion` from the `BuilderGrouping` interface and from both strategy factories.
+- `packages/vscode/src/extension.ts`: drop builders `persistAreaGroupExpansion` wiring (346-348) and `BuilderGroupTreeItem` import (38); add two-key workspaceState cleanup near provider construction; rewrite the accordion block (442-485) to call `buildersProvider.collapseBuildersExcept(...)`; update `BuildersProvider` construction (344) for the removed parameter.
+- `packages/vscode/src/__tests__/builder-grouping.test.ts`: remove the `fakeStore` plumbing and the "exposes the passed expansion store" assertions.
+- `packages/vscode/src/__tests__/builders-accordion.test.ts`: new unit test (vitest, `vi.mock('vscode')` per the existing `__tests__` pattern): after `collapseBuildersExcept(x)`, rendered ids change for all builders except `x`, `x`'s id is stable, group ids are stable; a builder collapsed by an earlier fire never reuses a previously-rendered id; the change event fires; group headers always render Expanded.
 
 ## Risks & Alternatives Considered
 
 - **Risk**: the premise "VSCode does not persist contributed-tree expansion across reloads" could be wrong on some VSCode version, which would leave groups collapsed after reload despite our store being gone. Evidence it is right: `AreaGroupExpansionStore` was purpose-built for cross-reload persistence. Mitigation if dev-approval testing disproves it: salt the Builders group ids with a per-activation nonce so every session's groups are new items (in-session stability preserved, cross-session memory defeated). Not implemented unless observed.
 - **Risk**: id churn on builder rows. The row id's two documented jobs (`builders.ts:233-235`) are poll-refresh expansion stability and accordion targeting. Salts only change on accordion fires, so poll-refresh stability holds between fires; accordion targeting by id is gone entirely (the clicked row is reached via its item instance in `openBuilderRow`'s `reveal`, unchanged).
-- **Alternative — snapshot and restore around `collapseAll`** (issue option a): keep `collapseAll`, then re-reveal each previously-expanded group. Rejected: groups still visibly flap collapsed-then-open on every accordion fire, the persist listener (or its in-memory successor) sees spurious collapse events that need guarding, and the await chain keeps the `reconciling` complexity. Strictly more moving parts for a worse visual result.
-- **Alternative — collapse other builders individually via reveal** (issue option b): impossible; the TreeView API has `reveal` with `expand` but no collapse direction.
-- **Alternative — keep an in-memory expansion store** for groups: redundant; VSCode's native per-id in-session memory already provides exactly the wanted semantics once persistence is removed.
+- **Alternative: snapshot and restore around `collapseAll`** (issue option a): keep `collapseAll`, then re-reveal each previously-expanded group. Rejected: groups still visibly flap collapsed-then-open on every accordion fire, the persist listener (or its in-memory successor) sees spurious collapse events that need guarding, and the await chain keeps the `reconciling` complexity. Strictly more moving parts for a worse visual result.
+- **Alternative: collapse other builders individually via reveal** (issue option b): impossible; the TreeView API has `reveal` with `expand` but no collapse direction.
+- **Alternative: keep an in-memory expansion store** for groups. Redundant; VSCode's native per-id in-session memory already provides exactly the wanted semantics once persistence is removed.
+- **Alternative: a per-builder salt map** (`Map<string, number>`) instead of the single generation counter. Functionally equivalent but carries per-row state that the generation scheme makes unnecessary; rejected during plan review.
 
 ## Test Plan
 
