@@ -17,6 +17,7 @@ import {
   copySkills,
   copyRootFiles,
   copyHotTierDefaults,
+  createColdTierDefaults,
 } from '../lib/scaffold.js';
 import { updateGitignore } from '../lib/gitignore.js';
 
@@ -157,6 +158,13 @@ export async function adopt(options: AdoptOptions = {}): Promise<void> {
   // syncHotContextBlock) — adopt intentionally does not modify a pre-existing CLAUDE.md/AGENTS.md
   // beyond the standard .codev-new conflict path.
   for (const file of copyHotTierDefaults(targetDir, skeletonDir, { skipExisting: true }).copied) {
+    console.log(chalk.green('  +'), `codev/resources/${file}`);
+    fileCount++;
+  }
+
+  // Create the cold-tier governance files (arch.md, lessons-learned.md) with placeholder
+  // content (issue #1012), skip-existing so a curated copy is preserved.
+  for (const file of createColdTierDefaults(targetDir, { skipExisting: true }).created) {
     console.log(chalk.green('  +'), `codev/resources/${file}`);
     fileCount++;
   }
