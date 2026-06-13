@@ -117,3 +117,21 @@ whether this PR closes the vscode side of #1036.
 
 Branch still rebased LOCALLY (not force-pushed). Plan file rewritten but NOT yet committed —
 awaiting architect ok to commit + force-push.
+
+## Rebase #2 + plan re-verify (2026-06-13, +121 commits)
+
+Rebased onto origin/main again (121 new commits). Re-verified the implementation plan; core
+design (CustomTextEditor + React webview + core codec + Convention B) holds. Deltas folded in:
+- #920 added the extension's FIRST webview (Search Backlog editor-tab). My "first webview" claim
+  was stale -> now "first React/BUNDLED webview"; follow #920's CSP/nonce/template precedent
+  (webviews/backlog-search-panel.ts, backlog-search.template.ts, getNonce). #920 inlines a plain
+  script; React canvas still needs a real esbuild bundle (esbuild still single-entry src/extension.ts).
+- #956 lint rule bans bare vscode.commands.registerCommand -> register open cmd via reg(...) in
+  extension.ts; registerCustomEditorProvider is window.* (not banned); leave plan-review.ts's two
+  eslint-disabled command regs alone.
+- plan-review.ts unchanged where I refactor (marker fmt line 159, ELIGIBLE_PATH_REGEX line 34,
+  insert Position(line+1) line 162). artifact-canvas still 3.1.9 (contract unchanged).
+- #1036 + #1029 still OPEN -> codec-in-core + blank-replace + coordination notes all still stand.
+
+Plan edited (not yet committed). Branch rebased locally; push will need --force-with-lease.
+Awaiting architect ok to commit + force-push.

@@ -7,6 +7,15 @@
 > that package, scoped to the **VSCode extension only**. The dashboard/web host is a separate
 > `area/dashboard` follow-up (the "and follow-ups" in spir-945's notes) and is explicitly **out of
 > scope here** — but this plan houses the shared pieces in `core` so the web host inherits them.
+>
+> **Rebase delta (2026-06-13, +121 commits).** Re-verified against current `main`. Two changes
+> matter: (1) **#920 landed the extension's first webview** (Search Backlog editor-tab panel) — so
+> this is no longer the "first webview," it's the first *React/bundled* webview, and #920 gives us
+> the CSP/nonce/template precedent to follow (`packages/vscode/src/webviews/backlog-search-panel.ts`,
+> `backlog-search.template.ts`, `getNonce()`). (2) **#956 added a lint rule** banning bare
+> `vscode.commands.registerCommand` — the open command must register via `reg(...)` from
+> `extension.ts`. `@cluesmith/codev-artifact-canvas` is still **3.1.9** (adapter contract unchanged);
+> **#1036 and #1029 remain open** (the codec-in-core + blank-replace design still applies).
 
 ## Understanding
 
@@ -110,7 +119,9 @@ block in the new canvas — no cosmetic drift.
   `<ArtifactCanvas>` + adapters bridged over `postMessage`.
 - `packages/vscode/src/comments/plan-review.ts` — refactor `submitReviewComment` to delegate format
   to `core` (C); import `ELIGIBLE_PATH_REGEX` from `core`. No behavior change.
-- `packages/vscode/src/extension.ts` — register the provider (near `activateReviewComments`, ~696).
+- `packages/vscode/src/extension.ts` — register the `CustomTextEditorProvider`
+  (`vscode.window.registerCustomEditorProvider`) and the open command via `reg(...)` (the #956 helper,
+  defined ~line 600), near `activateReviewComments` (~696).
 - `packages/vscode/package.json` — `customEditors`, command/menu, `react`/`react-dom`/`artifact-canvas` deps.
 - `packages/vscode/esbuild.js` — second (browser) bundle for the webview app + CSS copy.
 - `packages/vscode/src/__tests__/` — host bridge + adapter unit tests where they don't need the VS Code runtime.
@@ -130,9 +141,18 @@ block in the new canvas — no cosmetic drift.
     Mitigated by a **parity contract test** (render a fixture through both, assert identical block-start
     lines). Avoids the fragile "previous blank line" heuristic, which mis-anchors on fenced code blocks
     containing blank lines.
-- **First webview in the extension.** No existing `createWebviewPanel`/`CustomEditor` in `packages/vscode`.
-  Adds CSP/nonce, `asWebviewUri`, and a React webview bundle. Standard but new surface; keep the webview
-  script thin (mount + postMessage bridge), all VS Code API stays host-side.
+- **First *React/bundled* webview** (not the first webview — #920 added one). Follow #920's
+  CSP/nonce/template conventions (`webviews/backlog-search-panel.ts`, `backlog-search.template.ts`,
+  reuse `getNonce()`). The new part is the **esbuild webview bundle**: #920 inlines a plain
+  `CLIENT_SCRIPT` string, but React + `artifact-canvas` + DOMPurify + markdown-it is too large to
+  inline, so it ships as a second esbuild entry loaded via `asWebviewUri`. Keep the webview script
+  thin (mount + postMessage bridge); all VS Code API stays host-side. *Alternative considered:* #920's
+  `createWebviewPanel` editor-tab pattern instead of `CustomTextEditor` — kept `CustomTextEditor` for
+  document binding + "Reopen With", with #920's panel as the fallback if binding proves awkward.
+- **Command registration (#956 lint rule).** Register the "Open Codev Review Preview" command via
+  `reg(...)` in `extension.ts` (not bare `vscode.commands.registerCommand`). The
+  `registerCustomEditorProvider` call is `vscode.window.*` and not subject to the rule. Do not disturb
+  `plan-review.ts`'s two existing `eslint-disable`d (intentionally unguarded) command registrations.
 - **`markdown-it` in `core`.** Adds a dependency to a shared, browser-consumed package. Acceptable (it
   is browser-safe and already in the repo); the codec is otherwise pure string-in/out.
 - **#1036 coordination.** The blank-replace-on-read mechanism resolves the **VSCode side** of #1036.
