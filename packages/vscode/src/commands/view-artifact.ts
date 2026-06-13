@@ -1,8 +1,8 @@
 /**
  * Codev: View {Spec,Plan,Review} File — open the on-disk markdown
- * artifact a builder has produced (or is about to produce) directly in
- * a VSCode editor tab. Specs and plans open in the rendered Codev Markdown
- * Preview (#859); reviews open in the raw text editor (see PREVIEW_KINDS).
+ * artifact a builder has produced (or is about to produce) in the rendered
+ * Codev Markdown Preview (#859), where it can be read and commented on. Raw
+ * markdown is still one step away via "Reopen With… → Text Editor".
  *
  * Right-click a builder row → "View Spec/Plan/Review File".
  *
@@ -33,13 +33,6 @@ const ARTIFACT_SUBDIR: Record<ArtifactKind, string> = {
   spec: 'codev/specs',
   review: 'codev/reviews',
 };
-
-/**
- * Kinds that open in the rendered Codev Markdown Preview (#859) rather than the
- * raw text editor. Specs and plans are read/reviewed, so the rendered surface is
- * the natural default; reviews stay as text. Add 'review' here to include it.
- */
-const PREVIEW_KINDS: ReadonlySet<ArtifactKind> = new Set<ArtifactKind>(['spec', 'plan']);
 
 export function viewPlanFile(connectionManager: ConnectionManager, builderIdArg: string | undefined) {
   return viewArtifact(connectionManager, builderIdArg, 'plan');
@@ -129,14 +122,9 @@ async function viewArtifact(
     target = picked.path;
   }
 
+  // Render in the Codev Markdown Preview (read + comment), not the raw editor.
   const uri = vscode.Uri.file(target);
-  if (PREVIEW_KINDS.has(kind)) {
-    // Render in the Codev Markdown Preview (read + comment), not the raw editor.
-    await vscode.commands.executeCommand('vscode.openWith', uri, MarkdownPreviewProvider.viewType);
-  } else {
-    const doc = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(doc, { preview: false });
-  }
+  await vscode.commands.executeCommand('vscode.openWith', uri, MarkdownPreviewProvider.viewType);
 }
 
 function safeMtime(path: string): number {
