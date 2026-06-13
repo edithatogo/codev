@@ -469,7 +469,18 @@ export class TerminalManager {
     } else if (type === 'architect') {
       location = { viewColumn: vscode.ViewColumn.One };
     } else {
-      location = { viewColumn: vscode.ViewColumn.Two };
+      // Builder/shell terminals prefer the second editor group so they live
+      // beside the architect's pane. But `ViewColumn.Two` is fixed by ordinal:
+      // targeting it when only one group is open forces VS Code to spawn a new
+      // group, reshaping the user's layout (#804). Attach to the second group
+      // only when it already exists; otherwise fall back to the first/default
+      // group so single-column users stay undisturbed.
+      const hasSecondGroup = vscode.window.tabGroups.all.length >= 2;
+      if (hasSecondGroup) {
+        location = { viewColumn: vscode.ViewColumn.Two };
+      } else {
+        location = { viewColumn: vscode.ViewColumn.One };
+      }
     }
 
     const terminal = vscode.window.createTerminal({ name, pty, location, iconPath: this.iconPath });
