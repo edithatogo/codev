@@ -38,3 +38,11 @@ Issue #1012 — scaffold: `codev init` bootstraps `codev/resources/` with arch.m
 - This SIMPLIFIES the plan: skeleton templates are NOT edited at all (rich templates + their manual-cp note stay as-is). No `copyHotTierDefaults` refactor needed.
 - Final implementation: `createColdTierDefaults(targetDir, opts)` in scaffold.ts writes two small placeholder consts (arch.md, lessons-learned.md) with skip-if-exists; wired at the same 3 sites next to copyHotTierDefaults; update backfills (consistent with 987). copyHotTierDefaults left completely untouched.
 - Plan finalized. No open decisions remain. Awaiting plan-approval.
+
+## Implement phase
+
+- plan-approval approved; advanced to implement.
+- Added `createColdTierDefaults` + `COLD_TIER_STARTERS` to scaffold.ts; wired into init/adopt/update next to copyHotTierDefaults. copyHotTierDefaults + skeleton templates untouched.
+- Tests: new cold-tier-materialization.test.ts (7 tests: create/placeholder-marker/skip-existing/user-data-protection/update-backfill/customized-survives/dry-run); init.test.ts comment flipped to positive assertions for all 4 resource files; adopt.test.ts asserts cold files.
+- Build: needed full `pnpm build` from worktree root first (codev-core wasn't built — pre-existing infra, not my change). Then green.
+- Full suite: 163 files / 3310 tests pass, 48 pre-existing skips. Awaiting dev-approval gate.
