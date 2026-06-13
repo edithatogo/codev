@@ -104,6 +104,34 @@ describe('PIR #982 — actionable recovery for a missing terminal', () => {
   });
 });
 
+describe('#804 — builder/shell terminals do not force-create a second editor group', () => {
+  // The else-branch of openTerminal's location resolution (builder + shell
+  // types) must attach to ViewColumn.Two ONLY when a second tab group already
+  // exists, else fall back to ViewColumn.One — otherwise VS Code spawns a new
+  // group on demand, reshaping a single-column user's layout. Source-level per
+  // this file's harness rationale (constructing TerminalManager needs heavy
+  // vscode mocking).
+  const elseBranch =
+    TM_SRC.split("type === 'architect'")[1]?.split('createTerminal')[0] ?? '';
+
+  it('gates the second-group target on existing tab groups', () => {
+    expect(elseBranch).toMatch(/vscode\.window\.tabGroups\.all\.length >= 2/);
+  });
+
+  it('uses ViewColumn.Two when a second group exists, ViewColumn.One otherwise', () => {
+    expect(elseBranch).toMatch(/location = \{ viewColumn: vscode\.ViewColumn\.Two \}/);
+    expect(elseBranch).toMatch(/location = \{ viewColumn: vscode\.ViewColumn\.One \}/);
+  });
+
+  it('no longer unconditionally targets ViewColumn.Two for builder/shell terminals', () => {
+    // Regression guard: the pre-#804 code set `location = { viewColumn:
+    // vscode.ViewColumn.Two }` with no surrounding group-count check. The fix
+    // must keep that assignment behind the `hasSecondGroup` conditional.
+    expect(elseBranch).toMatch(/const hasSecondGroup = vscode\.window\.tabGroups\.all\.length >= 2/);
+    expect(elseBranch).toMatch(/if \(hasSecondGroup\)/);
+  });
+});
+
 describe('#921 — dev surface refresh on manual terminal close', () => {
   // Regression guard: a dev terminal closed via the generic onDidCloseTerminal
   // path (tab ✕ / process exit) must clear devStartedAt AND re-fire
