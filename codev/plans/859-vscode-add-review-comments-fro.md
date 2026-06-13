@@ -1,185 +1,177 @@
-# PIR Plan: Review comments from the markdown preview pane
+# PIR Plan: Review comments from a rendered artifact canvas (VSCode host)
+
+> **Re-plan (2026-06-13).** This supersedes the original plan. The original targeted VS Code's
+> *built-in* markdown preview via `previewScripts` — proven infeasible (no preview→host messaging;
+> see issue comment #4586600146). Since then, **spir-945 landed `@cluesmith/codev-artifact-canvas`**
+> (PR #1027), a host-agnostic React review surface. #859 is now the **first host integration** of
+> that package, scoped to the **VSCode extension only**. The dashboard/web host is a separate
+> `area/dashboard` follow-up (the "and follow-ups" in spir-945's notes) and is explicitly **out of
+> scope here** — but this plan houses the shared pieces in `core` so the web host inherits them.
 
 ## Understanding
 
-The issue wants to remove the editor↔preview mode-switch from the architect's review loop:
-read a spec/plan in the rendered markdown preview, hover a block, click `+`, type a comment,
-submit — without dropping to the raw `.md` editor to find the gutter `+`. The comment is
-serialized with the existing convention: `<!-- REVIEW(@<author>): <text> -->` written on the
-line after the targeted block. v1 is **authoring only** — no rendering of existing threads in
-the preview. The editor-side Comments API (`packages/vscode/src/comments/plan-review.ts`)
-stays as-is for read/reply/delete.
+The architect reviews long specs/plans/reviews in a rendered surface and wants to add a review
+comment without dropping to the raw `.md` editor. `@cluesmith/codev-artifact-canvas` already owns
+the hard parts: sanitized markdown rendering (`markdown-it` `html:false` + DOMPurify), 0-based
+`data-line` on block-start tokens, a hover/keyboard `+` overlay that emits **`onAddComment(line)`
+intent only**, and minimal marker display. It is **React**, consumed `workspace:*`, bundled by each
+host, with three host-implemented adapters (`FileAdapter`, `MarkerAdapter`, `ThemeAdapter`).
 
-### ⚠️ Critical finding: the issue's proposed mechanism is infeasible
+So #859 is no longer "extend the built-in preview." It is: **build the VSCode host that mounts
+`<ArtifactCanvas>` in our own webview and wires the three adapters to the extension host's I/O.**
 
-The issue body sketches the implementation as: a script injected via
-`contributes.markdown.previewScripts` that `postMessage`s the clicked source line back to the
-extension host, which then opens an `InputBox`. **VS Code's built-in markdown preview does not
-support this.** I verified against primary sources:
+Two cross-cutting facts discovered during the requirements check shape the design:
 
-- **`acquireVsCodeApi()` is single-call-per-webview.** The built-in preview
-  (`extensions/markdown-language-features/preview-src/index.ts`) already calls it once and does
-  not expose the handle globally. A contributed `previewScript` calling it again throws
-  *"An instance of the VS Code API has already been acquired"* (microsoft/vscode#122961,
-  closed *as-designed*).
-- **The host accepts only a fixed message allowlist.** The preview's host-side
-  `onDidReceiveMessage` (`extensions/markdown-language-features/src/preview/preview.ts`)
-  switches on a closed set — `cacheImageSizes`, `revealLine`, `didClick`, `openLink`,
-  `showPreviewSecuritySelector`, `previewStyleLoadError` — with **no passthrough/default
-  case**, and validates `e.source` against the previewed resource URI. A custom message type
-  is silently dropped.
-- **`command:` URIs are blocked in the built-in preview.** It is not created with
-  `enableCommandUris`, and there is no API to change the preview webview's security policy
-  (microsoft/vscode#84886, closed *out-of-scope*).
-- **A first-class preview↔host messaging API was proposed and rejected**
-  (microsoft/vscode#174080 — `onMarkdownPreview` + `postMessage`/`onDidReceiveMessage` —
-  closed *out-of-scope*).
-- The official `vscode-extension-samples` has **no** markdown preview message-passing sample;
-  the only markdown sample demonstrates `extendMarkdownIt` (render-only). That absence is
-  itself confirmatory.
-
-The `previewScripts` / `previewStyles` / `markdownItPlugins` contribution points are
-**render-only**. None of them carry a channel back to the extension host. So the issue's
-acceptance criteria ("clicking `+` opens an InputBox") **cannot be met on the built-in
-preview**. This isn't a detail to "verify at implementation time" (as the issue suggests) —
-it's a load-bearing premise that doesn't hold.
+1. **Markers must be hidden from the rendered body (issue #1036).** Under `html:false` a raw
+   `<!-- REVIEW(@a): … -->` line renders as *visible literal text* (markdown-it escapes raw HTML to
+   text — confirmed by the package's own sanitization test). The host must therefore strip markers
+   from what it feeds the renderer. The chosen mechanism is **blank-line replacement** (replace each
+   marker line with an empty line), which keeps render-space and disk-space line counts **identical**
+   (no coordinate mapping) and preserves block boundaries. This resolves the **VSCode side of #1036**.
+2. **The marker convention is a cross-host contract.** Whatever serialization + anchor rule #859
+   picks becomes the standard the future dashboard host must match against the *same committed files*.
+   So the marker logic lives in **`@cluesmith/codev-core`** (both hosts already depend on it), not in
+   `packages/vscode`.
 
 ## Proposed Change
 
-Deliver the issue's *goal* (comment from a rendered reading surface, no raw-`.md` mode-switch)
-via the one supported mechanism: **a Codev-owned webview that renders the markdown itself**, so
-we own the single `acquireVsCodeApi()` call and get genuine `postMessage` back to the host.
+### A. Shared marker codec in `core` (new) — `@cluesmith/codev-core/review-markers`
 
-**Recommended: a read-only `CustomTextEditor` ("Codev Review Preview").** Registering a
-`CustomTextEditorProvider` (rather than a free-floating `WebviewPanel`) is the cleaner VS Code
-mechanism: it binds to the document lifecycle, receives the document URI naturally, and surfaces
-in **"Reopen Editor With… → Codev Review Preview"** plus an editor-title button on eligible
-files. It does not hijack `.md` files (the default editor and built-in `Cmd+K V` preview are
-untouched) — it's an opt-in alternate view.
+A pure, browser- and Node-safe module (new subpath export, matching core's existing per-subpath
+export style). It is the **single home** for the on-disk marker format and the render transform,
+consumed by the VSCode host now and the dashboard host later:
 
-Flow:
-1. Architect opens an eligible doc (`codev/(plans|specs|reviews)/*.md`) in the Codev Review
-   Preview (title-bar button or "Reopen With…").
-2. We render the document with `markdown-it`, adding `data-line="<startLine>"` to block tokens
-   via a tiny source-map rule (markdown-it exposes `token.map` — this is the same trick the
-   built-in preview uses; the issue's "fallback: write our own plugin" is in fact the required
-   path here, and it is cheap).
-3. A bundled webview script shows a `+` on block hover; clicking it
-   `postMessage({ type: 'codev:addComment', line })` to the host.
-4. The host (`CustomTextEditorProvider.resolveCustomTextEditor` → `webview.onDidReceiveMessage`)
-   opens `vscode.window.showInputBox(...)`, then calls the shared `writeReviewMarkerAt(uri, line, text)`.
-5. On document change, we re-render the webview (so a just-added marker — and any editor-side
-   edits — are reflected).
+- `serializeMarker(author, text): string` → `<!-- REVIEW(@author): text -->` (whitespace-normalized
+  body, the existing format — verified at `plan-review.ts:157`).
+- `parseMarkers(text): ReviewMarker[]` → parses every marker and resolves each to the **block-start
+  line it annotates** (so `marker.line` equals the canvas's `data-line` and the marker renders on the
+  right block).
+- `stripMarkersForRender(text): string` → **blank-line replacement** of every marker line (the
+  #1036 fix; keeps line count stable).
+- `insertMarker(text, line, author, body): string` → inserts a serialized marker **preserving the
+  existing on-disk convention** (on the line *after* the anchor — see Convention decision).
+- `ELIGIBLE_PATH_REGEX` → moved here from `plan-review.ts` so both hosts share path gating.
+- A small `markdown-it` block-start resolver (block-open / `fence` / `code_block` → `token.map[0]`),
+  mirroring the canvas renderer's `data-line` rule, used by `parseMarkers` to map a marker to its
+  block. `core` gains a `markdown-it` dependency (browser-safe; already used elsewhere in the repo).
 
-**Shared mutation (the still-valid part of the issue).** Extract the file-write core of
-`submitReviewComment` in `plan-review.ts` into an exported
-`writeReviewMarkerAt(uri: vscode.Uri, line: number, text: string, author: string): Promise<void>`
-(preserving the existing indent-matching, whitespace-normalization, and
-`insert on Position(line + 1, 0)` semantics). Both the editor Comments-API path and the new
-preview path call it. Author identity reuses the existing
-`overviewCache.getData()?.currentUser ?? 'architect'`.
+### B. VSCode host (new) — render the canvas in our own webview
 
-**Path gating** reuses `ELIGIBLE_PATH_REGEX` (`/\/codev\/(plans|specs|reviews)\//`, already
-exported-worthy) — only eligible files get the Codev Review Preview button; the
-CustomTextEditor still opens for any `.md` if explicitly chosen, but the `+` affordance only
-activates for eligible paths.
+- **`CustomTextEditorProvider`** `codev.reviewPreview` ("Codev Review Preview"): binds the document,
+  surfaces via **"Reopen With…"** + an editor-title button, path-gated to `codev/(plans|specs|reviews)/*.md`.
+  Does **not** replace the default `.md` editor or the built-in `Cmd+K V` preview (`priority: "option"`).
+- **Webview React app** (new bundle): mounts `<ArtifactCanvas>` with:
+  - `FileAdapter.read` → returns `stripMarkersForRender(documentText)` (so markers never show);
+    `watch` → driven by the host posting new content on `onDidChangeTextDocument`.
+  - `MarkerAdapter.list` → `parseMarkers(documentText)`; `add` → host-invoked, see below.
+  - `ThemeAdapter` → bind `.codev-artifact-canvas` `--codev-canvas-*` tokens to `--vscode-*` (off the
+    v1 render path; CSS-variable theming per the package's Model A).
+- **Webview↔host bridge:** adapters run in the webview, but `TextDocument` / `WorkspaceEdit` /
+  `showInputBox` live in the extension host. Flow: `onAddComment(line)` → `postMessage` → host
+  `showInputBox` → `MarkerAdapter.add` (host writes via the core codec + `WorkspaceEdit` + save) →
+  document change → host re-reads, re-strips, re-posts content + markers → canvas re-renders. The
+  round-trip goes **through the file text**, matching the package's design.
+- **Author identity** reuses `overviewCache.getData()?.currentUser ?? 'architect'` (unchanged).
 
-### Honest scope note
+### C. Editor path stays, now sharing the codec (no behavior change)
 
-This is **materially larger** than the issue advertised ("three contribution points, one
-shared mutation function, no Comments API rework"). Reality: it is the **first webview in this
-extension** (no existing `createWebviewPanel`/`CustomEditor` usage anywhere in
-`packages/vscode/src`), and it adds a `markdown-it` render pipeline (new dependency, bundled by
-esbuild into `dist/extension.js`) plus webview asset plumbing (CSP nonce, `asWebviewUri`). For
-the `+`-on-rendered-prose UX to actually be used, the Codev preview must be a credible reading
-surface (GFM, code highlighting, theme variables) — i.e. good enough that the architect reads
-*in it* rather than in `Cmd+K V`.
+`packages/vscode/src/comments/plan-review.ts` keeps the editor-side Comments API exactly as today,
+but its `submitReviewComment` is refactored to call `core`'s `serializeMarker` / `insertMarker` so
+the on-disk format lives in **one place**. **The write direction is unchanged** (marker still on the
+line after the anchor). This is deliberate — see the Convention decision.
 
-Because of this gap between the issue's framing and the real cost, the plan-approval gate is a
-genuine go/no-go. See **Risks & Alternatives** for the cheaper options if the architect prefers
-not to take on the extension's first webview for this.
+### D. Build / packaging
+
+- A **second esbuild bundle** for the webview React app (browser platform, JSX/TSX), bundling
+  `react`, `react-dom`, and `@cluesmith/codev-artifact-canvas` (not npm-published; bundled per host)
+  plus the package's `default-theme.css`. The existing Node extension bundle is unchanged.
+- `packages/vscode/package.json`: add `customEditors` contribution + the open command/menu; add
+  `react`, `react-dom`, `@cluesmith/codev-artifact-canvas` (`workspace:*`) deps. `core` is already a dep.
+
+## Does this remove existing annotations? No.
+
+Explicit, because it was asked: **no existing `<!-- REVIEW… -->` marker is deleted or rewritten.**
+`stripMarkersForRender` runs **in memory on the read path only** — the on-disk file keeps every
+marker byte-for-byte (git, GitHub, the source editor, and the editor Comments-API path all see the
+real file). `MarkerAdapter.add` only inserts; nothing strips markers from disk. The only marker
+removal remains the explicit `codev.deleteReviewComment` command. Because the **existing on-disk
+convention is preserved** (Convention B below), existing markers also keep anchoring to the correct
+block in the new canvas — no cosmetic drift.
 
 ## Files to Change
 
-- `packages/vscode/src/comments/plan-review.ts` — extract & export
-  `writeReviewMarkerAt(uri, line, text, author)`; export `ELIGIBLE_PATH_REGEX` (and reuse it in
-  the new preview). `submitReviewComment` becomes a thin caller. No behavior change to the
-  editor path.
-- `packages/vscode/src/markdown-preview/review-preview.ts` — **new.**
-  `CustomTextEditorProvider` ("Codev Review Preview", viewType e.g. `codev.reviewPreview`):
-  renders markdown → HTML with `data-line`, builds the webview HTML (CSP + nonce + `asWebviewUri`
-  for script/style), handles `onDidReceiveMessage` → `showInputBox` → `writeReviewMarkerAt`,
-  re-renders on `onDidChangeTextDocument`.
-- `packages/vscode/src/markdown-preview/render.ts` — **new.** markdown-it instance + the
-  `data-line` source-map rule (unit-testable in isolation, no `vscode` import).
-- `packages/vscode/media/review-preview/add-comment.js` — **new.** webview-side hover-`+` +
-  `acquireVsCodeApi().postMessage`. (Lives in `media/`, loaded via `asWebviewUri` — NOT
-  `contributes.markdown.previewScripts`.)
-- `packages/vscode/media/review-preview/add-comment.css` — **new.** hover-gated `+`, themed via
-  `--vscode-*` variables.
-- `packages/vscode/src/extension.ts` — register the provider (alongside
-  `activateReviewComments(context, overviewCache)` at ~line 696).
-- `packages/vscode/package.json` — add `customEditors` contribution (viewType, displayName,
-  selector `*.md`, `priority: "option"` so it never replaces the default editor); add a
-  `commands` entry + editor-title `menus` button ("Open Codev Review Preview", `when` gated to
-  eligible markdown); add `markdown-it` (+ `@types/markdown-it`) to dependencies.
-- `packages/vscode/esbuild.js` — ensure `media/**` assets land in the packaged extension. esbuild
-  bundles `markdown-it` into `dist/extension.js` automatically (node platform); the `media/`
-  files are static and are already included by `.vscodeignore`/vsce packaging from the repo root,
-  but confirm they ship (add a copy step only if packaging excludes them).
-- `packages/vscode/src/__tests__/` — unit tests for `render.ts` (`data-line` attribution) and
-  `writeReviewMarkerAt` (marker format, indent, line+1 insertion).
+- `packages/core/src/review-markers.ts` — **new.** The codec (A). Pure; `markdown-it` block-start
+  resolver; no `vscode` import.
+- `packages/core/src/__tests__/review-markers.test.ts` — **new.** Unit + the canvas-parity test.
+- `packages/core/package.json` — add `./review-markers` subpath export; add `markdown-it` dep.
+- `packages/vscode/src/markdown-preview/review-preview.ts` — **new.** `CustomTextEditorProvider`,
+  webview HTML (CSP + nonce + `asWebviewUri`), host-side message handling, re-post on change.
+- `packages/vscode/src/markdown-preview/webview/main.tsx` — **new.** Webview entry: `createRoot` →
+  `<ArtifactCanvas>` + adapters bridged over `postMessage`.
+- `packages/vscode/src/comments/plan-review.ts` — refactor `submitReviewComment` to delegate format
+  to `core` (C); import `ELIGIBLE_PATH_REGEX` from `core`. No behavior change.
+- `packages/vscode/src/extension.ts` — register the provider (near `activateReviewComments`, ~696).
+- `packages/vscode/package.json` — `customEditors`, command/menu, `react`/`react-dom`/`artifact-canvas` deps.
+- `packages/vscode/esbuild.js` — second (browser) bundle for the webview app + CSS copy.
+- `packages/vscode/src/__tests__/` — host bridge + adapter unit tests where they don't need the VS Code runtime.
 
 ## Risks & Alternatives Considered
 
-- **Risk: the issue's premise is wrong, so building Option A means building more than asked.**
-  Mitigation: surfaced explicitly here and notified the architect before coding; this gate is the
-  decision point.
-- **Risk: first webview in the extension** (CSP, nonce, asset URIs, no in-repo precedent to copy).
-  Mitigation: follow the standard VS Code webview guide; keep the webview script tiny
-  (hover + postMessage only); render server-side in the host.
-- **Risk: re-rendering markdown ourselves diverges from the built-in preview** (tables, code
-  highlighting, math, mermaid). Mitigation: scope v1 to GFM-ish via markdown-it core + a
-  highlighter; explicitly *not* aiming for built-in parity. Note this is a permanent maintenance
-  surface.
-- **Risk: implementer should re-confirm the host allowlist against the exact 1.105 source** in
-  case a future VS Code adds the proposed messaging API (#174080). Cheap insurance; if it lands,
-  the lighter built-in-preview path reopens and this webview could be retired.
-- **Alternative B — built-in preview + double-click-to-source bridge (cheaper, clunkier).** Keep
-  the built-in preview; rely on its double-click-to-editor sync to move the cursor to the block,
-  then a keybound command "Add Review Comment Here" reads the editor's active line and writes the
-  marker. Smaller, no webview, but still a partial mode-switch and requires the source editor open
-  in a split. Rejected as not really delivering the issue's "no mode-switch" goal — but it's the
-  low-cost option if the architect wants something now.
-- **Alternative D — defer/close (cheapest).** Document the infeasibility finding on the issue and
-  leave authoring in the editor. Legitimate given the premise break; offered for the architect's
-  call at the gate.
-- **Alternative C — clipboard / Tower-localhost / `openLink` sentinel hacks.** Rejected: fragile,
-  version-dependent, fight the preview allowlist; not maintainable.
+- **Convention decision — keep the existing on-disk convention (Convention B), do NOT flip.**
+  - *Chosen (B):* marker stays on the line **after** its anchor (today's editor behavior). `parseMarkers`
+    resolves each marker back to its block-start `data-line` via the `markdown-it` block map. **Existing
+    annotations are untouched and stay correctly anchored; the editor path needs no behavioral change.**
+  - *Rejected (A — "annotate-above" flip):* would make `list()`/`add()` pure arithmetic (no tokenizer),
+    but it **reverses the on-disk write direction**, which (1) re-anchors existing markers one block off
+    in the canvas (cosmetic but real) and (2) forces editor-path write/delete/parse changes. Conflicts
+    with the "don't disturb existing annotations" requirement. Not worth the simplicity.
+  - *Cost of B:* `core` carries a `markdown-it` block-start resolver that must stay in parity with the
+    canvas renderer's `data-line` rule (both: block-open/`fence`/`code_block` → `token.map[0]`).
+    Mitigated by a **parity contract test** (render a fixture through both, assert identical block-start
+    lines). Avoids the fragile "previous blank line" heuristic, which mis-anchors on fenced code blocks
+    containing blank lines.
+- **First webview in the extension.** No existing `createWebviewPanel`/`CustomEditor` in `packages/vscode`.
+  Adds CSP/nonce, `asWebviewUri`, and a React webview bundle. Standard but new surface; keep the webview
+  script thin (mount + postMessage bridge), all VS Code API stays host-side.
+- **`markdown-it` in `core`.** Adds a dependency to a shared, browser-consumed package. Acceptable (it
+  is browser-safe and already in the repo); the codec is otherwise pure string-in/out.
+- **#1036 coordination.** The blank-replace-on-read mechanism resolves the **VSCode side** of #1036.
+  The cross-cutting issue stays open for the dashboard host; the shared codec in `core` is what lets the
+  web host adopt the same fix without re-implementing it. Flag in the architect notification.
+- **Dual markdown rendering** (canvas renders; core resolves block lines). Same config, different
+  instances — the parity test is the guard. If divergence ever bites, the fallback is to export the
+  block-map from a shared module; deferred to avoid coupling `artifact-canvas` to `core` (keeps the
+  canvas standalone per #1029).
+- **Out of scope (explicit):** the dashboard/web host (separate `area/dashboard` issue); polished inline
+  marker bubbles + minimap (#863); reply/resolve/threading.
 
 ## Test Plan
 
-- **Unit (`vitest`):**
-  - `render.ts`: a sample markdown → HTML emits `data-line` on paragraphs, headings, list items,
-    code blocks matching `token.map[0]`.
-  - `writeReviewMarkerAt`: produces `<!-- REVIEW(@author): text -->` with preserved indent,
-    whitespace-normalized body, inserted on the line **after** the target; editor-side
-    `submitReviewComment` still produces identical output (no regression).
-- **Manual (the `dev-approval` gate review, in the Extension Development Host):**
-  - Open `codev/plans/859-…md` → "Reopen With → Codev Review Preview" (or title button). Renders.
-  - Hover a paragraph/heading/list-item/code-block → `+` appears (hidden until hover).
-  - Click `+` → InputBox opens → type → Enter → marker written on the next source line; preview
-    re-renders.
-  - Open an ineligible `.md` (e.g. repo `README.md`) in the Codev preview → no `+` affordance.
-  - Editor-side Comments API path unchanged: open the same file in the text editor, gutter `+`,
-    submit/delete still work; existing REVIEW markers still render as threads.
-  - Author identity matches the editor path (git/GitHub login, falls back to `architect`).
-- **Build:** `pnpm --filter @cluesmith/codev-vscode package` (or repo build) succeeds with
-  `markdown-it` bundled; `media/` assets present in the packaged extension.
+- **Unit — `core/review-markers` (`vitest`):**
+  - `serializeMarker` produces the exact existing format; `stripMarkersForRender` blanks marker lines
+    and preserves line count; round-trip `insertMarker`→`parseMarkers` recovers the block-start line.
+  - `parseMarkers` resolves to the correct block-start for paragraphs, headings, list items, blockquotes,
+    and **fenced code blocks containing blank lines** (the case the blank-line heuristic would miss).
+  - Multiple markers on one block all resolve to the same block-start line.
+  - **Parity test:** block-start lines from the core resolver match `renderMarkdown`'s emitted `data-line`s.
+- **Unit — vscode bridge:** adapter message protocol (read/watch/list/add) serialization where it can run
+  without the VS Code runtime.
+- **Manual (the `dev-approval` gate, Extension Development Host):**
+  - Open `codev/plans/859-…md` → "Reopen With → Codev Review Preview" → renders; **no raw `<!-- REVIEW -->`
+    text visible**.
+  - Hover a paragraph/heading/list-item/code-block → `+` appears; click → InputBox → submit → marker
+    written on the line after the block; canvas re-renders with the marker shown.
+  - A file with **pre-existing** markers (e.g. `codev/plans/0044-…md`) → markers anchor to the correct
+    blocks; after using the canvas, `git diff` shows the file's existing markers **unchanged**.
+  - Ineligible `.md` (e.g. repo `README.md`) → no Codev Review Preview affordance.
+  - Editor-side Comments API path unchanged: gutter `+`, submit, delete, and existing-thread rendering
+    all behave exactly as before.
+- **Build:** `pnpm --filter @cluesmith/codev build` green with the new core export, the webview bundle,
+  and `markdown-it` bundled; `media`/CSS assets present in the packaged extension.
 
 ---
 
-**Decision requested at `plan-approval`:** proceed with Option A (first webview; full goal), fall
-back to Option B (cheaper bridge), or Option D (document & defer). I recommend A only if the team
-is willing to own a Codev markdown preview as a lasting surface; otherwise D is the honest call
-given the issue's premise does not hold.
+**Decision already taken by the architect:** vscode-only scope; codec in `core`; existing on-disk
+convention preserved (existing annotations untouched). Remaining open question for the `plan-approval`
+gate: confirm the parity-test approach for the core/canvas block-map duplication (vs. a later shared
+module), and whether the VSCode side of **#1036** should be closed by this PR or tracked as resolved-by-#859.
