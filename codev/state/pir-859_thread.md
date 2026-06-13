@@ -193,3 +193,21 @@ Created untracked scratch fixture codev/plans/_markdown-preview-demo.md for manu
 working case + the multi-line-paragraph split limitation (delete when done).
 
 Build/tests still green (core 31, vscode 395, compile). Still at dev-approval.
+
+## dev-approval gate feedback round 2 (2026-06-14)
+
+- ICON THEMING FIX: title-bar button was black in dark mode. Cause: icons/codev.svg uses
+  fill="currentColor", which only tints when inlined (activity bar) — an editor/title command icon
+  loads as an image with no color context, so currentColor falls back to black. Fixed with the
+  {light: codev-light.svg (#1f1f1f), dark: codev-dark.svg (#cccccc)} pair. (The activity-bar/panel
+  container icons at package.json 723/730 are fine — those ARE inlined+tinted; my earlier "two menu
+  buttons" heads-up was a misread, retracted.)
+- SIDEBAR ROUTING: View Spec/Plan/Review File (view-artifact.ts) now open in the Markdown Preview
+  (vscode.openWith MarkdownPreviewProvider.viewType) instead of the raw text editor, for all three
+  kinds. Removed the interim PREVIEW_KINDS set (dead branch once all three preview). Raw text still
+  available via Reopen With.
+- "+" AFFORDANCE ALIGNMENT: renders above the first line's baseline (overlay anchored to
+  el.offsetTop + align-items:flex-start in the package). Package-owned layout (locked) -> logged on
+  #863 (comment 4699894519), not patched in the host.
+
+Build/tests green throughout (vscode 395, compile). Still at dev-approval.
