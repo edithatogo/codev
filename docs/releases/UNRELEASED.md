@@ -58,6 +58,22 @@ Also worth a note: **#1028** — systemic tracker filed during PR review for the
 
 End-user-facing release content for this release stays the same; the canvas itself becomes visible when the next cycle's surfaces land on top of it.
 
+## VSCode markdown preview becomes a review surface: `codev.openMarkdownPreview` (#859, PR #1045)
+
+The first VSCode consumer of the `@cluesmith/codev-artifact-canvas` package shipped earlier this cycle in #945. A new `codev.openMarkdownPreview` command opens specs, plans, and reviews in a host-owned `CustomTextEditor` that renders the same canvas surface the dashboard will mount in a later cycle. Reviewing a `.md` artifact no longer means leaving the rendered preview to drop down to raw markdown — hover a rendered block, click the `+`, type your feedback in a quick-input, and a `<!-- REVIEW: author "body" -->` marker lands above the block.
+
+Same on-disk convention as the editor's Comments-API thread, so the two surfaces are bit-compatible: a comment authored from the preview is indistinguishable from one authored in the raw `.md`, and `parseReviewMarkers` resolves both to the same anchor. Stacked markers on the same block all anchor to the block's start (the canvas renders them as a list).
+
+Registered with `priority: "option"` so it never replaces the default `.md` editor or the built-in markdown preview — opt-in via `Reopen With…` or the command palette.
+
+Folded-in rendering fixes that the original plan flagged as out-of-scope and surfaced during dev-approval:
+
+- **`<!-- REVIEW -->` markers no longer render as visible HTML comments in the preview** (#1036). The canvas renderer strips full-line HTML comments before block parsing (fence-aware) with a cleaned→original line map, so markers are invisible AND `data-line` attribution stays correct on the original source lines.
+- **Multi-line paragraphs no longer split around marker lines.** Stripping pre-parse means the paragraph rejoins around the removed marker line — previously, the marker on a line inside a block would terminate the markdown-it block prematurely.
+- **Safe inline HTML now renders via DOMPurify** (#1042, amends spir-945 decision D7). `<img>`, `<details>`, `<kbd>`, `<table>`, `<sub>`, `<sup>`, etc. are sanitized and rendered. Script tags, event handlers, and `javascript:` / `data:` URLs are stripped — document-supplied JS never executes.
+
+A known limitation for editor-authored comments on continuation lines of multi-line blocks (they anchor to a line with no rendered `data-line` and don't appear in the canvas) is tracked as **#863** — the canvas's richer in-canvas anchoring belongs in the shared package rather than the host. Not data-loss: the marker stays in the file and renders in the editor's Comments-API thread.
+
 ## Code-review feedback: codelens in the unified diff editor injects file / hunk references into the builder PTY (#789, PR #1023)
 
 Architect-side review used to slow down at one specific point: you'd see something in the unified diff editor, want to give the builder targeted feedback about it, switch to the builder PTY, and type the file path and line range by hand into the prompt before adding your actual feedback. The file path was the typing bottleneck — error-prone, slow, and outside the diff editor where your attention already was.
