@@ -31,6 +31,7 @@ import {
   markerInsertionLine,
   parseReviewMarkers,
 } from '@cluesmith/codev-core/review-markers';
+import { renderMarkdownPreviewHtml } from './preview-template.js';
 import type { OverviewCache } from '../views/overview-data.js';
 
 export class MarkdownPreviewProvider implements vscode.CustomTextEditorProvider {
@@ -102,59 +103,14 @@ export class MarkdownPreviewProvider implements vscode.CustomTextEditorProvider 
   }
 
   private renderHtml(webview: vscode.Webview): string {
-    const scriptUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'markdown-preview.js'),
-    );
-    const styleUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'markdown-preview.css'),
-    );
-    const nonce = getNonce();
-    const csp = [
-      `default-src 'none'`,
-      `img-src ${webview.cspSource} https: data:`,
-      `font-src ${webview.cspSource}`,
-      `style-src ${webview.cspSource} 'unsafe-inline'`,
-      `script-src 'nonce-${nonce}'`,
-    ].join('; ');
-    return /* html */ `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="${csp}" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link href="${styleUri}" rel="stylesheet" />
-  <style>
-    html, body { background: var(--vscode-editor-background); margin: 0; padding: 0 14px; }
-    /* Bind the canvas tokens to the active VS Code theme (package Model A). */
-    .codev-artifact-canvas {
-      --codev-canvas-foreground: var(--vscode-foreground);
-      --codev-canvas-background: var(--vscode-editor-background);
-      --codev-canvas-accent: var(--vscode-textLink-foreground);
-      --codev-canvas-border: var(--vscode-panel-border);
-      --codev-canvas-muted: var(--vscode-descriptionForeground);
-      --codev-canvas-code-background: var(--vscode-textCodeBlock-background);
-      --codev-canvas-link: var(--vscode-textLink-foreground);
-      --codev-canvas-comment-marker: var(--vscode-editorWarning-foreground);
-      color: var(--codev-canvas-foreground);
-      background: var(--codev-canvas-background);
-    }
-  </style>
-  <title>Codev Markdown Preview</title>
-</head>
-<body>
-  <div id="root"></div>
-  <script nonce="${nonce}" src="${scriptUri}"></script>
-</body>
-</html>`;
+    const asUri = (file: string): string =>
+      webview
+        .asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', file))
+        .toString();
+    return renderMarkdownPreviewHtml({
+      cspSource: webview.cspSource,
+      scriptUri: asUri('markdown-preview.js'),
+      styleUri: asUri('markdown-preview.css'),
+    });
   }
-}
-
-/** CSP nonce — a fresh 32-char token per render (mirrors the backlog-search webview, #920). */
-function getNonce(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let text = '';
-  for (let i = 0; i < 32; i++) {
-    text += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return text;
 }
