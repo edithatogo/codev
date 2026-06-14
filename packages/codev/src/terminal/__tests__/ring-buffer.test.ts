@@ -155,6 +155,15 @@ describe('RingBuffer', () => {
     expect(buf.getAll()).toEqual(['EFGH']);
   });
 
+  it('partialBytes reports the held incomplete-line size', () => {
+    const buf = new RingBuffer(10, 1024);
+    expect(buf.partialBytes).toBe(0);
+    buf.pushData('abc');
+    expect(buf.partialBytes).toBe(3);
+    buf.pushData('def\n'); // completes the line, clears partial
+    expect(buf.partialBytes).toBe(0);
+  });
+
   it('clear resets content but keeps seq', () => {
     const buf = new RingBuffer(5);
     buf.push('a');

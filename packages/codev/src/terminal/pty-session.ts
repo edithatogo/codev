@@ -420,6 +420,11 @@ export class PtySession extends EventEmitter {
     return this.clients.size;
   }
 
+  /** Bytes held in the ring buffer's incomplete-line partial (observability, #1047). */
+  get partialBytes(): number {
+    return this.ringBuffer.partialBytes;
+  }
+
   /** Record that a user sent input to this session. */
   recordUserInput(): void {
     this._lastInputAt = Date.now();

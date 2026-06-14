@@ -63,6 +63,13 @@ const rateLimitCleanupInterval = startRateLimitCleanup();
 // Shellper session manager (initialized at startup)
 let shellperManager: SessionManager | null = null;
 let shellperCleanupInterval: NodeJS.Timeout | null = null;
+let terminalPartialMonitorInterval: NodeJS.Timeout | null = null;
+
+// Observability for Issue #1047: a session whose ring-buffer partial grows
+// toward this size is a no-newline TUI stream — the shape that pegged Tower's
+// CPU before the byte cap. Logged periodically; warned when crossed.
+const PARTIAL_WARN_BYTES = 200 * 1024;
+const TERMINAL_MONITOR_INTERVAL_MS = 60_000;
 
 // Parse arguments with Commander
 const program = new Command()
@@ -154,6 +161,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   // 4. Stop rate limit cleanup, shellper periodic cleanup, and SSE heartbeat
   clearInterval(rateLimitCleanupInterval);
   if (shellperCleanupInterval) clearInterval(shellperCleanupInterval);
+  if (terminalPartialMonitorInterval) clearInterval(terminalPartialMonitorInterval);
   clearInterval(sseHeartbeatInterval);
 
   // 4b. Flush and stop send buffer (Spec 403) — delivers any deferred messages
@@ -390,6 +398,28 @@ server.listen(port, bindHost, async () => {
     registerKnownWorkspace,
     getKnownWorkspacePaths,
   });
+
+  // Issue #1047 observability: periodically report terminal ring-buffer
+  // partial sizes so a no-newline TUI stream (the freeze trigger) is visible
+  // in the Tower log. Cheap (O(sessions) once a minute) and .unref()'d so it
+  // never holds the process open.
+  terminalPartialMonitorInterval = setInterval(() => {
+    try {
+      const partials = getTerminalManager().inspectPartials();
+      if (partials.length === 0) return;
+      let maxBytes = 0;
+      for (const p of partials) {
+        if (p.partialBytes > maxBytes) maxBytes = p.partialBytes;
+        if (p.partialBytes >= PARTIAL_WARN_BYTES) {
+          log('WARN', `Terminal ${p.id} (${p.label}) ring-buffer partial at ${Math.round(p.partialBytes / 1024)} KB — no-newline TUI stream, capped (#1047)`);
+        }
+      }
+      log('INFO', `Terminal partial monitor: ${partials.length} session(s), max partial ${Math.round(maxBytes / 1024)} KB`);
+    } catch (err) {
+      log('ERROR', `Terminal partial monitor failed: ${(err as Error).message}`);
+    }
+  }, TERMINAL_MONITOR_INTERVAL_MS);
+  terminalPartialMonitorInterval.unref();
 
   // Spec 403: Start send buffer for typing-aware message delivery
   startSendBuffer(log);

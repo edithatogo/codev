@@ -200,6 +200,20 @@ export class TerminalManager {
     return Array.from(this.sessions.values()).map(s => s.info);
   }
 
+  /**
+   * Snapshot of each session's ring-buffer partial size and client count
+   * (Issue #1047 observability). A partial creeping toward the cap flags a
+   * no-newline TUI stream — the shape that used to peg Tower's CPU.
+   */
+  inspectPartials(): Array<{ id: string; label: string; partialBytes: number; clients: number }> {
+    return Array.from(this.sessions.values()).map(s => ({
+      id: s.id,
+      label: s.label,
+      partialBytes: s.partialBytes,
+      clients: s.clientCount,
+    }));
+  }
+
   /** Get a session by ID. */
   getSession(id: string): PtySession | undefined {
     return this.sessions.get(id);

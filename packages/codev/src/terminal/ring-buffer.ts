@@ -123,6 +123,11 @@ export class RingBuffer {
     return this.count;
   }
 
+  /** Bytes held in the incomplete-line partial (observability, #1047). */
+  get partialBytes(): number {
+    return this.partial.length;
+  }
+
   /** Clear the buffer and release memory. */
   clear(): void {
     this.buffer = [];
