@@ -7,31 +7,42 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { createColdTierDefaults, COLD_TIER_STARTERS } from '../lib/scaffold.js';
+import { copyColdTierDefaults, COLD_TIER_FILES } from '../lib/scaffold.js';
 import { isUserDataPath } from '../lib/templates.js';
 
-const COLD_TIER_FILES = Object.keys(COLD_TIER_STARTERS);
+const COLD_DEST_FILES = COLD_TIER_FILES.map(f => f.dest);
 
-describe('issue #1012 — createColdTierDefaults', () => {
+describe('issue #1012 — copyColdTierDefaults', () => {
   let tmp: string;
+  let skeleton: string;
 
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-mat-'));
+    skeleton = path.join(tmp, 'skeleton');
+    fs.mkdirSync(path.join(skeleton, 'templates'), { recursive: true });
+    fs.writeFileSync(
+      path.join(skeleton, 'templates', 'arch.starter.md'),
+      '# Architecture\n\n_No architecture documented yet._\n'
+    );
+    fs.writeFileSync(
+      path.join(skeleton, 'templates', 'lessons-learned.starter.md'),
+      '# Lessons Learned\n\n_No lessons captured yet._\n'
+    );
   });
   afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-  it('creates both cold files into codev/resources/, creating the dir', () => {
+  it('copies both cold files into codev/resources/ under their dest names, creating the dir', () => {
     const target = path.join(tmp, 'proj');
-    const result = createColdTierDefaults(target);
-    expect(result.created.sort()).toEqual([...COLD_TIER_FILES].sort());
-    for (const f of COLD_TIER_FILES) {
+    const result = copyColdTierDefaults(target, skeleton);
+    expect(result.copied.sort()).toEqual([...COLD_DEST_FILES].sort());
+    for (const f of COLD_DEST_FILES) {
       expect(fs.existsSync(path.join(target, 'codev', 'resources', f))).toBe(true);
     }
   });
 
   it('writes the placeholder marker so the file is clearly a stub to replace', () => {
     const target = path.join(tmp, 'proj');
-    createColdTierDefaults(target);
+    copyColdTierDefaults(target, skeleton);
     const res = path.join(target, 'codev', 'resources');
     expect(fs.readFileSync(path.join(res, 'arch.md'), 'utf-8')).toContain('_No architecture documented yet._');
     expect(fs.readFileSync(path.join(res, 'lessons-learned.md'), 'utf-8')).toContain('_No lessons captured yet._');
@@ -43,9 +54,9 @@ describe('issue #1012 — createColdTierDefaults', () => {
     fs.mkdirSync(res, { recursive: true });
     fs.writeFileSync(path.join(res, 'arch.md'), 'MY CURATED CONTENT');
 
-    const result = createColdTierDefaults(target, { skipExisting: true });
+    const result = copyColdTierDefaults(target, skeleton, { skipExisting: true });
     expect(result.skipped).toContain('arch.md');
-    expect(result.created).toContain('lessons-learned.md');
+    expect(result.copied).toContain('lessons-learned.md');
     // Curated content untouched.
     expect(fs.readFileSync(path.join(res, 'arch.md'), 'utf-8')).toBe('MY CURATED CONTENT');
   });
@@ -85,7 +96,7 @@ describe('issue #1012 — codev update backfills cold files', () => {
     const { update } = await import('../commands/update.js');
     const result = await update();
 
-    for (const f of COLD_TIER_FILES) {
+    for (const f of COLD_DEST_FILES) {
       expect(fs.existsSync(path.join(projectDir, 'codev', 'resources', f)), `${f} created`).toBe(true);
       expect(result.newFiles).toContain(`codev/resources/${f}`);
     }
@@ -111,7 +122,7 @@ describe('issue #1012 — codev update backfills cold files', () => {
     const { update } = await import('../commands/update.js');
     await update({ dryRun: true });
 
-    for (const f of COLD_TIER_FILES) {
+    for (const f of COLD_DEST_FILES) {
       expect(fs.existsSync(path.join(projectDir, 'codev', 'resources', f)), `${f} not created in dry-run`).toBe(false);
     }
   });
