@@ -65,6 +65,23 @@ vi.mock('@cluesmith/codev-core/escape-buffer', () => ({
 
 vi.mock('@cluesmith/codev-types', () => ({ FRAME_CONTROL: 0x00, FRAME_DATA: 0x01 }));
 
+const FRAME_CONTROL = 0x00;
+const FRAME_DATA = 0x01;
+
+/** Deliver a binary DATA frame to the adapter's `message` handler. */
+function sendData(socket: { emit(e: string, ...a: unknown[]): void }, payload: Buffer): void {
+  socket.emit('message', Buffer.concat([Buffer.from([FRAME_DATA]), payload]));
+}
+
+/** Deliver a binary CONTROL frame (JSON) to the adapter's `message` handler. */
+function sendControl(
+  socket: { emit(e: string, ...a: unknown[]): void },
+  msg: { type: string; payload: Record<string, unknown> },
+): void {
+  const json = Buffer.from(JSON.stringify(msg), 'utf-8');
+  socket.emit('message', Buffer.concat([Buffer.from([FRAME_CONTROL]), json]));
+}
+
 // Imports AFTER mocks are registered.
 const WebSocket = (await import('ws')).default as unknown as {
   instances: Array<{ closed: boolean; emit(e: string, ...a: unknown[]): void }>;
@@ -292,5 +309,74 @@ describe('PIR #1001 — reconnect notices overwrite in place and clear on succes
     expect(writes[0].startsWith(ERASE_LINE)).toBe(false); // nothing on the line to clear
     expect(writes[0]).toContain('no longer exists');
     expect(writes[0]).toContain(RECONNECT_LINK_TEXT);
+  });
+});
+
+describe('PIR #1047 — oversized replay storm prevention', () => {
+  function reconnectTo(pty: unknown, url: string): void {
+    (pty as { reconnect(u?: string): void }).reconnect(url);
+  }
+
+  it('renders a >1MB replay (pause-bracketed) without reconnecting', () => {
+    const { pty, writes } = makeAdapter();
+    currentSocket().emit('open');
+    const socketsBefore = WebSocket.instances.length;
+    writes.length = 0;
+
+    // Tower brackets the buffer snapshot: pause → (big replay) → resume.
+    sendControl(currentSocket(), { type: 'pause', payload: {} });
+    sendData(currentSocket(), Buffer.alloc(2 * 1024 * 1024, 0x41)); // 2 MB
+    sendControl(currentSocket(), { type: 'resume', payload: {} });
+
+    // No reconnect (the old bug looped here ~14k times), and content rendered.
+    expect(WebSocket.instances.length).toBe(socketsBefore);
+    expect(writes.length).toBeGreaterThan(0);
+    expect(writes.join('')).not.toContain(RECONNECT_LINK_TEXT); // did not give up
+    void pty;
+  });
+
+  it('drops live output over the queue limit instead of reconnecting', () => {
+    const { writes } = makeAdapter();
+    currentSocket().emit('open');
+    const socketsBefore = WebSocket.instances.length;
+    writes.length = 0;
+
+    // Not bracketed → treated as live. The old code called reconnect() here.
+    sendData(currentSocket(), Buffer.alloc(2 * 1024 * 1024, 0x42)); // 2 MB
+
+    expect(WebSocket.instances.length).toBe(socketsBefore); // dropped, no reconnect
+  });
+
+  it('still renders normal-sized live output', () => {
+    const { writes } = makeAdapter();
+    currentSocket().emit('open');
+    writes.length = 0;
+
+    sendData(currentSocket(), Buffer.from('hello world', 'utf-8'));
+    expect(writes.join('')).toContain('hello world');
+  });
+
+  it('reconnect requests a resume delta from the last seq', () => {
+    const { writes } = makeAdapter();
+    currentSocket().emit('open');
+    writes.length = 0;
+
+    sendControl(currentSocket(), { type: 'seq', payload: { seq: 42 } });
+    currentSocket().emit('close');
+    vi.advanceTimersByTime(1000); // scheduled reconnect opens a new socket
+
+    expect((currentSocket() as unknown as { url: string }).url).toContain('resume=42');
+  });
+
+  it('a successor-session reconnect resets seq and does a full (no-resume) replay', () => {
+    const { pty } = makeAdapter();
+    currentSocket().emit('open');
+    sendControl(currentSocket(), { type: 'seq', payload: { seq: 42 } });
+
+    reconnectTo(pty, 'ws://localhost:4100/successor');
+
+    const url = (currentSocket() as unknown as { url: string }).url;
+    expect(url).toContain('/successor');
+    expect(url).not.toContain('resume');
   });
 });
