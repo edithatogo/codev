@@ -1,84 +1,107 @@
-# PIR Plan: Tower terminal freeze (CPU-bound listener/session accumulation)
+# PIR Plan: Tower terminal freeze — unbounded no-newline buffers (O(n²) output pump)
 
-> Issue #1047. Tower terminals (architects + builders) become non-responsive until `afx tower stop && afx tower start`.
+> Issue #1047. Tower terminals (architects + builders) become non-responsive over time; the only known recovery is a Tower restart, and even that is **not reliably** effective.
 
 ## Understanding
 
-Over ~10 hours of Tower uptime, Tower's CPU climbs roughly linearly (0.6% at t=3m to 93% at t=10h) and every PTY terminal stops rendering output at once. A default (non-force) `afx tower stop && afx tower start` restores responsiveness; force-kill of shellpers is not involved. The diagnostic comments establish:
+### Root cause (empirically confirmed)
 
-- The event loop is alive (SSE heartbeats fire on schedule every 30s), so this is not a deadlock. CPU saturation is starving message delivery, which is why clients eventually fail keepalive and terminals look frozen.
-- Memory grows only +76 MB over 10h and FDs grow by ~9, both minor. This rules out the GC-stall / memory-bloat mechanism. The load-bearing signal is **CPU**.
-- The cron firing path and the SSE pump itself were already ruled out by the reporter (cron is bursty/bounded; the SSE pump at `tower-server.ts:192-262` is well-defended).
-- The SSE-client churn visible in the logs is partly **by design**: the heartbeat evicts SSE connections older than `SSE_MAX_AGE_MS` (5 min) so clients reconnect (`tower-server.ts:234-262`). That churn is a symptom amplifier, not the root cause.
+Tower's per-PTY-frame hot path re-scans an **unbounded, newline-delimited buffer** on every byte burst. A full-screen TUI (Claude Code's prompt/UI) runs in the alternate screen buffer and redraws **in place** using cursor-addressing and carriage returns, emitting almost **no `\n` bytes**. Two buffers in the output path bound themselves by newline count and therefore never bound at all for such a stream:
 
-The shape that fits all of this is **a per-data-frame or per-tick hot path doing work proportional to a growing in-memory collection** (an EventEmitter listener set, or a list/map iterated on every PTY byte burst). The regression window points at PIR #991 (terminal reconnect / successor-session resolution), whose reconnect cycles are the classic listener-accumulation surface.
+1. **`RingBuffer.partial`** (`packages/codev/src/terminal/ring-buffer.ts:36-51`). `pushData` does `const combined = this.partial + data; combined.split('\n')` and saves the trailing fragment back into `this.partial`. With no `\n` in the stream, `partial` grows without limit, and **every frame re-concatenates and re-splits the entire accumulated buffer** — O(partial) per frame, O(n²) over the session. There is no byte cap on `partial` (confirmed: the only byte cap in the terminal layer is the *stderr* ring buffer's `maxLineLength = 10000` at `session-manager.ts:67` — the main RingBuffer never got one).
+2. **`ShellperReplayBuffer`** (`packages/codev/src/terminal/shellper-replay-buffer.ts:45,58`) on the shellper side. It evicts only `while (this.lineCount > this.maxLines …)`. With zero newlines, `lineCount` stays 0, eviction never fires, and `chunks` grows unbounded. Every PTY chunk is appended here (`shellper-process.ts:143`).
 
-### What the code review found (grounded, but not yet runtime-confirmed)
+### Empirical evidence
 
-The hot path per PTY byte burst is `PtySession.onPtyData` (`packages/codev/src/terminal/pty-session.ts:251-281`): it pushes to the ring buffer, writes the disk log, iterates `this.clients`, and emits `'data'`. It is fed by the shellper `client.on('data', ...)` subscription installed in `attachShellper` (`pty-session.ts:142`). Two latent hazards make this path able to inflate with uptime:
+Measuring the on-disk PTY logs (`~/.agent-farm/logs/*.log`, raw terminal output) across real sessions:
 
-1. **`createSessionRaw` overwrites without teardown.** `PtyManager.createSessionRaw` (`packages/codev/src/terminal/pty-manager.ts:126-163`) ends with `this.sessions.set(id, session)` and never tears down a pre-existing entry under the same `id`. Its inline comment argues "the in-memory sessions map is empty at reconcile time, so reusing the id can't collide" — but that reasoning holds only for the **startup** reconcile, not for the **on-the-fly** reconnect path (`tower-terminals.ts:923`) which runs while Tower is live and the map is populated.
+| Session log | Size | Newlines | Longest run without `\n` |
+|---|---|---|---|
+| `f02bedcb…` (14 Jun 21:01, **incident window**) | 15 MB | **0** | **14.57 MB (entire file)** |
+| `d8406afb…` | 24 MB | 1,215,838 | 5,295 bytes |
+| `4d5523cb…` | 20 MB | 1,098,370 | 7,596 bytes |
 
-2. **`attachShellper` adds listeners with no prior-listener removal.** `attachShellper` (`pty-session.ts:119-197`) installs `data`, `exit`, and `close` listeners on the shellper client and, in the `restartOnExit` branch, additional `data` listeners (`pty-session.ts:163-179`). `detachShellper` (`pty-session.ts:228-234`) does `removeAllListeners()`, but it is only invoked on Tower shutdown — not when an on-the-fly reconnect replaces a PtySession. If an **old** PtySession is dropped from the manager map while its old shellper client (or any closure capturing it) stays referenced, the old `data` listener keeps firing `onPtyData`, doubling the work per byte. Repeat across reconnect cycles and the per-byte cost grows.
+The incident-window session emitted **15 MB with not a single newline**. Byte census of that file: 1,500,892 ESC (`0x1b`), 164,652 CR (`0x0d`), 0 LF — a control-heavy redraw stream (`\e[?1049h \e[2J \e[H \e[?25l … \e[3G \e[5G … \r`). For that session, Tower's `partial` grows to ~15 MB and every incoming frame re-splits ~15 MB. Other sessions (normal newline density, ~20 bytes/line) are unaffected — which is exactly why the bug is intermittent and session-dependent.
 
-The on-the-fly reconnect path (`tower-terminals.ts:860-958`) is guarded by `!session`, so under normal operation it fires once per lost-session window — not on every poll. **This means static analysis cannot prove this is the production trigger.** The exact accumulation cadence only manifests after hours of real use, so the honest position is: this is the highest-confidence *candidate*, and the plan must both (a) harden it safely and (b) instrument Tower so the next occurrence is captured with hard data rather than inferred.
+### Why this matches every observation
+
+- **CPU climbs ~linearly with uptime, then ~93% (one core saturated).** `partial` length grows ∝ uptime for an actively-redrawing TUI; per-frame cost ∝ `partial`; frame rate roughly constant → CPU ∝ uptime. Node is single-threaded, so one saturating session pegs ~one core. (Note: the "linear" framing rests on two CPU samples; this mechanism is consistent with a linear climb, and also with a faster ramp once a heavy session starts — both fit.)
+- **ALL terminals freeze at once.** The O(n²) re-scan runs on the single shared event loop. One heavy session starves every other terminal's I/O behind it.
+- **Memory grows only modestly (+76 MB / 10h).** The cost is CPU (repeated scan + GC churn from re-allocating multi-MB strings each frame), not retained memory. The live `partial`s plus GC headroom account for the modest RSS rise.
+- **Input still propagates while render-back is broken** (the issue's stray-`e` screenshot). Writing input is O(small) and occasionally slips through; the output pump's O(partial) re-scan dominates and stalls rendering.
+- **Restart is NOT reliably effective.** This is the key point in your question. `ShellperReplayBuffer` is *also* unbounded for no-newline streams, so on restart the shellper replays the full ~15 MB, Tower seeds a fresh `partial` from it, and the O(n²) re-scan resumes almost immediately if the heavy session is still redrawing. Restart only "fixes" it when the offending session has gone quiet or ended. That session-dependence is why you're not sure the restart resolves it.
+
+### Pathway walk-through (where responsiveness can break)
+
+Output (render-back) path, which is the broken direction:
+
+1. **Shellper:** `pty.onData` → `ShellperReplayBuffer.append(buf)` **[BUG #2: unbounded on no-newline]** → forwards the chunk over the unix socket to Tower (`shellper-process.ts:143-146`).
+2. **Tower:** `ShellperClient` parser emits `'data'` → `PtySession.onPtyData` (`pty-session.ts:251-281`): `RingBuffer.pushData` **[BUG #1: O(n²) re-scan + unbounded]**, then a synchronous `fs.writeSync` disk-log per frame **[secondary event-loop blocker]**, then broadcast to WS clients (drops frames when `ws.bufferedAmount ≥ 1 MB` — a symptom under starvation, not a cause), then `emit('data')`.
+3. **Client:** WS → VSCode extension terminal client → xterm.js render.
+
+Input path (stays responsive): WS message → `session.write` → `shellperClient.write` → unix socket → shellper → PTY. Small, cheap; consistent with the observed "input gets through, output frozen."
+
+The dominant responsiveness failure is Bug #1 (the O(n²) output re-scan); Bug #2 makes restart unreliable and leaks shellper memory; the per-frame `writeSync` is a smaller additive event-loop cost.
+
+### Status of the earlier listener-leak hypothesis
+
+My first draft led with an EventEmitter listener-accumulation theory on the PIR #991 reconnect surface. After empirical measurement, that is **demoted to a secondary, defensive cleanup**: it does not explain the 15 MB zero-newline artifact, the CPU-without-memory profile, or the restart-unreliability, whereas the buffer mechanism explains all three. There remain real-but-minor listener-hygiene gaps (`createSessionRaw` overwrites `sessions` without teardown at `pty-manager.ts:161`; `attachShellper` re-subscribes without removing prior listeners) which are worth a low-risk guard but are not the headline.
 
 ## Proposed Change
 
-A three-part change, investigation-first so we confirm the mechanism rather than guess, paired with safe hardening and a fast regression test that compresses the 10-hour leak into CI.
+### Fix 1 (primary) — stop re-scanning, and byte-cap `RingBuffer.partial`
 
-### Part A — Bounded, always-on instrumentation (confirm the mechanism)
+In `RingBuffer.pushData` (`ring-buffer.ts`):
 
-Add a cheap periodic self-report, hosted on the existing 30s SSE heartbeat interval (`tower-server.ts:236`) so it adds no new timer. Each tick logs a single structured line capturing the collections most likely to grow:
+- **Scan only the incoming `data` for newlines**, not the whole `partial + data`. Walk newline indices in `data`, push completed lines (the current `partial` prefixes only the first), and keep the trailing remainder as the new `partial`. This makes per-frame work O(|data|) instead of O(|partial|) and is **behavior-preserving** for replay (same lines, same partial).
+- **Cap `partial` to a max byte length** (e.g. a generous `MAX_PARTIAL_BYTES`, on the order of 256 KB–1 MB — large enough that real lines are never clipped, small enough to bound work/memory). When an unbroken run exceeds the cap, trim the front of `partial` to the last `MAX_PARTIAL_BYTES`. Front-trim (rather than injecting a synthetic `\n`) avoids corrupting a TUI replay with spurious line feeds; the slight loss of the alt-screen-enter prefix self-heals because reconnect triggers a full TUI repaint (resize). The exact cap and trim-vs-segment choice is finalized in implementation and validated at the `dev-approval` gate.
 
-- Total live `PtySession` count and total live `ShellperClient` count.
-- Per-session `data` / `exit` / `close` listener counts on the shellper client (via `emitter.listenerCount(event)`), and the session's WebSocket `clientCount`.
-- Total terminal WebSocket connection count and total SSE client count.
-- Tower's own CPU since the last tick via `process.cpuUsage()` delta, normalized to a percentage.
+### Fix 2 (primary) — byte-cap `ShellperReplayBuffer`
 
-When any per-client listener count crosses a small threshold (for example > 5), emit a `WARN` naming the offending terminal id. This is O(number of sessions) once per 30s — negligible — and it directly confirms or refutes the listener-accumulation hypothesis and pins *which* collection grows. The reviewer can watch these lines live at the `dev-approval` gate, and they remain in production logs to catch the next real occurrence if the hardening below turns out incomplete.
+In `ShellperReplayBuffer.append` (`shellper-replay-buffer.ts`): add a `maxBytes` cap alongside `maxLines` (it already tracks `totalBytes`). Evict oldest chunks while `totalBytes > maxBytes`, with a single-chunk front-trim edge case mirroring the existing line logic. This bounds shellper memory for no-newline streams and, crucially, bounds the REPLAY frame so a restart can no longer re-seed a multi-MB `partial` — making restart-as-recovery deterministic and keeping it cheap.
 
-### Part B — Defensive hardening (safe regardless of whether it is THE cause)
+### Fix 3 (defensive, optional) — listener hygiene
 
-1. **Make PtySession replacement under a reused id non-leaking.** Before `createSessionRaw` (and the on-the-fly reconnect path) installs a new PtySession under an existing id, tear down any prior PtySession bound to that id: detach it from its shellper client (`removeAllListeners` on the old client) and clear its WebSocket clients/timers. Concretely, give `PtyManager` a guarded replace that calls the existing teardown (`detachShellper` / `cleanup`) on a colliding entry instead of silently overwriting the map.
+Make `attachShellper` idempotent (remove prior `data`/`exit`/`close` listeners before re-subscribing) and have the on-the-fly reconnect / `createSessionRaw` path tear down any pre-existing PtySession under a reused id before replacing it. Correct in its own right; low risk. Include only if it does not bloat the change — otherwise spin out to a follow-up issue.
 
-2. **Make `attachShellper` idempotent.** If `attachShellper` is called when a previous shellper client is still attached (or re-called on the same session), remove the previously-installed `data` / `exit` / `close` listeners from the old client first, so a re-attach cannot double the per-byte fan-out.
+### Instrumentation (targeted, cheap)
 
-3. **Add a `setMaxListeners` tripwire** on the shellper client (a small bound, for example 12) so any future accumulation surfaces as Node's native "possible EventEmitter memory leak" warning in the Tower log rather than silently degrading CPU.
+On the existing 30s SSE heartbeat, log per-session `ringBuffer` partial length and shellper replay byte size, and `WARN` when a partial exceeds a threshold (naming the terminal id). This directly observes the now-known cause and confirms the fix holds in production. Far more targeted than the listener-count instrumentation from the first draft.
 
-These three are correct in their own right (a replaced/re-attached session should never keep firing old listeners), so they are safe to land even if the production trigger turns out to be a different collection — in which case Part A's instrumentation tells us where to look next.
+### Explicitly out of scope
 
-### Part C — Accelerated repro test (capture data, not speculation)
-
-Add a unit/integration test that drives many reconnect/re-attach cycles against a fake in-memory shellper client and asserts that, after N cycles, (a) the shellper client's `data`/`exit`/`close` listener counts stay bounded, (b) the live `PtySession` count stays bounded, and (c) a single emitted data frame is processed exactly once (not N times). This compresses the 10-hour leak into a deterministic test and is what the `dev-approval` reviewer and CI run to verify the fix without waiting 10 hours.
+- Converting the per-frame `fs.writeSync` disk log to async/batched (a smaller, separate optimization — note for a follow-up if profiling after Fix 1 still shows it).
+- Any change to default `tower stop` shellper-survival behavior (#274 / #832 / #999 / #991).
+- The cron `ReferenceError` (#1048) and the spawn-failure sibling (#1038).
 
 ## Files to Change
 
-- `packages/codev/src/terminal/pty-session.ts` — make `attachShellper` idempotent (remove prior client listeners before re-subscribing); add `setMaxListeners` tripwire on the shellper client. (`attachShellper` ~119-197; `detachShellper` ~228-234.)
-- `packages/codev/src/terminal/pty-manager.ts:126-163` — `createSessionRaw`: tear down any pre-existing PtySession under the same id before `this.sessions.set(...)`; update the now-inaccurate "can't collide" comment.
-- `packages/codev/src/agent-farm/servers/tower-terminals.ts:860-958` — on-the-fly reconnect: ensure the replaced session is explicitly detached/torn down (belt-and-suspenders with the PtyManager change above).
-- `packages/codev/src/agent-farm/servers/tower-server.ts:236-262` — add the bounded per-tick instrumentation onto the existing SSE heartbeat (or a sibling `.unref()`'d interval if cleaner), plus a small CPU-delta helper.
-- `packages/codev/src/terminal/__tests__/` (and/or `packages/codev/src/agent-farm/__tests__/`) — new accelerated reconnect/listener-bound regression test.
-
-Final file list to be confirmed during implementation; the instrumentation may warrant a tiny helper module rather than inlining into `tower-server.ts`.
+- `packages/codev/src/terminal/ring-buffer.ts` — `pushData`: scan only `data`; byte-cap `partial`. Add `MAX_PARTIAL_BYTES`.
+- `packages/codev/src/terminal/shellper-replay-buffer.ts` — add `maxBytes` cap + byte-based eviction; thread a sane default (and wire `replayBufferLines`/a new bytes option from `shellper-process.ts:97` if needed).
+- `packages/codev/src/agent-farm/servers/tower-server.ts:236-262` — bounded per-tick partial/replay-size instrumentation on the SSE heartbeat.
+- (optional, Fix 3) `packages/codev/src/terminal/pty-session.ts` (`attachShellper`) and `packages/codev/src/terminal/pty-manager.ts:161` (`createSessionRaw` teardown).
+- Tests under `packages/codev/src/terminal/__tests__/` — see Test Plan.
 
 ## Risks & Alternatives Considered
 
-- **Risk: the hardening does not fix the production trigger** (the real growing collection is elsewhere). Mitigation: Part A's instrumentation is the safety net — it ships regardless and pins the true collection on the next occurrence. The hardening is independently correct, so it does no harm.
-- **Risk: tearing down a replaced session detaches a still-needed live client.** Mitigation: only tear down when the id genuinely collides with a *different* PtySession instance, and route through the existing `detachShellper` (which already exists for the shutdown path) so semantics match a known-safe teardown. The accelerated test asserts a live data frame still reaches exactly one consumer after re-attach.
-- **Risk: `setMaxListeners(12)` warns on a legitimately high fan-out.** Mitigation: the bound is a tripwire for logs only (Node warns, does not throw); tune if a legitimate case exceeds it.
-- **Alternative considered — pure "instrument and wait" (no hardening).** Rejected: the listener/teardown gaps are real latent bugs worth fixing now, and shipping the fix plus the instrument is strictly better than shipping the instrument alone.
-- **Alternative considered — bisect v3.1.5..v3.1.7 to pin the regression PR first.** Rejected as the *primary* path because it needs a 12h+ soak per candidate and does not produce a fix; the instrumentation captures the same signal faster and the hardening lands the fix. Bisect remains available as a fallback if Part A's data points away from the reconnect surface.
+- **Risk: byte-trimming `partial` corrupts replay for a no-newline TUI** (loses early escape state). Mitigation: generous cap so only pathological streams are trimmed; reconnect already drives a full repaint; the accelerated test asserts a *normal* newline stream replays byte-identically (no behavior change for the common case). The reviewer validates a live reconnect at the `dev-approval` gate.
+- **Risk: the cap is too aggressive and clips legitimately long single lines** (e.g. a 200 KB JSON blob on one line). Mitigation: set the cap well above realistic single-line sizes; it only bounds *pathological* unbroken runs (megabytes).
+- **Risk: there is a second, independent leak** (e.g. the listener gap) that this doesn't cover. Mitigation: the instrumentation ships regardless and will surface any residual growth; Fix 3 covers the known listener gap defensively.
+- **Alternative — only add instrumentation and bisect v3.1.5..v3.1.7 first.** Rejected as primary: the disk-log evidence already pins the mechanism without a 12h+ soak, and bisect would land no fix. Bisect remains a fallback if post-fix soak still shows CPU growth.
+- **Alternative — segment the over-cap partial as ring lines instead of front-trimming.** Rejected (default) because rejoining ring lines with `\n` injects spurious line feeds into a TUI replay; front-trim avoids that. Revisit if a continuation-aware ring model is wanted later.
 
 ## Test Plan
 
-The reviewer exercises this at the `dev-approval` gate against the running worktree:
+Run from the worktree (`pnpm --filter @cluesmith/codev …`), not the main checkout.
 
-- **Unit/integration (fast, deterministic):** run the new accelerated reconnect test — `pnpm --filter @cluesmith/codev test` from the worktree. It must show listener and session counts staying bounded across many cycles, and a single data frame processed exactly once.
-- **Full suite:** `pnpm --filter @cluesmith/codev test` (and `pnpm --filter @cluesmith/codev build`) green, run from the worktree (not the main checkout).
-- **Manual / live observability:** start the worktree's Tower (`afx dev <builder-id>` or a local Tower start against this branch), open a couple of architect/builder terminals, and confirm the new per-tick instrumentation line appears every 30s in `afx tower log -f` with sane, *stable* counts (listener counts staying at their baseline, not climbing) as terminals are opened, closed, and reconnected. Force a few terminal WS reconnects (close/reopen the VSCode tab) and confirm per-session listener counts return to baseline rather than incrementing.
-- **Soak (optional, post-merge / verify):** leave Tower running for several hours on a real workload and confirm CPU stays low and the instrumentation counts stay flat. This is the true end-to-end confirmation; it is noted here for completeness but is not gating for the PR since it cannot fit a gate session.
+- **Unit — CPU bound (the core fix):** feed a synthetic no-newline stream of M bytes across K frames into `RingBuffer.pushData`; assert per-frame work does not scale with accumulated size (e.g. assert `partial.length` stays ≤ cap, and a frame-cost proxy stays flat as the stream grows). Today this test would show partial growing to M and unbounded re-scan; after the fix it stays bounded.
+- **Unit — replay correctness (no regression):** a normal newline-delimited stream produces byte-identical `getAll()` / `getSince()` output before and after the change.
+- **Unit — shellper buffer:** feed a zero-newline stream exceeding `maxBytes`; assert `ShellperReplayBuffer.size` stays ≤ `maxBytes` and `getReplayData()` returns the bounded tail.
+- **Build + full suite:** `pnpm --filter @cluesmith/codev build` and `… test` green from the worktree.
+- **Manual / live (at `dev-approval`):** start Tower on this branch, open an architect terminal running Claude's full-screen UI, let it redraw for a while, and watch `afx tower log -f`: the new instrumentation should show the partial size **plateau at the cap** rather than climb, and Tower CPU should stay low. Reconnect the terminal (close/reopen the VSCode tab) and confirm the screen repaints correctly (replay still works). Optionally stop/start Tower against a still-busy session and confirm CPU does **not** immediately re-saturate (Fix 2 working).
+- **Soak (post-merge / verify, non-gating):** leave Tower running several hours on a real workload; confirm CPU stays flat. This is the true end-to-end confirmation but cannot fit a gate session.
 
-## Open Question for the Reviewer
+## Open Questions for the Reviewer
 
-If you want this scoped more tightly, the two natural cut points are: (1) ship **only** Part A + Part C now (instrument + test, no behavior change) and use the captured data to target a follow-up fix, or (2) ship all three parts as proposed. I recommend (2) because the hardening is independently correct and low-risk, but the choice is yours at the gate.
+1. **Cap sizes:** proposed `MAX_PARTIAL_BYTES` ~256 KB–1 MB and `ShellperReplayBuffer maxBytes` ~ a few MB. Comfortable with these, or want them configurable via env?
+2. **Fix 3 (listener hygiene):** include in this PR as a small defensive guard, or split to a follow-up issue to keep this change tightly scoped to the buffer fix?

@@ -13,7 +13,20 @@
 - HAZARD 2: `attachShellper` (pty-session.ts:119-197) adds `data`/`exit`/`close` listeners to the shellper client with no prior-listener removal; nothing explicitly detaches the OLD PtySession from its OLD client on reconnect (relies on GC, which fails if the old client stays referenced/alive).
 - On-the-fly reconnect (tower-terminals.ts:860-958) is guarded by `!session`, so it fires once per lost-session window (NOT every poll — the subagent over-claimed "every poll"). Exact trigger for repeated accumulation is not confirmable by static read alone.
 
-### Plan direction
-Investigation-first + defensive hardening + accelerated repro test + bounded always-on instrumentation. Root cause is not confidently pinned statically (only manifests after ~10h), so the plan instruments to confirm on next occurrence AND lands safe hardening + a fast test that compresses the 10h leak into CI.
+### Plan direction (initial draft — superseded)
+First draft led with an EventEmitter listener-leak theory + instrumentation. Demoted after empirical work below.
 
-Plan written to codev/plans/1047-tower-terminals-architects-bui.md — awaiting plan-approval gate.
+### ROOT CAUSE CONFIRMED (empirical, 2026-06-15)
+Architect pushed back: do we have a real hypothesis, and is restart actually the fix? Investigated the live state + on-disk PTY logs.
+
+- Tower currently DOWN; 12 shellpers persist (by design).
+- Measured `~/.agent-farm/logs/*.log` (raw PTY output). Incident-window log `f02bedcb…` (14 Jun 21:01, 15 MB) has **0 newlines** — longest no-newline run = the entire 14.57 MB. Byte census: 1.5M ESC, 164K CR, 0 LF → a Claude full-screen TUI redraw stream (`\e[?1049h \e[2J \e[H … \e[3G \r`). Normal sessions: ~20 bytes/line, longest line ~5-7KB.
+- Root cause: two buffers bound by NEWLINE COUNT, never bound for a no-newline TUI stream:
+  1. `RingBuffer.pushData` (ring-buffer.ts:36-51): `partial + data` then `split('\n')` every frame → O(partial) per frame, O(n²)/session, partial unbounded. No byte cap (only the stderr ring at session-manager.ts:67 has maxLineLength=10000).
+  2. `ShellperReplayBuffer.append` (shellper-replay-buffer.ts:45,58): evicts only when lineCount>maxLines → 0 newlines → never evicts → unbounded; fed by shellper-process.ts:143.
+- Explains ALL symptoms incl. the two the listener theory couldn't: CPU-without-memory, and **restart-unreliability** (shellper replay is also unbounded → restart re-seeds a 15 MB partial → O(n²) resumes unless the heavy session is gone). That is the answer to "not sure restart resolves it."
+
+### Fix (plan rewritten)
+Primary: (1) RingBuffer.pushData scan only `data` + byte-cap `partial` (front-trim); (2) ShellperReplayBuffer byte cap. Secondary/optional: listener hygiene (attachShellper idempotent, createSessionRaw teardown). Plus targeted instrumentation (log partial/replay sizes on the 30s heartbeat). Accelerated unit tests compress the leak into CI; replay-correctness test guards no-regression.
+
+Plan rewritten in codev/plans/1047-tower-terminals-architects-bui.md — still at plan-approval gate, awaiting review. Two open questions for reviewer: cap sizes, and whether to include listener-hygiene here or split it out.
