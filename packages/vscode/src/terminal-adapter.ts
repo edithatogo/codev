@@ -71,6 +71,7 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
   ) {}
 
   open(initialDimensions: vscode.TerminalDimensions | undefined): void {
+    this.log('INFO', `[#1047-diag] open(initialDimensions=${initialDimensions ? `${initialDimensions.columns}x${initialDimensions.rows}` : 'undefined'})`);
     if (initialDimensions) {
       this.lastDimensions = { cols: initialDimensions.columns, rows: initialDimensions.rows };
     }
@@ -121,9 +122,11 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
     this.lastDimensions = { cols: dimensions.columns, rows: dimensions.rows };
     if (this.replaying) {
       // Defer resize during replay to prevent garbled rendering (Bugfix #625)
+      this.log('INFO', `[#1047-diag] setDimensions(${dimensions.columns}x${dimensions.rows}) DEFERRED (replaying)`);
       this.pendingResize = { cols: dimensions.columns, rows: dimensions.rows };
       return;
     }
+    this.log('INFO', `[#1047-diag] setDimensions(${dimensions.columns}x${dimensions.rows}) sending now`);
     this.sendResize(dimensions.columns, dimensions.rows);
   }
 
@@ -173,7 +176,10 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
       // overlap streaming content. Pause/replay messages arrive *after*
       // this outbound resize, so the order is auth → resize → replay → resume.
       if (this.lastDimensions) {
+        this.log('INFO', `[#1047-diag] WS open: sending resize ${this.lastDimensions.cols}x${this.lastDimensions.rows}`);
         this.sendResize(this.lastDimensions.cols, this.lastDimensions.rows);
+      } else {
+        this.log('INFO', '[#1047-diag] WS open: no lastDimensions, no resize sent');
       }
     });
 
@@ -335,9 +341,11 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
     if (this.replaying) {
       const text = this.decoder.decode(payload, { stream: true });
       const safe = this.escapeBuffer.write(text);
+      this.log('INFO', `[#1047-diag] handleData REPLAY: payload=${payload.length}B, rendered=${safe.length}B`);
       if (safe.length > 0) { this.writeChunked(safe); }
       return;
     }
+    this.log('INFO', `[#1047-diag] handleData LIVE: payload=${payload.length}B`);
 
     // Live overload: if rendered output falls far enough behind that the queue
     // exceeds MAX_QUEUE, DROP this burst rather than reconnecting. Terminal
@@ -397,20 +405,32 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
     switch (msg.type) {
       case 'seq':
         this.lastSeq = (msg.payload.seq as number) ?? this.lastSeq;
+        this.log('INFO', `[#1047-diag] control: seq=${this.lastSeq}`);
         break;
       case 'pong':
         break;
       case 'pause':
+        this.log('INFO', '[#1047-diag] control: pause (replay start)');
         this.replaying = true;
         break;
-      case 'resume':
+      case 'resume': {
+        this.log('INFO', `[#1047-diag] control: resume (replay end), pendingResize=${this.pendingResize ? `${this.pendingResize.cols}x${this.pendingResize.rows}` : 'none'}, lastDimensions=${this.lastDimensions ? `${this.lastDimensions.cols}x${this.lastDimensions.rows}` : 'none'}`);
         this.replaying = false;
-        // Flush deferred resize
-        if (this.pendingResize) {
-          this.sendResize(this.pendingResize.cols, this.pendingResize.rows);
-          this.pendingResize = null;
+        // Re-assert the terminal size once replay finishes (#1047). On a first
+        // open the PTY is still at its spawn-time default and the real
+        // setDimensions was deferred during the replay window, so the TUI never
+        // gets a SIGWINCH and stays blank until the user manually resizes the
+        // window. Sending the known size here forces that SIGWINCH so the app
+        // repaints — automating the manual-resize that empirically fixes it.
+        // Prefer any resize deferred during replay, else the last known
+        // dimensions. A redundant same-size resize is harmless.
+        const dims = this.pendingResize ?? this.lastDimensions;
+        this.pendingResize = null;
+        if (dims) {
+          this.sendResize(dims.cols, dims.rows);
         }
         break;
+      }
       case 'error':
         this.log('ERROR', `Server error: ${JSON.stringify(msg.payload)}`);
         break;
@@ -430,6 +450,8 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
   }
 
   private sendResize(cols: number, rows: number): void {
+    const willSend = this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+    this.log('INFO', `[#1047-diag] sendResize(${cols}x${rows}) wsOpen=${willSend}`);
     this.sendControl({ type: 'resize', payload: { cols, rows } });
   }
 

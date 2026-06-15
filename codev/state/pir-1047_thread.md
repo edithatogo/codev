@@ -75,3 +75,12 @@ Key realization: the byte caps were NOT needed for the freeze fix. CPU is fixed 
 Action (architect-approved): stripped both byte caps, reverting partial/replay to main's faithful-unbounded behavior. Kept: scan-only pushData (CPU), Fix D bracket (no storm), client drop-not-reconnect + resume-delta + resize-deferral, Fix E listener hygiene, instrumentation (partialBytes monitor; WARN threshold raised to 4MB, reworded — it now surfaces unbounded growth for observability, not a cap). Removed env vars CODEV_TERMINAL_MAX_PARTIAL_BYTES / CODEV_SHELLPER_MAX_REPLAY_BYTES. Memory bounding (if ever needed) = screen-aware anchoring as a separate follow-up.
 
 Tests after revert: core 3308 pass / 0 fail; vscode terminal-adapter 18 pass; build green. Awaiting re-test at dev-approval.
+
+## Blank-on-open: Option A + diagnostics (2026-06-15)
+Removing byte caps did NOT fix the blank-on-first-open → truncation wasn't the cause. The blank is the resize path: on first open the PTY stays at spawn-time size, the real setDimensions is deferred/lost during the replay window, app never gets SIGWINCH → blank until manual resize. (Confirmed empirically: manual window resize paints it.)
+
+Fix = Option A (suggested earlier this session): in the `resume` control handler, always re-assert size via `sendResize(pendingResize ?? lastDimensions)` instead of only-if-pendingResize. Automates the known-good manual-resize action → SIGWINCH → repaint. #625 deferral-during-replay protection intact (we only send AFTER resume).
+
+Also added temporary diagnostic logging (all tagged `[#1047-diag]`, greppable, to be stripped before gate): logs open(dims), setDimensions (deferred vs now), WS-open resize, sendResize source, pause/resume/seq controls, handleData replay-vs-live + byte counts. User builds+installs the extension directly, so these surface in the Terminal output channel.
+
+NEXT: user rebuilds/installs extension, opens a terminal, pastes [#1047-diag] log. Confirms whether Option A paints it AND shows the exact event sequence.
