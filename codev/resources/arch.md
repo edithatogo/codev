@@ -206,6 +206,10 @@ Shell / Claude / Builder process
 5. **Kill**: Tower sends SIGTERM via SIGNAL frame, waits 5s, SIGKILL if needed. Cleans up socket file.
 6. **Graceful degradation**: If shellper spawn fails, Tower falls back to direct node-pty (non-persistent). SQLite row has `shellper_socket = NULL`. Dashboard shows "Session persistence unavailable" warning.
 
+#### Terminal reconnect/replay contract (#1047)
+
+When a WebSocket client attaches, Tower replays the ring buffer as a binary DATA frame **bracketed by `pause`/`resume` control frames** so the client can render the (potentially large) snapshot without counting it against its live-backpressure budget. Clients pass `?resume=<seq>` to request only the bytes after a sequence number (a *delta* reconnect) instead of the full buffer — the dominant cost saver when Tower is hosted remotely and reconnects are frequent. The ring-buffer `partial` (incomplete trailing line) is kept **whole and unbounded** so a full-screen TUI's alt-screen state replays faithfully; per-frame CPU is bounded instead by `pushData` scanning only the new chunk (not re-splitting the accumulated buffer). On the client side, a connecting terminal must **force a redraw** shortly after attach (a size-delta resize → SIGWINCH) — a full-screen TUI only repaints on a size *change*, and the connect-time resize can be a same-size no-op; both the web dashboard (`Terminal.tsx`) and the VSCode adapter (`terminal-adapter.ts`) do this. Under genuine *live* overload, clients **drop** ephemeral output (the app repaints) rather than reconnecting — reconnecting to relieve backpressure re-pulls the same payload and storms.
+
 #### Startup Readiness Barrier (#997)
 
 Tower binds its port and starts serving immediately, but `reconcileTerminalSessions()` (which re-registers persistent sessions in the `workspaceTerminals` map) runs *after* `server.listen()`. To stop the first post-restart read from seeing a half-populated `role → terminalId` map, a monotonic settled-once barrier in `tower-terminals.ts` gates the readers of reconcile's output:
