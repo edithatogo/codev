@@ -113,50 +113,24 @@ describe('RingBuffer', () => {
     expect(buf.getAll()).toEqual(['hello', '', 'world']);
   });
 
-  it('caps the partial to maxPartialBytes for a no-newline stream (Issue #1047)', () => {
-    const cap = 1024;
-    const buf = new RingBuffer(10, cap);
-    // Feed 100 KB with no newline, in 1 KB frames — mimics a full-screen TUI
-    // that redraws in place and never emits \n.
+  it('keeps a no-newline stream whole for faithful replay (Issue #1047)', () => {
+    const buf = new RingBuffer(10);
+    // 100 KB with no newline, in 1 KB frames — mimics a full-screen TUI that
+    // redraws in place and never emits \n. The whole stream must be preserved
+    // (not truncated) so a reconnection replay can reconstruct the screen.
     const frame = 'x'.repeat(1024);
     for (let i = 0; i < 100; i++) {
       buf.pushData(frame);
     }
-    // No complete lines were ever pushed.
-    expect(buf.size).toBe(0);
-    // The partial is bounded by the cap, not the 100 KB total.
+    expect(buf.size).toBe(0); // no complete lines
     const all = buf.getAll();
     expect(all).toHaveLength(1);
-    expect(all[0].length).toBe(cap);
-    // It retains the most recent bytes (front-trimmed).
-    expect(all[0]).toBe('x'.repeat(cap));
-  });
-
-  it('byte-cap retains the tail across a mixed boundary', () => {
-    const cap = 8;
-    const buf = new RingBuffer(10, cap);
-    buf.pushData('done\n');           // completes a line, clears partial
-    buf.pushData('ABCDEFGHIJ');       // 10 bytes, no newline → trim to last 8
-    expect(buf.getAll()).toEqual(['done', 'CDEFGHIJ']);
-  });
-
-  it('byte-cap does not clip lines that fit, and still splits correctly', () => {
-    const cap = 16;
-    const buf = new RingBuffer(10, cap);
-    buf.pushData('short\nalsoShort\ntail');
-    expect(buf.getAll()).toEqual(['short', 'alsoShort', 'tail']);
-  });
-
-  it('a newline after an over-cap run still emits a (trimmed) line', () => {
-    const cap = 4;
-    const buf = new RingBuffer(10, cap);
-    buf.pushData('ABCDEFGH'); // 8 bytes, no newline → partial trimmed to 'EFGH'
-    buf.pushData('\n');       // completes the (trimmed) line
-    expect(buf.getAll()).toEqual(['EFGH']);
+    expect(all[0].length).toBe(100 * 1024); // full content retained, not capped
+    expect(buf.partialBytes).toBe(100 * 1024);
   });
 
   it('partialBytes reports the held incomplete-line size', () => {
-    const buf = new RingBuffer(10, 1024);
+    const buf = new RingBuffer(10);
     expect(buf.partialBytes).toBe(0);
     buf.pushData('abc');
     expect(buf.partialBytes).toBe(3);

@@ -65,10 +65,12 @@ let shellperManager: SessionManager | null = null;
 let shellperCleanupInterval: NodeJS.Timeout | null = null;
 let terminalPartialMonitorInterval: NodeJS.Timeout | null = null;
 
-// Observability for Issue #1047: a session whose ring-buffer partial grows
-// toward this size is a no-newline TUI stream — the shape that pegged Tower's
-// CPU before the byte cap. Logged periodically; warned when crossed.
-const PARTIAL_WARN_BYTES = 200 * 1024;
+// Observability for Issue #1047: the ring-buffer partial is kept whole (no
+// byte cap) so reconnection replay stays faithful, which means a no-newline
+// full-screen TUI grows it without bound. This monitor surfaces that growth so
+// we can tell whether it's ever a real memory concern. Logged periodically;
+// warned past this size.
+const PARTIAL_WARN_BYTES = 4 * 1024 * 1024;
 const TERMINAL_MONITOR_INTERVAL_MS = 60_000;
 
 // Parse arguments with Commander
@@ -411,7 +413,7 @@ server.listen(port, bindHost, async () => {
       for (const p of partials) {
         if (p.partialBytes > maxBytes) maxBytes = p.partialBytes;
         if (p.partialBytes >= PARTIAL_WARN_BYTES) {
-          log('WARN', `Terminal ${p.id} (${p.label}) ring-buffer partial at ${Math.round(p.partialBytes / 1024)} KB — no-newline TUI stream, capped (#1047)`);
+          log('WARN', `Terminal ${p.id} (${p.label}) ring-buffer partial at ${Math.round(p.partialBytes / 1024)} KB — large no-newline TUI stream growing unbounded (#1047)`);
         }
       }
       log('INFO', `Terminal partial monitor: ${partials.length} session(s), max partial ${Math.round(maxBytes / 1024)} KB`);

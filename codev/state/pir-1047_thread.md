@@ -66,3 +66,12 @@ Committed in order:
 DEVIATION from plan (byte-addressable seq): kept seq LINE-based. The byte-cap already bounds replay to <=256KB (<MAX_QUEUE), so line-based resume (delta for newline streams, bounded partial for no-newline) achieves the resilience goal WITHOUT breaking the wire contract + 14 existing ring-buffer tests. Will flag at gate.
 
 Tests: ring-buffer (31), shellper-replay-buffer (new), vscode terminal-adapter (18, +5 new), full vscode suite (414) all green. Core suite: my changed-area tests green after test fix; remaining failures (session-manager integration, adopt/consult/update/hot-tier) are ENVIRONMENTAL (need dist/ + built skeleton from full `pnpm build`) — running full build to confirm.
+
+## Course correction (2026-06-15): removed the byte caps — they broke replay
+Dev-approval testing surfaced a regression: terminals open BLANK (cursor only), only a physical window resize paints them. Diagnosed: my Fix A/B byte caps (NEW in this PR; main had no byte cap, only line caps) front-trimmed the partial/replay, dropping the alt-screen-enter + screen-setup prefix. A full-screen TUI encodes its screen state in the cumulative stream from alt-screen-enter; truncating the front → xterm can't reconstruct → blank. The "reconnect repaints and heals it" assumption was WRONG: the app never sees the Tower↔client reconnect, so it doesn't repaint (only a real SIGWINCH/resize does).
+
+Key realization: the byte caps were NOT needed for the freeze fix. CPU is fixed by scan-only pushData; the storm by the pause/resume bracket + drop-not-reconnect. The caps only bounded memory/replay-size — which the issue itself rated minor/orthogonal. And size-changes can't be handled by ANY replay (only by the app's repaint), so over-investing in replay bounding is wrong.
+
+Action (architect-approved): stripped both byte caps, reverting partial/replay to main's faithful-unbounded behavior. Kept: scan-only pushData (CPU), Fix D bracket (no storm), client drop-not-reconnect + resume-delta + resize-deferral, Fix E listener hygiene, instrumentation (partialBytes monitor; WARN threshold raised to 4MB, reworded — it now surfaces unbounded growth for observability, not a cap). Removed env vars CODEV_TERMINAL_MAX_PARTIAL_BYTES / CODEV_SHELLPER_MAX_REPLAY_BYTES. Memory bounding (if ever needed) = screen-aware anchoring as a separate follow-up.
+
+Tests after revert: core 3308 pass / 0 fail; vscode terminal-adapter 18 pass; build green. Awaiting re-test at dev-approval.

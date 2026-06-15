@@ -11,34 +11,15 @@ import { PtySession } from './pty-session.js';
 import type { PtySessionConfig, PtySessionInfo } from './pty-session.js';
 import { decodeFrame, encodeControl, encodeData } from './ws-protocol.js';
 import { defaultSessionOptions, DEFAULT_DISK_LOG_MAX_BYTES } from './index.js';
-import { DEFAULT_MAX_PARTIAL_BYTES } from './ring-buffer.js';
 
 export interface TerminalManagerConfig {
   workspaceRoot: string;
   logDir?: string; // Default: <workspaceRoot>/.agent-farm/logs
   maxSessions?: number; // Default: 50
   ringBufferLines?: number;
-  maxPartialBytes?: number; // Default: DEFAULT_MAX_PARTIAL_BYTES (or CODEV_TERMINAL_MAX_PARTIAL_BYTES)
   diskLogEnabled?: boolean;
   diskLogMaxBytes?: number;
   reconnectTimeoutMs?: number;
-}
-
-/**
- * Resolve the ring-buffer partial byte cap (Issue #1047), allowing operators
- * to tune it via `CODEV_TERMINAL_MAX_PARTIAL_BYTES` (useful when Tower is
- * hosted remotely and replay bandwidth matters). Falls back to the default
- * for an unset or non-positive value.
- */
-function resolveMaxPartialBytes(configured?: number): number {
-  if (configured !== undefined && configured > 0) {
-    return configured;
-  }
-  const fromEnv = parseInt(process.env.CODEV_TERMINAL_MAX_PARTIAL_BYTES || '', 10);
-  if (Number.isFinite(fromEnv) && fromEnv > 0) {
-    return fromEnv;
-  }
-  return DEFAULT_MAX_PARTIAL_BYTES;
 }
 
 export interface CreateTerminalRequest {
@@ -68,7 +49,6 @@ export class TerminalManager {
       logDir: config.logDir ?? path.join(config.workspaceRoot, '.agent-farm', 'logs'),
       maxSessions: config.maxSessions ?? 50,
       ringBufferLines: config.ringBufferLines ?? 1000,
-      maxPartialBytes: resolveMaxPartialBytes(config.maxPartialBytes),
       diskLogEnabled: config.diskLogEnabled ?? true,
       diskLogMaxBytes: config.diskLogMaxBytes ?? DEFAULT_DISK_LOG_MAX_BYTES,
       reconnectTimeoutMs: config.reconnectTimeoutMs ?? 300_000,
@@ -107,7 +87,6 @@ export class TerminalManager {
       label: req.label ?? `terminal-${id.slice(0, 8)}`,
       logDir: this.config.logDir,
       ringBufferLines: this.config.ringBufferLines,
-      maxPartialBytes: this.config.maxPartialBytes,
       diskLogEnabled: this.config.diskLogEnabled,
       diskLogMaxBytes: this.config.diskLogMaxBytes,
       reconnectTimeoutMs: this.config.reconnectTimeoutMs,
@@ -173,7 +152,6 @@ export class TerminalManager {
       label: opts.label,
       logDir: this.config.logDir,
       ringBufferLines: this.config.ringBufferLines,
-      maxPartialBytes: this.config.maxPartialBytes,
       diskLogEnabled: this.config.diskLogEnabled,
       diskLogMaxBytes: this.config.diskLogMaxBytes,
       reconnectTimeoutMs: this.config.reconnectTimeoutMs,
@@ -202,8 +180,9 @@ export class TerminalManager {
 
   /**
    * Snapshot of each session's ring-buffer partial size and client count
-   * (Issue #1047 observability). A partial creeping toward the cap flags a
-   * no-newline TUI stream — the shape that used to peg Tower's CPU.
+   * (Issue #1047 observability). The partial is unbounded (kept whole for
+   * faithful replay); a large, growing partial flags a no-newline full-screen
+   * TUI stream, so this surfaces memory growth if it ever becomes a concern.
    */
   inspectPartials(): Array<{ id: string; label: string; partialBytes: number; clients: number }> {
     return Array.from(this.sessions.values()).map(s => ({

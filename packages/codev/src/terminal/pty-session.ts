@@ -21,7 +21,6 @@ export interface PtySessionConfig {
   label: string;
   logDir: string; // e.g., .agent-farm/logs/
   ringBufferLines?: number; // Default: 1000
-  maxPartialBytes?: number; // Default: DEFAULT_MAX_PARTIAL_BYTES (ring-buffer partial byte cap, #1047)
   diskLogEnabled?: boolean; // Default: true
   diskLogMaxBytes?: number; // Default: 50MB
   reconnectTimeoutMs?: number; // Default: 300_000 (5 min)
@@ -75,7 +74,7 @@ export class PtySession extends EventEmitter {
     this.cols = config.cols;
     this.rows = config.rows;
     this.createdAt = new Date().toISOString();
-    this.ringBuffer = new RingBuffer(config.ringBufferLines ?? 1000, config.maxPartialBytes);
+    this.ringBuffer = new RingBuffer(config.ringBufferLines ?? 1000);
     this.diskLogEnabled = config.diskLogEnabled ?? true;
     this.diskLogMaxBytes = config.diskLogMaxBytes ?? 50 * 1024 * 1024; // DEFAULT_DISK_LOG_MAX_BYTES
     this.reconnectTimeoutMs = config.reconnectTimeoutMs ?? 300_000;

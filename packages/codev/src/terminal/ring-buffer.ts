@@ -3,34 +3,15 @@
  * Used for reconnection replay — stores last N lines in memory.
  */
 
-/**
- * Maximum bytes retained in the incomplete-line `partial` (Issue #1047).
- * A full-screen TUI (alternate screen buffer) redraws in place with
- * cursor-addressing and carriage returns and emits almost no `\n`, so the
- * `partial` would otherwise grow without bound — turning every `pushData`
- * into an O(n) re-scan (O(n²) over the session) and producing a multi-MB
- * replay payload that overflows the terminal client's backpressure budget.
- * 256 KB is far above any realistic single line yet bounds per-frame work,
- * memory, and the replay payload. Stays well under the VSCode client's 1 MB
- * `MAX_QUEUE` so a replay never trips client backpressure.
- */
-export const DEFAULT_MAX_PARTIAL_BYTES = 256 * 1024;
-
 export class RingBuffer {
   private buffer: string[];
   private head: number = 0;
   private count: number = 0;
   private seq: number = 0; // monotonically increasing sequence number
   private partial: string = ''; // incomplete line from previous pushData call
-  private readonly maxPartialBytes: number;
 
-  constructor(private readonly capacity: number = 1000, maxPartialBytes: number = DEFAULT_MAX_PARTIAL_BYTES) {
+  constructor(private readonly capacity: number = 1000) {
     this.buffer = new Array(capacity);
-    if (maxPartialBytes > 0) {
-      this.maxPartialBytes = maxPartialBytes;
-    } else {
-      this.maxPartialBytes = DEFAULT_MAX_PARTIAL_BYTES;
-    }
   }
 
   /** Push a complete line into the buffer. Returns the assigned sequence number. */
@@ -53,12 +34,11 @@ export class RingBuffer {
    * Scans only the incoming `data` for newlines (never re-splits the whole
    * accumulated `partial + data`), so per-call work is O(|data|) rather than
    * O(|partial|) — the O(n²) re-scan that pegged Tower's CPU on no-newline
-   * TUI streams (Issue #1047). The trailing `partial` is byte-capped: an
-   * over-cap unbroken run (a TUI that never emits `\n`) is front-trimmed to
-   * the most recent {@link maxPartialBytes}, bounding per-frame work, memory,
-   * and the replay payload. Front-trimming (rather than injecting a synthetic
-   * newline) avoids corrupting a TUI replay with spurious line feeds; a
-   * reconnect drives a full repaint that heals the trimmed prefix.
+   * full-screen-TUI streams (Issue #1047). The `partial` is kept whole and
+   * unbounded so a reconnection replay faithfully reconstructs the screen: a
+   * TUI in the alternate screen buffer encodes its state in the cumulative
+   * byte stream from the alt-screen-enter onward, so truncating the front
+   * would corrupt the replay (the app won't repaint on a same-size reconnect).
    *
    * Returns last sequence number.
    */
@@ -73,12 +53,9 @@ export class RingBuffer {
       nl = data.indexOf('\n', start);
     }
 
-    // Remainder has no newline — append to the partial and bound its size.
+    // Remainder has no newline — append to the partial (cons-string, O(|data|)).
     if (start < data.length) {
       this.partial += data.slice(start);
-      if (this.partial.length > this.maxPartialBytes) {
-        this.partial = this.partial.slice(this.partial.length - this.maxPartialBytes);
-      }
     }
     return this.seq;
   }

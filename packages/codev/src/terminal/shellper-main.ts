@@ -21,20 +21,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { ShellperProcess, type IShellperPty, type PtyOptions } from './shellper-process.js';
-import { DEFAULT_MAX_REPLAY_BYTES } from './shellper-replay-buffer.js';
-
-/**
- * Resolve the shellper replay buffer byte cap (Issue #1047), tunable via
- * `CODEV_SHELLPER_MAX_REPLAY_BYTES` for remote-hosted Tower deployments where
- * replay payload size affects reconnect bandwidth.
- */
-function resolveReplayMaxBytes(): number {
-  const fromEnv = parseInt(process.env.CODEV_SHELLPER_MAX_REPLAY_BYTES || '', 10);
-  if (Number.isFinite(fromEnv) && fromEnv > 0) {
-    return fromEnv;
-  }
-  return DEFAULT_MAX_REPLAY_BYTES;
-}
 
 // createRequire enables importing native/CJS modules (like node-pty) from ESM.
 // The package uses "type": "module", so bare `require()` is not available.
@@ -170,14 +156,11 @@ async function main(): Promise<void> {
     // File doesn't exist — fine
   }
 
-  const replayBufferLines = config.replayBufferLines ?? 10_000;
-  const replayBufferMaxBytes = resolveReplayMaxBytes();
   const shellper = new ShellperProcess(
     createRealPty,
     config.socketPath,
-    replayBufferLines,
+    config.replayBufferLines ?? 10_000,
     logStderr,
-    replayBufferMaxBytes,
   );
 
   logStderr(`Shellper started: pid=${process.pid}, command=${config.command}, socket=${config.socketPath}`);
