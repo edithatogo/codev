@@ -5,7 +5,9 @@ import { EscapeBuffer } from '@cluesmith/codev-core/escape-buffer';
 import { BackoffController, classifyUpgradeError } from '@cluesmith/codev-core/reconnect-policy';
 
 const CHUNK_SIZE = 16384; // 16KB — chunk onDidWrite to avoid CPU spikes
-const MAX_QUEUE = 1048576; // 1MB — disconnect if queue exceeds this
+const MAX_QUEUE = 1048576; // 1MB — drop live output if the unrendered queue exceeds this
+const DROP_WARN_INTERVAL_MS = 5000; // throttle backpressure-drop warnings (#1047)
+const REPAINT_NUDGE_DELAY_MS = 500; // settle delay before forcing a redraw-SIGWINCH (#1047), matching the web client's 500ms
 
 // Reconnect backoff. The exponential curve (1000 * 2^attempt, capped at 30s),
 // the give-up threshold, and the session-unknown classifier all live in the
@@ -46,7 +48,19 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
   // until the user happens to manually resize the panel (Bugfix #737).
   private lastDimensions: { cols: number; rows: number } | null = null;
   private queuedBytes = 0;
+  private lastDropWarnAt = 0;
   private disposed = false;
+
+  // Repaint-nudge state (#1047). A freshly-attached terminal can stay blank:
+  // the app inside (e.g. Claude's full-screen TUI) only paints after a real
+  // window-size change (SIGWINCH), but the resize we send on connect can be a
+  // same-size no-op or land before the app reacts. The web dashboard client
+  // avoids this by unconditionally sending a "redraw" resize ~500ms after
+  // connect (Terminal.tsx flushInitialBuffer); the Pseudoterminal path here had
+  // no equivalent. We mirror it: after a settle delay, if nothing has rendered,
+  // nudge the size (a brief 1-row change, then back) to force the SIGWINCH.
+  private renderedSinceConnect = false;
+  private repaintNudgeTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Reconnect-loop state. The adapter owns reconnection end-to-end (#936) —
   // backoff scheduling, give-up after MAX_RECONNECT_ATTEMPTS, and a terminal
@@ -82,6 +96,7 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
 
   close(): void {
     this.disposed = true;
+    this.clearRepaintNudge();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -127,11 +142,27 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
 
   // ── WebSocket ────────────────────────────────────────────────
 
+  /**
+   * Build the effective WebSocket URL, requesting a delta replay via
+   * `?resume=<lastSeq>` when we've already received data (#1047). This ships
+   * only the bytes produced during the disconnect window instead of the whole
+   * buffer on every reconnect — the dominant win when Tower is hosted remotely
+   * and reconnects are frequent. A fresh connect (lastSeq 0) gets a full
+   * (bounded) replay, as does a switch to a successor session whose lastSeq
+   * was reset.
+   */
+  private connectUrl(): string {
+    if (this.lastSeq <= 0) { return this.wsUrl; }
+    const sep = this.wsUrl.includes('?') ? '&' : '?';
+    return `${this.wsUrl}${sep}resume=${this.lastSeq}`;
+  }
+
   private connect(): void {
     if (this.disposed) { return; }
 
-    this.log('INFO', `Connecting to ${this.wsUrl}`);
-    const socket = new WebSocket(this.wsUrl);
+    const url = this.connectUrl();
+    this.log('INFO', `Connecting to ${url}`);
+    const socket = new WebSocket(url);
     this.ws = socket;
     this.ws.binaryType = 'arraybuffer';
 
@@ -157,6 +188,10 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
       if (this.lastDimensions) {
         this.sendResize(this.lastDimensions.cols, this.lastDimensions.rows);
       }
+      // Force a redraw-SIGWINCH after the connection settles if nothing has
+      // rendered (#1047), mirroring the web dashboard's post-connect resize.
+      this.renderedSinceConnect = false;
+      this.scheduleRepaintNudge();
     });
 
     this.ws.on('message', (raw: ArrayBuffer) => {
@@ -271,6 +306,14 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
   private resetStreamState(): void {
     this.decoder = new TextDecoder('utf-8', { fatal: false });
     this.escapeBuffer = new EscapeBuffer();
+    // Clear replay/backpressure state so a connection that dropped mid-replay
+    // (no `resume` control seen) doesn't leave `replaying` stuck true and
+    // mis-route the next connection's live data (#1047).
+    this.replaying = false;
+    this.queuedBytes = 0;
+    // Drop any pending repaint nudge from a prior connection; the next WS open
+    // reschedules it.
+    this.clearRepaintNudge();
   }
 
   /**
@@ -280,7 +323,13 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
    */
   reconnect(wsUrl?: string): void {
     if (this.disposed) { return; }
-    if (wsUrl) { this.wsUrl = wsUrl; }
+    if (wsUrl && wsUrl !== this.wsUrl) {
+      // A successor session (#991) is a different terminal id, so our lastSeq
+      // doesn't apply — reset it so connectUrl() requests a full (bounded)
+      // replay against the new session rather than a stale delta (#1047).
+      this.wsUrl = wsUrl;
+      this.lastSeq = 0;
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -298,12 +347,29 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
   // ── Data handling ────────────────────────────────────────────
 
   private handleData(payload: Buffer): void {
-    // Backpressure check
+    // Replay burst (bracketed by Tower's pause→…→resume, #1047): the initial
+    // buffer snapshot is expected to be large and is delivered once. Pace it
+    // through the chunked writer and do NOT count it toward the live
+    // backpressure budget — otherwise a multi-MB replay trips the guard before
+    // anything renders and the old reconnect-for-replay path looped forever.
+    if (this.replaying) {
+      const text = this.decoder.decode(payload, { stream: true });
+      const safe = this.escapeBuffer.write(text);
+      if (safe.length > 0) { this.renderedSinceConnect = true; this.writeChunked(safe); }
+      return;
+    }
+    this.renderedSinceConnect = true;
+
+    // Live overload: if rendered output falls far enough behind that the queue
+    // exceeds MAX_QUEUE, DROP this burst rather than reconnecting. Terminal
+    // output is ephemeral — the app repaints — so dropping is safe, and unlike
+    // a reconnect it does not re-download the whole buffer (costly remotely)
+    // or risk an infinite replay storm (#1047). Mirrors Tower's own
+    // bufferedAmount drop on the send side.
     this.queuedBytes += payload.length;
     if (this.queuedBytes > MAX_QUEUE) {
-      this.log('WARN', 'Backpressure exceeded 1MB — disconnecting for replay');
+      this.warnDroppedThrottled();
       this.queuedBytes = 0;
-      this.reconnect();
       return;
     }
 
@@ -317,6 +383,50 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
       this.queuedBytes = 0;
     } else {
       this.writeChunked(safe);
+    }
+  }
+
+  /**
+   * Warn (at most once per interval) that live output was dropped under
+   * backpressure. Throttled so a sustained burst can't spam the log the way
+   * the old reconnect-storm did (#1047 produced ~14k lines in under an hour).
+   */
+  private warnDroppedThrottled(): void {
+    const now = Date.now();
+    if (now - this.lastDropWarnAt >= DROP_WARN_INTERVAL_MS) {
+      this.lastDropWarnAt = now;
+      this.log('WARN', 'Backpressure exceeded 1MB — dropping output (terminal will repaint)');
+    }
+  }
+
+  /**
+   * Schedule the post-connect repaint nudge (#1047). Fires once after a settle
+   * delay; if the pane is still blank (nothing rendered since connect), it
+   * forces a SIGWINCH so the app redraws — the equivalent of the web client's
+   * unconditional post-connect resize. Skipped when replay/live output has
+   * already painted, so a reconnect that rendered from the buffer doesn't
+   * reflow.
+   */
+  private scheduleRepaintNudge(): void {
+    this.clearRepaintNudge();
+    this.repaintNudgeTimer = setTimeout(() => {
+      this.repaintNudgeTimer = null;
+      if (this.disposed || this.renderedSinceConnect) { return; }
+      if (!this.lastDimensions) { return; }
+      const { cols, rows } = this.lastDimensions;
+      if (rows <= 1) { this.sendResize(cols, rows); return; }
+      // A 1-row change then back guarantees a real TIOCSWINSZ delta (and thus a
+      // SIGWINCH) even if the PTY is already at the target size, ending at the
+      // correct dimensions. The brief intermediate frame is overwritten at once.
+      this.sendResize(cols, rows - 1);
+      this.sendResize(cols, rows);
+    }, REPAINT_NUDGE_DELAY_MS);
+  }
+
+  private clearRepaintNudge(): void {
+    if (this.repaintNudgeTimer) {
+      clearTimeout(this.repaintNudgeTimer);
+      this.repaintNudgeTimer = null;
     }
   }
 
