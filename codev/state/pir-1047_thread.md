@@ -98,3 +98,13 @@ Reverted Option A (resume-handler change) — log proved it never runs (empty bu
 
 ## Blank-on-open CONFIRMED FIXED (2026-06-15)
 User confirmed terminals now paint on open with the repaint-nudge fix. Stripped all [#1047-diag] diagnostic logging from terminal-adapter.ts (13 lines). Typecheck clean, adapter tests 18/18. The nudge + WS-open resize (#737) remain separate as decided.
+
+## Review phase + CMAP (2026-06-15)
+PR #1050 opened (Fixes #1047), recorded with porch. 3-way consult (single-pass):
+- codex=REQUEST_CHANGES: byte-addressable seq + shellper byte-cap (Fix B) dropped → no true delta resume for no-newline + unbounded shellper restart-replay; review overstated ?resume= contract.
+- claude=APPROVE: deviations justified/documented; flagged Fix E lacks tests + getSince comment.
+- gemini=FAILED (empty-sandbox misfire, not a real review).
+
+Disposition: REBUTTED the descopes (byte caps corrupt faithful TUI replay = the blank-screen regression; freeze fixed without them; memory rated minor + now monitored). FIXED the legitimate overlap (review scoped ?resume= to newline streams + getSince doc comment). CLOSED Fix E gap (pty-session-attach.test.ts, 3 tests). Rebuttals in codev/projects/1047-*/1047-review-iter1-rebuttals.md.
+
+pr gate PENDING. Architect notified (led with REQUEST_CHANGES + disposition). Waiting for human merge + pr-gate approval. Tests: core terminal 231 pass; vscode 416 pass; build green.
