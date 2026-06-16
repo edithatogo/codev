@@ -114,10 +114,12 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
     this.writeEmitter.fire('');
     this.log('INFO', `[#1052-diag] open() initialDimensions=${initialDimensions ? `${initialDimensions.columns}x${initialDimensions.rows}` : 'undefined'}`);
     if (initialDimensions) {
+      this.log('INFO', '[#1052-diag] PATH open/sized → connect immediately');
       this.lastDimensions = { cols: initialDimensions.columns, rows: initialDimensions.rows };
       this.connect();
       return;
     }
+    this.log('INFO', '[#1052-diag] PATH open/unsized → defer connect until first setDimensions');
     // No size yet (#1052): defer the connect — and thus the replay — until the
     // first setDimensions() so the PTY is sized before the first frame renders.
     // A fallback timer connects anyway if a size never arrives, so the terminal
@@ -126,6 +128,7 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
     this.initialConnectTimer = setTimeout(() => {
       this.initialConnectTimer = null;
       if (this.disposed || !this.awaitingInitialSize) { return; }
+      this.log('INFO', '[#1052-diag] PATH fallback-timer fired → connect without a reported size');
       this.awaitingInitialSize = false;
       this.connect();
     }, INITIAL_SIZE_FALLBACK_MS);
@@ -180,6 +183,7 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
     // can be sized correctly before the replay. connect()'s open handler sends
     // the resize, so we return without a (no-op) sendResize on a dead socket.
     if (this.awaitingInitialSize) {
+      this.log('INFO', '[#1052-diag] PATH setDimensions/deferred-connect → first real size, connecting now');
       this.awaitingInitialSize = false;
       if (this.initialConnectTimer) {
         clearTimeout(this.initialConnectTimer);
@@ -190,9 +194,11 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
     }
     if (this.replaying) {
       // Defer resize during replay to prevent garbled rendering (Bugfix #625)
+      this.log('INFO', '[#1052-diag] PATH setDimensions/during-replay → deferring resize until resume');
       this.pendingResize = { cols: dimensions.columns, rows: dimensions.rows };
       return;
     }
+    this.log('INFO', '[#1052-diag] PATH setDimensions/live → sendResize now');
     this.sendResize(dimensions.columns, dimensions.rows);
   }
 
@@ -242,7 +248,10 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
       // overlap streaming content. Pause/replay messages arrive *after*
       // this outbound resize, so the order is auth → resize → replay → resume.
       if (this.lastDimensions) {
+        this.log('INFO', `[#1052-diag] PATH ws-open → resync PTY size ${this.lastDimensions.cols}x${this.lastDimensions.rows}`);
         this.sendResize(this.lastDimensions.cols, this.lastDimensions.rows);
+      } else {
+        this.log('INFO', '[#1052-diag] PATH ws-open → NO lastDimensions (PTY left at default size)');
       }
       // Force a redraw-SIGWINCH after the connection settles if nothing has
       // rendered (#1047), mirroring the web dashboard's post-connect resize.
@@ -251,6 +260,7 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
       // fresh full replay can render corrupted, and only an xterm re-layout
       // (not a PTY SIGWINCH) clears it (#1052). Reconnect deltas are excluded.
       this.reflowAfterReplay = this.lastSeq <= 0;
+      this.log('INFO', `[#1052-diag] PATH ws-open → lastSeq=${this.lastSeq} reflowAfterReplay=${this.reflowAfterReplay}`);
       this.scheduleRepaintNudge();
     });
 
@@ -471,7 +481,11 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
     this.clearRepaintNudge();
     this.repaintNudgeTimer = setTimeout(() => {
       this.repaintNudgeTimer = null;
-      if (this.disposed || this.renderedSinceConnect) { return; }
+      if (this.disposed || this.renderedSinceConnect) {
+        this.log('INFO', `[#1052-diag] PATH nudge-timer → SKIP (disposed=${this.disposed} renderedSinceConnect=${this.renderedSinceConnect})`);
+        return;
+      }
+      this.log('INFO', '[#1052-diag] PATH nudge-timer → blank pane, sending SIGWINCH nudge');
       this.sendRepaintNudge();
     }, REPAINT_NUDGE_DELAY_MS);
   }
@@ -504,9 +518,10 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
    * or mid-replay (the connect path owns the redraw then).
    */
   forceRepaint(): void {
-    if (this.disposed) { return; }
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { return; }
-    if (this.replaying) { return; }
+    if (this.disposed) { this.log('INFO', '[#1052-diag] PATH forceRepaint(refocus) → SKIP disposed'); return; }
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.log('INFO', '[#1052-diag] PATH forceRepaint(refocus) → SKIP socket not OPEN'); return; }
+    if (this.replaying) { this.log('INFO', '[#1052-diag] PATH forceRepaint(refocus) → SKIP mid-replay'); return; }
+    this.log('INFO', '[#1052-diag] PATH forceRepaint(refocus) → SIGWINCH nudge + xterm reflow');
     this.sendRepaintNudge();
     this.forceXtermReflow();
   }
@@ -522,15 +537,18 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
    * are unknown or degenerate.
    */
   private forceXtermReflow(): void {
-    if (!this.lastDimensions) { return; }
+    if (!this.lastDimensions) { this.log('INFO', '[#1052-diag] PATH forceXtermReflow → SKIP no dimensions'); return; }
     const { cols, rows } = this.lastDimensions;
-    if (cols <= 1 || rows <= 1) { return; }
-    this.log('INFO', `[#1052-diag] forceXtermReflow override ${cols - 1}x${rows - 1} → release`);
+    if (cols <= 1 || rows <= 1) { this.log('INFO', `[#1052-diag] PATH forceXtermReflow → SKIP degenerate ${cols}x${rows}`); return; }
+    this.log('INFO', `[#1052-diag] PATH forceXtermReflow → override ${cols - 1}x${rows - 1}, release in ${OVERRIDE_RELEASE_MS}ms`);
     this.dimensionsEmitter.fire({ columns: cols - 1, rows: rows - 1 });
     this.clearOverrideRelease();
     this.overrideReleaseTimer = setTimeout(() => {
       this.overrideReleaseTimer = null;
-      if (!this.disposed) { this.dimensionsEmitter.fire(undefined); }
+      if (!this.disposed) {
+        this.log('INFO', '[#1052-diag] PATH forceXtermReflow → releasing override (back to panel size)');
+        this.dimensionsEmitter.fire(undefined);
+      }
     }, OVERRIDE_RELEASE_MS);
   }
 
@@ -571,9 +589,11 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
       case 'pong':
         break;
       case 'pause':
+        this.log('INFO', '[#1052-diag] PATH ctrl/pause → replay starting');
         this.replaying = true;
         break;
       case 'resume':
+        this.log('INFO', `[#1052-diag] PATH ctrl/resume → replay done (reflowAfterReplay=${this.reflowAfterReplay})`);
         this.replaying = false;
         // Flush deferred resize
         if (this.pendingResize) {
@@ -584,6 +604,7 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
         // corruption the first render committed (the lever a manual resize uses,
         // #1052). One-shot — reconnect deltas don't arm it.
         if (this.reflowAfterReplay) {
+          this.log('INFO', '[#1052-diag] PATH ctrl/resume → firing post-replay xterm reflow');
           this.reflowAfterReplay = false;
           this.forceXtermReflow();
         }
