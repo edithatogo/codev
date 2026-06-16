@@ -74,6 +74,25 @@ Folded-in rendering fixes that the original plan flagged as out-of-scope and sur
 
 A known limitation for editor-authored comments on continuation lines of multi-line blocks (they anchor to a line with no rendered `data-line` and don't appear in the canvas) is tracked as **#863** — the canvas's richer in-canvas anchoring belongs in the shared package rather than the host. Not data-loss: the marker stays in the file and renders in the editor's Comments-API thread.
 
+## VSCode: terminal renders corrupted on open — replay painted at the wrong width (#1052, PR #1061)
+
+A Codev terminal pane in VSCode could come up corrupted on open: stacked / overlapping status lines, a ghost frame stranded in the scrollback, the cursor landing near the top instead of the prompt. The only workarounds were to resize the window, clear the terminal, or close and reopen the tab — each disruptive.
+
+Root cause came from how VSCode reports a freshly-opened terminal's size: not as a single event, but in two steps roughly 120 ms apart. The terminal-adapter painted Tower's bracketed reconnection replay **immediately at the first, not-yet-final width**. The restored history wrapped at a width the terminal would never actually render at, and the late size correction left the wrong-width frame stranded in scrollback.
+
+Four investigation paths landed in the commit history (three reverted, one shipped):
+
+- *defer-until-sized* — falsified by per-pathway diag logging that proved VSCode always supplies a real size on `open()`. Reverted.
+- *post-replay SIGWINCH nudge* — a PTY-side redraw redraws the program's *current frame* but cannot re-wrap xterm's existing scrollback, so it doesn't fix wrong-width history. Reverted.
+- *`onDidOverrideDimensions` shrink-then-restore reflow* — caused scroll distortion by churning scrollback wrap flags. Reverted.
+- **Buffer-and-flush at settled width** — the actual fix. The adapter holds the bracketed replay in a string (off the live-backpressure budget), debounces on `setDimensions`, and flushes once when the size has gone quiet (`REPLAY_SETTLE_MS = 150`). Mirrors the proven `flushInitialBuffer` approach in the web dashboard. Manual dev-approval verification on macOS confirmed a captured open: the size settled `112 → 114` cols mid-hold, the debounce reset on each event, and the 786 KB replay flushed once at `114` — clean paint, no ghost frame, cursor at the prompt.
+
+A complementary path was prototyped for the original "after window reactivation" framing of #1052: `forceRepaint` triggered by `vscode.window.onDidChangeWindowState`, fanning a SIGWINCH to all managed terminals on refocus. An A/B test (architect-driven) showed no observable difference, so the path **ships off by default** behind a new setting `codev.terminal.repaintOnRefocus`. Retained as an escape hatch because the issue title named window-reactivation, and disconnected/replaying adapters no-op on `forceRepaint`, so it's safe to enable.
+
+The #1047 freeze invariant is preserved: replay stays off the live `MAX_QUEUE` budget, the `pause`/`resume` bracket is intact, and the existing #1047 oversized-replay test was updated to advance past the settle window. Nine new unit tests cover the buffer-and-flush state machine and `forceRepaint`.
+
+**Architecture note that lands with this**: the "terminal reconnect/replay contract (#1047)" subsection in `codev/resources/arch.md` is extended with the client-side rule that a connecting client must hold the bracketed replay and paint it once after the terminal size settles, debounced on size events. This is now a load-bearing part of the replay contract for both clients (VSCode and the web dashboard).
+
 ## Markdown preview: inline review-comment cards stop overlaying content; right-edge marker minimap (#863, PR #1056)
 
 Two improvements to the canvas-powered Codev Markdown Preview that shipped in v3.1.8 via #859.
