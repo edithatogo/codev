@@ -190,6 +190,22 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.onDidChangeActiveTerminal(syncTerminalFocusContext));
 	syncTerminalFocusContext(); // seed initial state
 
+	// Force a terminal repaint when the VSCode window regains focus (#1052).
+	// While the window is backgrounded Electron throttles the renderer, so
+	// xterm.js's cursor/screen state can drift from the PTY and the pane comes
+	// back corrupted (stacked frames, cursor near the top). A SIGWINCH redraw on
+	// refocus recovers it — the same lever as a manual window resize. Fire only
+	// on the rising edge (unfocused → focused) so blur events and redundant
+	// focused-stays-true notifications don't trigger spurious redraws.
+	let windowFocused = vscode.window.state.focused;
+	context.subscriptions.push(
+		vscode.window.onDidChangeWindowState((state) => {
+			if (state.focused && !windowFocused) {
+				terminalManager?.repaintAllOnRefocus();
+			}
+			windowFocused = state.focused;
+		}));
+
 	// Drive the `codev.hasDevCommand` context key so the builder-row Run/Stop
 	// Dev Server menu entries, the dev keybindings, and the workspace-dev palette
 	// entries only surface when a runnable `worktree.devCommand` is configured

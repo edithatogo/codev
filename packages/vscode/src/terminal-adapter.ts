@@ -412,15 +412,41 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
     this.repaintNudgeTimer = setTimeout(() => {
       this.repaintNudgeTimer = null;
       if (this.disposed || this.renderedSinceConnect) { return; }
-      if (!this.lastDimensions) { return; }
-      const { cols, rows } = this.lastDimensions;
-      if (rows <= 1) { this.sendResize(cols, rows); return; }
-      // A 1-row change then back guarantees a real TIOCSWINSZ delta (and thus a
-      // SIGWINCH) even if the PTY is already at the target size, ending at the
-      // correct dimensions. The brief intermediate frame is overwritten at once.
-      this.sendResize(cols, rows - 1);
-      this.sendResize(cols, rows);
+      this.forceSigwinchRedraw();
     }, REPAINT_NUDGE_DELAY_MS);
+  }
+
+  /**
+   * Send a size delta that guarantees a real TIOCSWINSZ change (hence a
+   * SIGWINCH), forcing the running app to repaint. A 1-row change then back
+   * lands the PTY at the correct dimensions even when it's already there; the
+   * brief intermediate frame is overwritten at once. No-ops when dimensions are
+   * unknown. Shared by the connect-time nudge and the refocus repaint (#1052).
+   */
+  private forceSigwinchRedraw(): void {
+    if (!this.lastDimensions) { return; }
+    const { cols, rows } = this.lastDimensions;
+    if (rows <= 1) { this.sendResize(cols, rows); return; }
+    this.sendResize(cols, rows - 1);
+    this.sendResize(cols, rows);
+  }
+
+  /**
+   * Force an immediate redraw of the running app. Called when the VSCode window
+   * regains focus (#1052): while the window is backgrounded Electron throttles
+   * the renderer, so xterm.js's cursor/screen state can drift from the PTY and
+   * the pane shows stacked frames with the cursor near the top on return. A
+   * SIGWINCH makes a full-screen TUI clear and repaint a complete, correct frame
+   * — the same lever as the manual window-resize workaround, performed
+   * automatically. Ungated by `renderedSinceConnect` (the pane has already
+   * rendered by definition on a refocus); no-ops while disposed, disconnected,
+   * or mid-replay (the connect path owns the redraw then).
+   */
+  forceRepaint(): void {
+    if (this.disposed) { return; }
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { return; }
+    if (this.replaying) { return; }
+    this.forceSigwinchRedraw();
   }
 
   private clearRepaintNudge(): void {
