@@ -128,6 +128,26 @@ Tests: 4 new buffer-flush tests + updated #1047 oversized-replay test (advance p
 client, not a new theory. Awaiting F5 visual re-test of initial render (ghost bar gone?).
 Recommendation if confirmed: strip [#1052-diag] logs, finalize CHANGELOG, write review.
 
+## Phase: review
+- dev-approval APPROVED → review phase.
+- Wrote codev/reviews/1052-*.md (Summary + Files + Commits + Test Results + Architecture
+  Updates + Lessons + Things-to-Look-At + How-to-Test). Routed COLD: arch.md replay-contract
+  section extended (#1052 render-at-settled-size); 2 lessons-learned.md entries (Debugging:
+  SIGWINCH redraws app-frame not scrollback + buffer-and-flush; Architecture: shared-shape-
+  not-substance + verify-against-file). No HOT change (meta-lessons already hot).
+- PR #1061 opened (body = review, Fixes #1052), recorded with porch.
+- porch done → single-pass 3-way consult run.
+- VERDICTS: Claude=APPROVE (clean, no code changes), Codex=REQUEST_CHANGES (stale PLAN only,
+  "code looks coherent"), Gemini=misfire (agy got no prompt — non-verdict).
+- No code defect found. Codex's only point = stale plan → addressed (5afa0163: SUPERSEDED
+  banner on plan pointing to review). Frontmatter deliberately NOT fabricated (PIR plans
+  human-only reviewed). Rebuttal: f93f3ecb.
+- Minor doc items escalated to architect at pr gate: UNRELEASED.md (CHANGELOG-only per #1050
+  precedent + only template on main); plan frontmatter.
+- porch done → **pr gate PENDING**. Architect notified (led with REQUEST_CHANGES disposition).
+  Waiting for human to merge on GitHub + approve pr gate. Will verify gate_status=approved
+  before `gh pr merge --merge` + `porch done --merged 1061`.
+
 ### REFOCUS PATH — A/B RESULT (architect-tested): opt-in, default OFF
 Architect ran the A/B (codev.terminal.repaintOnRefocus ON vs OFF): **no observable
 difference, clean both ways.** Conclusion: buffer-and-flush fixes the confirmed (initial-
