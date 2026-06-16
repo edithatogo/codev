@@ -174,7 +174,7 @@ describe('ArtifactCanvas (Phase 3)', () => {
     expect(() => disposable.dispose()).not.toThrow(); // dispose() #2 — safe no-op
   });
 
-  it('surfaces an existing marker author + text via the overlay when its line is active (deferred #4)', async () => {
+  it('renders an existing marker as an always-visible inline card below its block (#863)', async () => {
     const host = makeHost('A paragraph.\n<!-- REVIEW(@bob): please fix -->'); // marker annotates line 0
     render(<ArtifactCanvas uri="x" {...host} onAddComment={vi.fn()} />);
     const p = await waitFor(() => {
@@ -182,11 +182,57 @@ describe('ArtifactCanvas (Phase 3)', () => {
       if (!el) throw new Error('no paragraph yet');
       return el as HTMLElement;
     });
-    await waitFor(() => expect(document.querySelector('.codev-canvas-has-marker')).not.toBeNull());
-    fireEvent.mouseOver(p);
-    const list = await screen.findByLabelText(/comments on line/i);
-    expect(list.textContent).toContain('bob');
-    expect(list.textContent).toContain('please fix');
+    // No hover needed — the card is in flow. It shows author + body.
+    const cards = await screen.findByLabelText(/comments on line/i);
+    expect(cards.textContent).toContain('bob');
+    expect(cards.textContent).toContain('please fix');
+    // Injected inline-BELOW the block (the layout fix): the stack is the block's next sibling,
+    // so it pushes following content down rather than overlaying the block.
+    expect(p.nextElementSibling).toBe(cards);
+    expect(cards.classList.contains('codev-canvas-marker-cards')).toBe(true);
+  });
+
+  it('injects NO card stack for a block with zero markers (no wasted vertical space, #863)', async () => {
+    const host = makeHost('# Title\n\nUncommented paragraph.'); // no markers anywhere
+    render(<ArtifactCanvas uri="x" {...host} onAddComment={vi.fn()} />);
+    await waitFor(() => expect(document.querySelector('p[data-line]')).not.toBeNull());
+    expect(document.querySelector('.codev-canvas-marker-cards')).toBeNull();
+  });
+
+  it('stacks multiple markers on one line as cards in creation (list) order (#863)', async () => {
+    // Two markers on the SAME line (line 0) — the shape parseReviewMarkers yields for a block with
+    // two stacked REVIEW comments. They must render as two cards in the order list() returns them.
+    const host = makeHost('A paragraph.');
+    host.markerAdapter.list = vi.fn(async () => [
+      { author: 'bob', line: 0, text: 'first', raw: 'r1' } as ReviewMarker,
+      { author: 'amy', line: 0, text: 'second', raw: 'r2' } as ReviewMarker,
+    ]);
+    render(<ArtifactCanvas uri="x" {...host} onAddComment={vi.fn()} />);
+    const cards = await screen.findByLabelText(/comments on line/i);
+    const items = cards.querySelectorAll('.codev-canvas-marker-card');
+    expect(items.length).toBe(2);
+    expect(items[0].textContent).toContain('first');
+    expect(items[1].textContent).toContain('second');
+  });
+
+  it('does not re-inject (duplicate) card stacks across a markers-only reload (#863)', async () => {
+    const host = makeHost('A paragraph.\n<!-- REVIEW(@bob): fix -->');
+    render(<ArtifactCanvas uri="x" {...host} onAddComment={vi.fn()} />);
+    await waitFor(() => expect(document.querySelector('.codev-canvas-marker-cards')).not.toBeNull());
+    // Re-list the same content via a watch tick — the prior stack must be cleaned up, not stacked.
+    await act(async () => { host.watchers.forEach((cb) => cb('A paragraph.\n<!-- REVIEW(@bob): fix -->')); });
+    await waitFor(() =>
+      expect(document.querySelectorAll('.codev-canvas-marker-cards').length).toBe(1),
+    );
+  });
+
+  it('renders marker body as text, never as markup (no innerHTML injection, #863)', async () => {
+    const host = makeHost('A paragraph.\n<!-- REVIEW(@bob): <img src=x onerror=alert(1)> -->');
+    render(<ArtifactCanvas uri="x" {...host} onAddComment={vi.fn()} />);
+    const cards = await screen.findByLabelText(/comments on line/i);
+    // The payload appears as literal text; no <img> element is created from the marker body.
+    expect(cards.textContent).toContain('<img');
+    expect(cards.querySelector('img')).toBeNull();
   });
 
   it('activates on Space (not just Enter) on a focused block', async () => {
