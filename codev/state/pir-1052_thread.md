@@ -36,4 +36,16 @@ to call it on managed Codev terminals. This is the load-bearing case for PIR's
 `dev-approval` gate: visual, reproducible-only-in-real-VSCode.
 
 ### Status
-Plan drafted → awaiting `plan-approval` gate.
+- Plan approved (architect, plan-approval gate). Now in **implement**.
+
+## Phase: implement
+Three changes landed:
+- `terminal-adapter.ts`: extracted `forceSigwinchRedraw()` from the nudge timer; added
+  public `forceRepaint()` (ungated by renderedSinceConnect; no-ops disposed / not-OPEN /
+  replaying).
+- `terminal-manager.ts`: `repaintAllOnRefocus()` fans forceRepaint over all managed ptys.
+- `extension.ts`: `onDidChangeWindowState` rising-edge (unfocused→focused) →
+  repaintAllOnRefocus.
+Tests: 4 adapter behavioral tests (forceRepaint fires post-render; no-ops ×3) +
+2 source-level manager guards + vscode CHANGELOG entry (matched #1050: CHANGELOG only,
+no live UNRELEASED.md on this branch).
