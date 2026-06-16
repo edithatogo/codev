@@ -35,19 +35,31 @@ This localizes the fault precisely:
   own render/cursor state drifting across the focus transition. This is a renderer-side
   (`area/vscode`) problem in code we do not own (VSCode's bundled xterm.js).
 
-**Scope broadened at the dev-approval gate (same root cause, second trigger).** Testing the
-fixed build surfaced that the corruption *also* appears on **initial terminal load**
-(not only after refocus), recoverable only by a manual resize. Same root cause (a renderer
-state that a SIGWINCH redraw recovers), different trigger: on a fresh open, Tower replays
-the full-screen TUI's alt-screen buffer, and rendering that mid-stream replay can land
-xterm in a corrupted state. PR #1050's connect-time nudge does not catch this because it is
-gated on `!renderedSinceConnect` — the corrupted replay *renders*, so the nudge is skipped.
-The fix is extended to force a guaranteed clean redraw when a **fresh full replay** ends
-(`lastSeq === 0` at connect → nudge on the replay's `resume`), while reconnect deltas
-(`lastSeq > 0`) keep #1050's no-reflow behavior. Net: both triggers (initial load and
-window refocus) are covered by the one SIGWINCH-redraw lever.
+**Root cause refined at the dev-approval gate — initial-load corruption is a sizing race,
+not a redraw gap.** Testing the build surfaced that the dominant symptom is on **initial
+terminal load** (corrupted until a manual resize), and that a forced redraw does NOT fix it
+— only a manual resize or close+reopen does. Both of those make VS Code's *xterm.js*
+re-render at the correct size, which a `vscode.Pseudoterminal` cannot trigger directly (no
+xterm handle; the one related API, `onDidOverrideDimensions`, only overrides when *smaller*
+than the panel and is not a refresh hook). The real cause: VS Code calls
+`open(initialDimensions)` with `initialDimensions === undefined` before the pane is laid
+out; the adapter connected immediately, so Tower replayed the full-screen frame while the
+PTY was still at node-pty's 80×24 default → the frame was laid out at the wrong width →
+corruption baked into xterm. This explains the evidence exactly: **close+reopen works
+because the second open already has real dimensions.** (Confirmed by a 2-way external review
+— Gemini misfired in an empty sandbox; Codex independently reached the same defer-until-sized
+fix.)
 
-**Why a forced redraw is the right lever.** The decisive observation is in the issue
+**The fix: defer the initial connect/replay until the real size is known.** On `open()`
+with dimensions → connect immediately (unchanged). With `undefined` → wait for the first
+`setDimensions()`, then connect (so the PTY is sized before the first frame), with a 2s
+fallback connect if a size never arrives. The earlier "redraw nudge after replay" attempt
+is removed — it could not undo wrapping/cursor state xterm had already committed. The
+refocus `forceRepaint` hook is kept for the window-reactivation symptom (a different,
+throttle-driven mechanism), to be verified separately at the gate.
+
+**Why a forced redraw is the right lever** *(for the refocus path only — superseded for
+initial load by defer-until-sized above)***.** The decisive observation is in the issue
 itself: **resizing the window clears the corruption**. A window resize forces a SIGWINCH,
 which makes the full-screen TUI (Claude Code's UI) clear and repaint its entire alt-screen,
 re-emitting a complete frame whose trailing cursor-move sequence re-syncs xterm.js's

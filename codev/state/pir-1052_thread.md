@@ -50,6 +50,19 @@ Tests: 4 adapter behavioral tests (forceRepaint fires post-render; no-ops ×3) +
 2 source-level manager guards + vscode CHANGELOG entry (matched #1050: CHANGELOG only,
 no live UNRELEASED.md on this branch).
 
+### ROOT-CAUSE PIVOT (dev-approval gate, attempt #2)
+F5 build with the SIGWINCH-nudge approach STILL corrupted on initial load. Architect: only
+manual resize OR close+reopen fixes it. Key insight: both of those re-render VS Code's
+*xterm.js*; a Pseudoterminal CANNOT (no xterm handle; `onDidOverrideDimensions` only
+overrides when smaller-than-panel, not a refresh hook). 2-way consult: Gemini misfired
+(empty sandbox), Codex nailed it → **defer connect until real size known**.
+Real root cause: `open(initialDimensions===undefined)` on first open → we connected
+immediately → replay rendered at the 80×24 default width → corruption. close+reopen works
+because the 2nd open has real dims. **Fix:** defer connect until first `setDimensions()`
+(2s fallback). Removed the dead post-replay nudge. Kept refocus `forceRepaint` for the
+(separate, unverified) reactivation symptom. Tests: removed fresh-replay tests, added 5
+defer tests; 427 unit pass, F5 compile/lint clean. Awaiting F5 re-test of initial load.
+
 ### dev-approval gate feedback (architect)
 - Naming: renamed `forceSigwinchRedraw` → `sendRepaintNudge` (SIGWINCH was the only
   identifier in the repo baking in the signal name; all others keep it in comments).
