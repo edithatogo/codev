@@ -38,3 +38,21 @@ plan-approval gate approved. Implementing in the artifact-canvas package:
    hidden when zero markers.
 3. default-theme.css — card stack + minimap styles (existing --codev-canvas-* tokens only).
 4. Tests — update the old overlay-marker-list test to assert inline cards; add minimap tests.
+
+## dev-approval finding: comment cards flashed then vanished
+
+Reviewer reported: added comments appear momentarily then disappear; minimap dots persist.
+
+Diagnosis (captured, not guessed):
+- Built a faithful jsdom repro of the webview refreshKey round-trip (real parseReviewMarkers
+  semantics) — basic add, mid-paragraph split (#1036), and double-update. ALL kept the card.
+  So the injection logic is correct in isolation; the defect is browser-only.
+- Decisive asymmetry: the React-rendered minimap survived; the DOM-injected card (a child of the
+  dangerouslySetInnerHTML body that React owns) vanished. Root cause: React re-commits the body's
+  innerHTML on a re-render, wiping imperatively-injected children.
+
+Fix: stop using dangerouslySetInnerHTML for the body. Set body.innerHTML imperatively in a
+[html]-keyed effect so React no longer owns those children and can't re-commit/​wipe them (the
+standard React escape hatch for non-React DOM). Cards + has-marker decoration are now stable.
+Preserves nested-block markers and avoids HTML-splitting/layout risk. 50/50 tests pass; package +
+vscode webview bundle rebuilt.
