@@ -412,18 +412,19 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
     this.repaintNudgeTimer = setTimeout(() => {
       this.repaintNudgeTimer = null;
       if (this.disposed || this.renderedSinceConnect) { return; }
-      this.forceSigwinchRedraw();
+      this.sendRepaintNudge();
     }, REPAINT_NUDGE_DELAY_MS);
   }
 
   /**
-   * Send a size delta that guarantees a real TIOCSWINSZ change (hence a
-   * SIGWINCH), forcing the running app to repaint. A 1-row change then back
-   * lands the PTY at the correct dimensions even when it's already there; the
-   * brief intermediate frame is overwritten at once. No-ops when dimensions are
-   * unknown. Shared by the connect-time nudge and the refocus repaint (#1052).
+   * Send a size delta that forces the running app to repaint. A 1-row change
+   * then back guarantees a real terminal-size change (and thus a SIGWINCH) even
+   * when the PTY is already at the target size, landing back at the correct
+   * dimensions; the brief intermediate frame is overwritten at once. No-ops when
+   * dimensions are unknown. Shared by the connect-time nudge and the refocus
+   * repaint (#1052).
    */
-  private forceSigwinchRedraw(): void {
+  private sendRepaintNudge(): void {
     if (!this.lastDimensions) { return; }
     const { cols, rows } = this.lastDimensions;
     if (rows <= 1) { this.sendResize(cols, rows); return; }
@@ -446,7 +447,7 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
     if (this.disposed) { return; }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { return; }
     if (this.replaying) { return; }
-    this.forceSigwinchRedraw();
+    this.sendRepaintNudge();
   }
 
   private clearRepaintNudge(): void {
