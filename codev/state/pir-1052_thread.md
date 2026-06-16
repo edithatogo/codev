@@ -128,6 +128,22 @@ Tests: 4 new buffer-flush tests + updated #1047 oversized-replay test (advance p
 client, not a new theory. Awaiting F5 visual re-test of initial render (ghost bar gone?).
 Recommendation if confirmed: strip [#1052-diag] logs, finalize CHANGELOG, write review.
 
+### NOTE TO INCLUDE IN THE REVIEW FILE (architect-requested)
+When writing codev/reviews/1052-*.md, add an "Architecture / reuse" note:
+- Terminal-client primitives are ALREADY centralized in core and reused by both the VSCode
+  adapter and the web dashboard: `reconnect-policy` (BackoffController/classifyUpgradeError)
+  and `escape-buffer` (the dashboard's packages/dashboard/src/lib/escapeBuffer.ts is a 5-line
+  RE-EXPORT shim of @cluesmith/codev-core/escape-buffer, not a copy — verified by reading it).
+- The replay buffer-and-flush added here was DELIBERATELY left per-client, NOT extracted.
+  Rationale: shared *shape* (hold replay → flush once) but divergent *substance* — web uses a
+  fixed 500ms-from-first-byte trigger entangled with FitAddon/ScrollController; VSCode uses a
+  150ms resize-debounce + PTY-resize + paced writeChunked. The common kernel is ~10 trivial
+  lines; the valuable parts (trigger policy, flush body) differ. Extracting would be a leaky/
+  wrong abstraction coupling two independently-evolving strategies. Recorded so a future
+  "tidy-up" doesn't centralize it by mistake.
+- Correction logged: I twice claimed EscapeBuffer was duplicated based on the import path
+  alone; reading the file showed it's a re-export. No dedup issue filed (nothing to dedupe).
+
 ### dev-approval gate feedback (architect)
 - Naming: renamed `forceSigwinchRedraw` → `sendRepaintNudge` (SIGWINCH was the only
   identifier in the repo baking in the signal name; all others keep it in comments).
