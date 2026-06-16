@@ -793,8 +793,8 @@
         },
         "codev.terminal.repaintOnRefocus": {
           "type": "boolean",
-          "default": true,
-          "description": "Force Codev terminals to redraw when the VSCode window regains focus (#1052). Disable to A/B test or as a kill-switch if it causes unwanted redraws."
+          "default": false,
+          "description": "Force Codev terminals to redraw when the VSCode window regains focus. Off by default — terminals already render correctly on open. Enable this only if you still see rendering glitches (stale or misplaced content) after switching back to the window."
         },
         "codev.autoStartTower": {
           "type": "boolean",

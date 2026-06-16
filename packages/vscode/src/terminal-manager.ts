@@ -533,13 +533,15 @@ export class TerminalManager {
   }
 
   /**
-   * Force every managed terminal to repaint — called when the VSCode window
-   * regains focus (#1052). A backgrounded renderer can leave xterm.js's
-   * cursor/screen state drifted from the PTY; forcing a SIGWINCH redraw on each
-   * managed pty recovers it, the same lever as a manual window resize. A
-   * SIGWINCH is visually inert for a non-TUI shell and `forceRepaint` no-ops on
-   * a disconnected/replaying adapter, so nudging every terminal (≤ MAX_TERMINALS)
-   * is safe and covers multi-pane layouts (architect + builder side by side).
+   * Force every managed terminal to repaint via a SIGWINCH nudge — the
+   * opt-in window-refocus escape hatch (#1052), gated off by default behind
+   * `codev.terminal.repaintOnRefocus` (see extension.ts). The initial-render fix
+   * (replay buffer-and-flush) covers the confirmed corruption; this path is only
+   * for setups that still report stale content after refocus. It nudges *all*
+   * managed terminals (≤ MAX_TERMINALS) rather than just the active one — a
+   * coarse choice, acceptable because it's off by default and `forceRepaint`
+   * no-ops on a disconnected/replaying adapter. If it ever ships on by default,
+   * narrow this to the visible/active terminal(s) first.
    */
   repaintAllOnRefocus(): void {
     for (const entry of this.terminals.values()) {

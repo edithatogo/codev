@@ -190,24 +190,22 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.onDidChangeActiveTerminal(syncTerminalFocusContext));
 	syncTerminalFocusContext(); // seed initial state
 
-	// Force a terminal repaint when the VSCode window regains focus (#1052).
-	// While the window is backgrounded Electron throttles the renderer, so
-	// xterm.js's cursor/screen state can drift from the PTY and the pane comes
-	// back corrupted (stacked frames, cursor near the top). A SIGWINCH redraw on
-	// refocus recovers it — the same lever as a manual window resize. Fire only
-	// on the rising edge (unfocused → focused) so blur events and redundant
-	// focused-stays-true notifications don't trigger spurious redraws.
-	//
-	// Gated by `codev.terminal.repaintOnRefocus` (read at event time, so flipping
-	// the setting takes effect on the next focus change with no reload) — the
-	// kill-switch / A/B toggle for whether this path resolves a real refocus bug.
+	// Opt-in: force a terminal repaint when the VSCode window regains focus
+	// (#1052). The initial-render fix (replay buffer-and-flush) already makes
+	// terminals render correctly on open, so this is OFF by default — testing
+	// showed no observable refocus corruption it was needed for. It remains as an
+	// escape hatch for setups that still see stale/misplaced content after
+	// switching back: enabling `codev.terminal.repaintOnRefocus` sends a SIGWINCH
+	// redraw (the manual-resize lever) to the terminals on refocus. Read at event
+	// time so flipping the setting takes effect on the next focus change with no
+	// reload; fired only on the rising edge (unfocused → focused).
 	let windowFocused = vscode.window.state.focused;
 	context.subscriptions.push(
 		vscode.window.onDidChangeWindowState((state) => {
 			if (state.focused && !windowFocused) {
 				const enabled = vscode.workspace
 					.getConfiguration('codev')
-					.get<boolean>('terminal.repaintOnRefocus', true);
+					.get<boolean>('terminal.repaintOnRefocus', false);
 				if (enabled) {
 					terminalManager?.repaintAllOnRefocus();
 				}

@@ -128,6 +128,18 @@ Tests: 4 new buffer-flush tests + updated #1047 oversized-replay test (advance p
 client, not a new theory. Awaiting F5 visual re-test of initial render (ghost bar gone?).
 Recommendation if confirmed: strip [#1052-diag] logs, finalize CHANGELOG, write review.
 
+### REFOCUS PATH — A/B RESULT (architect-tested): opt-in, default OFF
+Architect ran the A/B (codev.terminal.repaintOnRefocus ON vs OFF): **no observable
+difference, clean both ways.** Conclusion: buffer-and-flush fixes the confirmed (initial-
+load) corruption; the refocus SIGWINCH path has no demonstrated effect. Decision: KEEP it as
+an opt-in escape hatch but **default false** — enable only if a setup still sees stale
+content after refocus. Updated: package.json default false + description, extension.ts
+fallback false + comment, terminal-manager.ts doc (noted "all" is coarse; narrow to active
+if ever defaulted on), CHANGELOG (main bullet = initial-render fix; refocus = opt-in setting).
+For the review: the confirmed fix is the replay buffer-and-flush; refocus is an off-by-
+default escape hatch retained because the issue title names window-reactivation but no repro
+of it survived the buffer-and-flush build.
+
 ### NOTE TO INCLUDE IN THE REVIEW FILE (architect-requested)
 When writing codev/reviews/1052-*.md, add an "Architecture / reuse" note:
 - Terminal-client primitives are ALREADY centralized in core and reused by both the VSCode
