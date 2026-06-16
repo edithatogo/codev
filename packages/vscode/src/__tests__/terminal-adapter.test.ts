@@ -119,7 +119,10 @@ function makeAdapter() {
     onDidWrite: (cb: (s: string) => void) => void;
   })('ws://localhost:4100/x', null, fakeOutputChannel());
   pty.onDidWrite((s: string) => { if (s) { writes.push(s); } });
-  pty.open(undefined);
+  // Open with known dimensions so the adapter connects immediately. (A fresh
+  // open with *undefined* dimensions now defers the connect until setDimensions
+  // — exercised separately in the "PIR #1052 — defer connect" suite.)
+  pty.open({ columns: 80, rows: 24 });
   return { pty, writes };
 }
 
@@ -486,49 +489,65 @@ describe('PIR #1052 — forceRepaint on window refocus', () => {
   });
 });
 
-describe('PIR #1052 — clean redraw after a fresh connect replay', () => {
-  function makeOpenAdapter(cols: number, rows: number) {
-    const { pty, writes } = makeAdapter();
-    (pty as unknown as { setDimensions(d: { columns: number; rows: number }): void })
-      .setDimensions({ columns: cols, rows: rows });
+describe('PIR #1052 — defer connect until the terminal size is known', () => {
+  /** Build an adapter via the real ctor without auto-opening (open() is the SUT). */
+  function makeUnopenedAdapter() {
+    const writes: string[] = [];
+    const pty = new (CodevPseudoterminal as unknown as new (
+      url: string, authKey: string | null, ch: unknown,
+    ) => {
+      open(d: { columns: number; rows: number } | undefined): void;
+      setDimensions(d: { columns: number; rows: number }): void;
+      close(): void;
+      onDidWrite: (cb: (s: string) => void) => void;
+    })('ws://localhost:4100/x', null, fakeOutputChannel());
+    pty.onDidWrite((s: string) => { if (s) { writes.push(s); } });
+    return { pty, writes };
+  }
+
+  it('does NOT connect when opened with undefined dimensions', () => {
+    const { pty } = makeUnopenedAdapter();
+    pty.open(undefined);
+    expect(WebSocket.instances.length).toBe(0);
+  });
+
+  it('connects on the first setDimensions, sizing the PTY before any replay', () => {
+    const { pty } = makeUnopenedAdapter();
+    pty.open(undefined);
+    expect(WebSocket.instances.length).toBe(0);
+
+    pty.setDimensions({ columns: 120, rows: 50 });
+    expect(WebSocket.instances.length).toBe(1);
+
+    // On open the adapter syncs the PTY to the now-known size before replay.
     const socket = currentSocket();
     socket.readyState = WebSocket.OPEN;
     socket.emit('open');
-    return { pty: pty as unknown as { reconnect(): void }, writes, socket };
-  }
-
-  it('forces a redraw nudge when a fresh full replay completes, even though it rendered', () => {
-    const { socket } = makeOpenAdapter(100, 40);
-    socket.sent.length = 0; // drop the on-open resize
-
-    // A bracketed full replay (pause → buffered output → resume). The output
-    // renders (so renderedSinceConnect is true and the blank-pane timer would
-    // skip), but the fresh replay can still be visually corrupted.
-    sendControl(socket, { type: 'pause', payload: {} });
-    sendData(socket, Buffer.from('replayed alt-screen frame', 'utf-8'));
-    sendControl(socket, { type: 'resume', payload: {} });
-
-    expect(sentResizes(socket)).toEqual([
-      { cols: 100, rows: 39 },
-      { cols: 100, rows: 40 },
-    ]);
+    expect(sentResizes(socket)).toContainEqual({ cols: 120, rows: 50 });
   });
 
-  it('does NOT nudge after a reconnect delta replay (lastSeq > 0), avoiding a reflow', () => {
-    const { pty, socket } = makeOpenAdapter(100, 40);
-    // Advance lastSeq so the next connect requests a delta, not a full replay.
-    sendControl(socket, { type: 'seq', payload: { seq: 42 } });
+  it('connects immediately when opened WITH dimensions (no deferral)', () => {
+    const { pty } = makeUnopenedAdapter();
+    pty.open({ columns: 100, rows: 40 });
+    expect(WebSocket.instances.length).toBe(1);
+  });
 
-    pty.reconnect();
-    const socket2 = currentSocket();
-    socket2.readyState = WebSocket.OPEN;
-    socket2.emit('open');
-    socket2.sent.length = 0; // drop the on-open resize
+  it('falls back to connecting if no size ever arrives', () => {
+    const { pty } = makeUnopenedAdapter();
+    pty.open(undefined);
+    expect(WebSocket.instances.length).toBe(0);
 
-    sendControl(socket2, { type: 'pause', payload: {} });
-    sendData(socket2, Buffer.from('delta output', 'utf-8'));
-    sendControl(socket2, { type: 'resume', payload: {} });
+    vi.advanceTimersByTime(2000);
+    expect(WebSocket.instances.length).toBe(1);
+  });
 
-    expect(sentResizes(socket2).some((r) => r.rows === 39)).toBe(false);
+  it('does not double-connect when a size arrives before the fallback fires', () => {
+    const { pty } = makeUnopenedAdapter();
+    pty.open(undefined);
+    pty.setDimensions({ columns: 90, rows: 30 });
+    expect(WebSocket.instances.length).toBe(1);
+
+    vi.advanceTimersByTime(2000); // fallback must be a no-op now
+    expect(WebSocket.instances.length).toBe(1);
   });
 });

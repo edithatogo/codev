@@ -8,6 +8,7 @@ const CHUNK_SIZE = 16384; // 16KB — chunk onDidWrite to avoid CPU spikes
 const MAX_QUEUE = 1048576; // 1MB — drop live output if the unrendered queue exceeds this
 const DROP_WARN_INTERVAL_MS = 5000; // throttle backpressure-drop warnings (#1047)
 const REPAINT_NUDGE_DELAY_MS = 500; // settle delay before forcing a redraw-SIGWINCH (#1047), matching the web client's 500ms
+const INITIAL_SIZE_FALLBACK_MS = 2000; // if VS Code never reports a size, connect anyway rather than hang (#1052)
 
 // Reconnect backoff. The exponential curve (1000 * 2^attempt, capped at 30s),
 // the give-up threshold, and the session-unknown classifier all live in the
@@ -61,14 +62,17 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
   // nudge the size (a brief 1-row change, then back) to force the SIGWINCH.
   private renderedSinceConnect = false;
   private repaintNudgeTimer: ReturnType<typeof setTimeout> | null = null;
-  // True while this connection is replaying a *full* buffer (a fresh open or a
-  // successor session, not a reconnect delta). The connect-time nudge above only
-  // fires when the pane stays blank, but a full replay of a full-screen TUI's
-  // alt-screen buffer often *renders* into a corrupted state (mid-stream cursor
-  // / frame), which suppresses that nudge. We force one clean redraw when such a
-  // replay ends (#1052). Reconnect deltas are excluded so an already-correct
-  // pane isn't reflowed (#1050 intent).
-  private nudgeAfterReplay = false;
+
+  // Defer the initial connect until VS Code reports the real terminal size
+  // (#1052). VS Code may call open() with `initialDimensions === undefined`
+  // before the terminal is laid out; connecting then lets Tower replay the
+  // full-screen TUI frame while the PTY is still at node-pty's 80×24 default, so
+  // it renders at the wrong width and the pane comes up corrupted (overlapping
+  // frames, cursor near the top) until a manual resize. We instead wait for the
+  // first setDimensions() so the PTY is correctly sized before the first frame
+  // is ever drawn. A fallback timer connects anyway if no size ever arrives.
+  private awaitingInitialSize = false;
+  private initialConnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Reconnect-loop state. The adapter owns reconnection end-to-end (#936) —
   // backoff scheduling, give-up after MAX_RECONNECT_ATTEMPTS, and a terminal
@@ -91,20 +95,36 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
   ) {}
 
   open(initialDimensions: vscode.TerminalDimensions | undefined): void {
-    if (initialDimensions) {
-      this.lastDimensions = { cols: initialDimensions.columns, rows: initialDimensions.rows };
-    }
     // Prime the renderer synchronously inside open() — VS Code drops or
     // mis-orders writes that arrive purely asynchronously after open()
     // when the terminal becomes the active editor (microsoft/vscode#108298),
     // which manifests as a blank pane when openTerminal calls show(false).
     this.writeEmitter.fire('');
-    this.connect();
+    if (initialDimensions) {
+      this.lastDimensions = { cols: initialDimensions.columns, rows: initialDimensions.rows };
+      this.connect();
+      return;
+    }
+    // No size yet (#1052): defer the connect — and thus the replay — until the
+    // first setDimensions() so the PTY is sized before the first frame renders.
+    // A fallback timer connects anyway if a size never arrives, so the terminal
+    // can't hang permanently in the unsized state.
+    this.awaitingInitialSize = true;
+    this.initialConnectTimer = setTimeout(() => {
+      this.initialConnectTimer = null;
+      if (this.disposed || !this.awaitingInitialSize) { return; }
+      this.awaitingInitialSize = false;
+      this.connect();
+    }, INITIAL_SIZE_FALLBACK_MS);
   }
 
   close(): void {
     this.disposed = true;
     this.clearRepaintNudge();
+    if (this.initialConnectTimer) {
+      clearTimeout(this.initialConnectTimer);
+      this.initialConnectTimer = null;
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -140,6 +160,18 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
 
   setDimensions(dimensions: vscode.TerminalDimensions): void {
     this.lastDimensions = { cols: dimensions.columns, rows: dimensions.rows };
+    // First real size after a deferred open (#1052): connect now that the PTY
+    // can be sized correctly before the replay. connect()'s open handler sends
+    // the resize, so we return without a (no-op) sendResize on a dead socket.
+    if (this.awaitingInitialSize) {
+      this.awaitingInitialSize = false;
+      if (this.initialConnectTimer) {
+        clearTimeout(this.initialConnectTimer);
+        this.initialConnectTimer = null;
+      }
+      this.connect();
+      return;
+    }
     if (this.replaying) {
       // Defer resize during replay to prevent garbled rendering (Bugfix #625)
       this.pendingResize = { cols: dimensions.columns, rows: dimensions.rows };
@@ -199,11 +231,6 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
       // Force a redraw-SIGWINCH after the connection settles if nothing has
       // rendered (#1047), mirroring the web dashboard's post-connect resize.
       this.renderedSinceConnect = false;
-      // A fresh connection (lastSeq 0) requests a full replay; arm a guaranteed
-      // redraw for when that replay ends, since rendering it can land corrupted
-      // and the blank-pane nudge above would skip it (#1052). Reconnect deltas
-      // (lastSeq > 0) keep the no-reflow behavior.
-      this.nudgeAfterReplay = this.lastSeq <= 0;
       this.scheduleRepaintNudge();
     });
 
@@ -501,13 +528,6 @@ export class CodevPseudoterminal implements vscode.Pseudoterminal {
         if (this.pendingResize) {
           this.sendResize(this.pendingResize.cols, this.pendingResize.rows);
           this.pendingResize = null;
-        }
-        // A fresh full replay just finished writing the alt-screen buffer, which
-        // can render corrupted (overlapping frames, cursor near the top) and stay
-        // that way until a manual resize. Force one clean redraw now (#1052).
-        if (this.nudgeAfterReplay) {
-          this.nudgeAfterReplay = false;
-          this.sendRepaintNudge();
         }
         break;
       case 'error':
