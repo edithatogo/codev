@@ -37,6 +37,14 @@ Surface `spawned_by_architect` (Spec 755 data already in `state.db.builders`) th
 PR: https://github.com/cluesmith/codev/pull/1058 — implements #1057.
 Awaiting human approval at the `pr` gate (`porch approve 1057 pr`). Will not self-approve.
 
+## Architect review follow-up (2026-06-16) — Codex 'merge it' + 2 nits folded in
+1. JSON contract: `emitStatusJson()` now normalizes `workspace.name` to explicit `null`
+   (was dropped as `undefined` for unregistered workspaces). Verified E2E: key present, value null.
+2. Test gap: added Tower-RUNNING human-path tests (owner-aware Builders section renders from
+   state.db; builders excluded from generic Terminals list; --architect honored) + a JSON
+   null-name contract test. Suite now 21 pass (was 17).
+Build clean; pushed to PR; re-running porch check.
+
 ## E2E note
 `afx status` (human) only reaches the builder table when Tower is down OR the workspace is Tower-registered. Tower-running + unregistered-workspace early-returns at "not active in tower" (pre-existing). The real multi-architect case (Shannon) is registered, so the table renders there. `--json` is independent of registration — validated end-to-end.
 

@@ -240,4 +240,86 @@ describe('afx status --json (Spec 1057)', () => {
     await status({ json: true });
     expect((logger.header as any)).not.toHaveBeenCalled();
   });
+
+  it('emits an explicit workspace.name: null when no workspace is registered', async () => {
+    // Tower down (beforeEach) → no workspace lookup → name must serialize as
+    // an explicit null, not be dropped from the document. (Stable contract.)
+    await status({ json: true });
+
+    const payload = parsePayload();
+    expect(Object.prototype.hasOwnProperty.call(payload.workspace, 'name')).toBe(true);
+    expect(payload.workspace.name).toBeNull();
+  });
+});
+
+// ============================================================================
+// Human table — Tower-RUNNING path (Spec 1057)
+// ============================================================================
+//
+// The Tower-up path is where display semantics changed most: builders move out
+// of the generic `Terminals:` list into a dedicated owner-aware `Builders:`
+// section, sourced from state.db (the Tower terminal list carries no owner).
+
+describe('afx status — Tower-running human path (Spec 1057)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsRunning.mockResolvedValue(true);
+    mockGetHealth.mockResolvedValue({ uptime: 100, activeWorkspaces: 1, memoryUsage: 1024 * 1024 });
+    mockGetWorkspaceStatus.mockResolvedValue({
+      path: '/fake/workspace',
+      name: 'project',
+      active: true,
+      terminals: [
+        { type: 'architect', id: 'architect', label: 'main', url: '', active: true,
+          architectName: 'main', pid: 1, terminalId: 's1' },
+        { type: 'builder', id: 'b1', label: 'builder-feedback-1', url: '', active: true },
+        { type: 'shell', id: 'sh1', label: 'shell-1', url: '', active: true },
+      ],
+    });
+    mockLoadState.mockReturnValue({
+      architect: null,
+      architects: [],
+      builders: [
+        builder('builder-feedback-1', 'feedback'),
+        builder('builder-main-1', 'main'),
+      ],
+      utils: [],
+      annotations: [],
+    });
+  });
+
+  it('renders the owner-aware Builders section sourced from state.db', async () => {
+    await status();
+
+    const info = mockLoggerInfo.mock.calls.map((c) => stripAnsi(String(c[0])));
+    expect(info).toContain('Builders:');
+
+    const header = mockLoggerRow.mock.calls
+      .map((c: any[]) => c[0] as string[])
+      .find((cols) => Array.isArray(cols) && cols[0] === 'ID');
+    expect(header).toBeDefined();
+    expect(header![1]).toBe('Owner');
+
+    const rows = builderDataRows();
+    expect(rows.map((r) => r[0])).toEqual(['builder-feedback-1', 'builder-main-1']);
+    expect(rows[0][1]).toBe('feedback');
+    expect(rows[1][1]).toBe('main');
+  });
+
+  it('excludes builders from the generic Terminals list (shells stay)', async () => {
+    await status();
+
+    const info = mockLoggerInfo.mock.calls.map((c) => stripAnsi(String(c[0])));
+    // No `builder - <label>` Terminals row — builders live in the Builders section now.
+    expect(info.some((l) => l.includes('builder - '))).toBe(false);
+    // The shell terminal still appears under Terminals.
+    expect(info.some((l) => l.includes('shell - shell-1'))).toBe(true);
+  });
+
+  it('honors --architect in the Tower-running path', async () => {
+    await status({ architect: 'feedback' });
+
+    const rows = builderDataRows();
+    expect(rows.map((r) => r[0])).toEqual(['builder-feedback-1']);
+  });
 });

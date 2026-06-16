@@ -116,7 +116,10 @@ function renderBuilders(builders: Builder[], ownerFilter: string | undefined): v
  */
 function emitStatusJson(params: {
   towerRunning: boolean;
-  workspace: { path: string; name?: string; active: boolean };
+  // `name` is explicitly nullable (not optional): an unregistered workspace
+  // must still emit `"name": null` so the machine-readable contract is stable
+  // for tooling — `JSON.stringify` would otherwise drop an `undefined` key.
+  workspace: { path: string; name: string | null; active: boolean };
   architects: Array<{ name: string }>;
   builders: Builder[];
   ownerFilter: string | undefined;
@@ -180,7 +183,7 @@ export async function status(options: StatusOptions = {}): Promise<void> {
     }
     emitStatusJson({
       towerRunning,
-      workspace: { path: workspacePath, name: workspaceName, active: workspaceActive },
+      workspace: { path: workspacePath, name: workspaceName ?? null, active: workspaceActive },
       architects,
       builders,
       ownerFilter,
