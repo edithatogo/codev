@@ -82,3 +82,11 @@ Cmd/Ctrl+K B convention and prevents the keys firing in an unrelated diff (which
 would fall back to a stale last-position and jump a different builder's file).
 Within-file hunk nav stays VSCode-native F7 / Shift+F7. Extended
 contributes-commands.test.ts to lock the bindings. Tests ✓ (438).
+
+### Follow-up filed: sidebar selection sync
+Architect reviewed nav at dev-approval; nav "looks good" but doesn't sync the
+Builders sidebar selection to the active diff file. Assessed reveal feasibility
+(createTreeView gives reveal, but getParent is builder-row-only, file rows lack
+stable ids, accordion id-versioning + tree-mode folder hierarchy needed). Agreed
+to keep #1060 clean and file a follow-up. Filed #1066 (area/vscode). #1060 still
+at dev-approval.
