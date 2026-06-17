@@ -33,3 +33,43 @@ New plan-gate items surfaced: navigation order (recommend canonical git order =
 flat sidebar + View Diff list; file-tree mode visual order differs), and that
 navigation opens per-file diffs (GitHub PR-review model). Recommitted; still
 awaiting `plan-approval`.
+
+Decision #8 added (tab behavior): navigation opens with `preview: true` so a walk
+reuses one tab; no force-close (respects user's enablePreview setting).
+
+## Implement phase
+
+plan-approval APPROVED. Building per approved plan:
+1. Extract `openBuilderFileDiff(args)` helper from the extension.ts command body
+   into view-diff.ts (shared by sidebar command + nav); pass `preview: true`.
+2. New `commands/diff-nav.ts`: `navigateDiff(dir, deps)` + pure helpers
+   (`orderedRelPaths`, `computeNavTarget`, `indexOfRelPath`).
+3. Register `codev.diffNextFile` / `codev.diffPreviousFile` in extension.ts.
+4. package.json contributes.commands (no keybindings).
+5. Tests: diff-nav.test.ts + extend contributes-commands.test.ts.
+6. CHANGELOG + UNRELEASED.
+
+### Implementation complete
+- `view-diff.ts`: added `openBuilderFileDiff(context, args, showOptions?)` — the
+  shared per-file open seam (vscode.diff + registerFileInjectSession +
+  ensureDiffEditorCodeLens). Sidebar handler now calls it with no options
+  (byte-identical behavior); nav calls it with `{preview:true}`.
+- `commands/diff-nav.ts` (new): `navigateDiff(dir, deps)` + pure helpers. Current
+  position from `getDiffInjectEntry(activeEditor.fsPath)` with a module-level
+  last-position fallback; list from `BuilderDiffCache.getDiff`; worktree from
+  `overviewCache`. Status-bar message + no wrap at edges.
+- `extension.ts`: registered `codev.diffNextFile` / `codev.diffPreviousFile`
+  (reg = CLI-independent).
+- `package.json`: two palette commands, no keybindings.
+- Tests: `diff-nav.test.ts` (11 cases — ordering, edge no-op, isolation),
+  extended `contributes-commands.test.ts`.
+
+Verified: `pnpm compile` (check-types + lint + esbuild) ✓, `pnpm test:unit` ✓
+(438 tests, 11 new). Had to build workspace deps first (types/core/
+artifact-canvas had no dist in the fresh worktree).
+
+**Changelog deviation from plan**: the plan listed CHANGELOG.md + UNRELEASED.md,
+but the established workflow keeps those on the divergent `docs/vscode-changelog`
+branch (`worktrees/changelog/`), updated by the architect post-cleanup — "neither
+branch touches the other's files" by design. So I did NOT touch them on the
+builder branch; flagged for the architect instead.
