@@ -41,6 +41,14 @@ Two cold-tier lessons added to `codev/resources/lessons-learned.md` (UI/UX secti
 1. Programmatic reveal inside VSCode's multi-file diff editor requires the internal `_workbench.openMultiDiffEditor` (the public `vscode.changes` synthesizes a random source URI and has no file-granular nav) — but the cheaper, more robust path is to reuse an existing changed-file list + per-file diffs. Check for an existing list before reaching for an internal `_workbench.*` command.
 2. `preview: true` reuses one tab for a sequential-open walk (but is ignored when the user disabled preview editors — respect that, don't force-close); and scope a nav keybinding to the feature-specific context key (`codev.activeEditorIsBuilderFile`), not the broad `isInDiffEditor`, so it can't fire in an unrelated diff and act on stale state.
 
+## 3-Way Consultation (single advisory pass)
+
+- **Claude — APPROVE** (HIGH, no issues). Confirmed the refactor is behavior-preserving and called the keybindings a "good deviation."
+- **Codex — REQUEST_CHANGES** (HIGH), two findings, both addressed:
+  1. *Keybindings deviate from plan decision #1 (palette-only).* **Disposition: authorized, plan amended.** The keybindings were added at the human's explicit direction during the dev-approval gate (reversing the original lean, avoiding function keys); dev-approval was granted afterward. Plan decision #1 is now updated to record the amendment so the artifact matches the code. No code change.
+  2. *Navigation can't be **initiated** from a deleted/binary file diff opened directly.* **Disposition: real defect, fixed + regression test.** Deleted/binary files have no `file:` right side, so `registerFileInjectSession` skips them and `getDiffInjectEntry` can't resolve them; with `lastPosition` unset, next/prev bailed. Fix: seed the nav anchor on *every* open via `recordDiffNavPosition` (called from the `codev.openBuilderFileDiff` handler), not just after a navigation step — so a subsequent next/prev resolves through the fallback. Regression coverage: `diff-nav.test.ts` now tests the record/peek/reset anchor and that a deleted file resolves in the list. Commit `<see PR>`.
+- **Gemini — no usable verdict.** The `agy`/Antigravity run misfired: it went off investigating a "--sandbox" prompt and never reviewed the diff (output in `codev/projects/1060-*/1060-review-iter1-gemini.txt`). Not re-run (PIR consultation is single-pass advisory); flagged for the human.
+
 ## Things to Look At During PR Review
 
 - **`navigateDiff` current-position resolution** (`diff-nav.ts`): it reads the active editor's fsPath via the diff-inject registry, with a module-level `lastPosition` fallback for when the active editor isn't a tracked diff file. Worth a look that the fallback + the no-op status messages (no session / file-not-in-list / at-edge) cover the cases sensibly.

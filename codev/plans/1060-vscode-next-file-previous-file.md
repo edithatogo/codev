@@ -143,9 +143,14 @@ skeleton-mirrored framework file.
 
 ## Plan-Gate Decisions
 
-1. **Default keybindings** → **None (palette-only) + docs.** Smallest blast
-   radius; no clobbering existing bindings. Heavy users bind `j`/`k` themselves.
-   *(issue's lean)*
+1. **Default keybindings** → ~~None (palette-only) + docs.~~ **AMENDED at the
+   dev-approval gate (architect direction):** ship defaults **Ctrl+Alt+]** (next)
+   / **Ctrl+Alt+[** (prev), avoiding function keys (F7 / Shift+F7 stay for
+   within-file hunk nav). Scoped to `when: codev.activeEditorIsBuilderFile` (not
+   the generic `isInDiffEditor`) so the chords only fire on a builder diff and
+   don't act on stale state in unrelated diffs. The original palette-only lean
+   was reversed by the human during dev-approval; recording it here so the plan
+   matches the shipped code.
 2. **Edge behavior** → **status-bar message + no wrap.** *(issue's lean)*
 3. **Scope** → **per-builder Codev diff list (v1).** Generic any-diff-editor is a
    follow-up. *(issue's lean)*
