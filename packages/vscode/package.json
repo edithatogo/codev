@@ -709,6 +709,16 @@
         "when": "codev.activeEditorIsBuilderFile && editorHasSelection"
       },
       {
+        "command": "codev.diffNextFile",
+        "key": "ctrl+alt+]",
+        "when": "codev.activeEditorIsBuilderFile"
+      },
+      {
+        "command": "codev.diffPreviousFile",
+        "key": "ctrl+alt+[",
+        "when": "codev.activeEditorIsBuilderFile"
+      },
+      {
         "command": "workbench.view.extension.codev",
         "key": "ctrl+alt+c",
         "mac": "cmd+alt+c",
