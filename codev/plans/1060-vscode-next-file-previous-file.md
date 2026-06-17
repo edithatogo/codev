@@ -88,8 +88,9 @@ The existing handler becomes a thin caller (it already receives a
    If `atEdge` → status-bar message ("Last file in diff" / "First file in diff"),
    **no wrap**, return.
 5. **Open** the target via the extracted `openBuilderFileDiff` helper
-   (`files[target].plan`, `worktreePath`, `baseRef`, `builderId`). Update the
-   "last navigated position".
+   (`files[target].plan`, `worktreePath`, `baseRef`, `builderId`), passing
+   `{ preview: true }` (see decision #8 — reuses a single tab instead of piling
+   up). Update the "last navigated position".
 
 Two commands, both thin wrappers: `codev.diffNextFile` → `navigateDiff(1)`,
 `codev.diffPreviousFile` → `navigateDiff(-1)`.
@@ -166,6 +167,18 @@ skeleton-mirrored framework file.
    model. Invoking next/prev while the multi-file View Diff editor is focused
    drills into the next file as a per-file diff. I'll confirm this feels right at
    the dev-approval gate.
+8. **(New) Tab behavior on a walk** → **open with `preview: true`; do not
+   force-close.** VSCode preview tabs are "replaced and reused until set to stay,"
+   so walking files reuses **one** diff tab rather than accumulating N tabs — the
+   same mechanic as single-clicking Explorer files or stepping through search
+   results. Caveat (per the API doc): the preview flag is *ignored* if the user
+   has disabled preview editors (`workbench.editor.enablePreview: false`), in
+   which case tabs accumulate — consistent with that user's global choice that
+   every open is permanent. Recommend respecting the setting (no force-close).
+   Flag for the gate: if you want guaranteed single-tab behavior even with
+   preview disabled, I'll add a "close the previously-navigated diff tab before
+   opening the next" step (more complexity; must avoid closing a pinned/dirty
+   tab).
 
 ## Risks & Alternatives Considered
 
@@ -177,9 +190,10 @@ skeleton-mirrored framework file.
   in the last 15s might not be in the list yet. Acceptable — it's the same list
   the sidebar shows, and the reviewer is reviewing a (mostly settled) branch. A
   refresh (collapse/expand the builder, or the 60s poll) reconciles it.
-- **Risk: opening per-file diffs accumulates tabs.** `vscode.diff` reuses the
-  active diff tab when opening a new diff in place (preview-tab behavior), so a
-  walk doesn't pile up N tabs. I'll verify at dev-approval.
+- **Risk: opening per-file diffs accumulates tabs.** Handled by opening with
+  `preview: true` (decision #8) — preview tabs are replaced/reused, so a walk
+  leaves one tab. Only piles up if the user disabled preview editors globally.
+  Verified at dev-approval.
 - **Alternative: scroll/reveal within the multi-file `vscode.changes` editor.**
   Rejected per architect direction — requires the internal
   `_workbench.openMultiDiffEditor` command and migrating the working `viewDiff`
