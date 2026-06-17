@@ -45,6 +45,19 @@ describe('package.json contributes.commands', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('declares the cross-file diff navigation commands (#1060) with palette titles', () => {
+    // Palette-discoverable: declared with a title and NOT hidden via a
+    // commandPalette `when:false` entry (decision #1 — no default keybindings,
+    // palette is the discovery surface).
+    const palette: Array<{ command: string; when?: string }> =
+      PKG.contributes.menus?.commandPalette ?? [];
+    for (const command of ['codev.diffNextFile', 'codev.diffPreviousFile']) {
+      expect(titleByCommand.get(command), `${command} missing title`).toBeTruthy();
+      const hidden = palette.find((m) => m.command === command && m.when === 'false');
+      expect(hidden, `${command} must stay palette-discoverable`).toBeUndefined();
+    }
+  });
+
   it('does not label a command "(internal)" if it is exposed in view/item/context', () => {
     const offenders = viewContextCommands
       .filter((cmd) => /\(internal\)/i.test(titleByCommand.get(cmd) ?? ''))
