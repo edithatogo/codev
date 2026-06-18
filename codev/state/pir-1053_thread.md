@@ -87,3 +87,23 @@ COLD lessons-learned.md: bg-without-fg contrast bug, prose-vs-code overflow spli
 compounding). PR #1071 opened with review as body, recorded via `porch done --pr 1071`.
 Checks passed. 3-way consult (gemini/codex/claude, type=impl, single advisory pass) running in
 background. Then notify architect + wait at `pr` gate.
+
+## Consult results + fix
+
+- Codex: REQUEST_CHANGES (HIGH) — typography scoped to `.codev-artifact-canvas-body` only, but
+  exported `MarkdownView` renders `.codev-artifact-canvas-rendered` (no `.codev-artifact-canvas`
+  ancestor) → standalone surface got NO typography. Contradicts the approved plan (both containers
+  required). REAL defect.
+- Claude: APPROVE (HIGH) but flagged the SAME gap as non-blocking; its "standalone still gets the
+  base font" aside is factually wrong (base font is on `.codev-artifact-canvas`, not an ancestor
+  of `-rendered`).
+- Gemini: no usable verdict (sandbox/env message, no VERDICT line).
+
+Both substantive reviewers found the same issue → fixed (not rebutted). Token+base-font block
+now names both roots; all prose rules use `:is(.codev-artifact-canvas-body,
+.codev-artifact-canvas-rendered)`; overlay chrome (gutter/focus/cards/minimap) stays body-only.
+Added regression test asserting standalone root is covered + gutter stays body-only. Used `:is()`
+to keep it DRY. canvas 56/56, vscode 442/442, typechecks+bundle clean; verified `:is()` selectors
+land in bundled webview CSS. VSCode preview (uses ArtifactCanvas→`-body`, inside the `:is()`
+group) unaffected. Recorded disposition in review "Things to Look At". Escalating Codex finding to
+architect at pr gate (PIR won't re-review).
