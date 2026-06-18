@@ -78,3 +78,12 @@ Reviewer asked how line wrapping works / why a horizontal scrollbar sometimes ap
 UNbreakable token (long inline-code span, URL, file path), so it overflowed the column and forced
 a PAGE-level scrollbar. Fix: `overflow-wrap: break-word` on `.codev-artifact-canvas-body`
 (github-markdown-css's own approach); `pre`/`table` opt out by design. Verified in both bundles.
+
+## Review phase — PR #1071 open, 3-way consult running
+
+dev-approval approved. Wrote `codev/reviews/1053-vscode-typography-tokens-for-t.md` (Summary +
+Architecture Updates [none — extends existing canvas theming seam] + 3 UI/UX lessons added to
+COLD lessons-learned.md: bg-without-fg contrast bug, prose-vs-code overflow split, em-on-em
+compounding). PR #1071 opened with review as body, recorded via `porch done --pr 1071`.
+Checks passed. 3-way consult (gemini/codex/claude, type=impl, single advisory pass) running in
+background. Then notify architect + wait at `pr` gate.
