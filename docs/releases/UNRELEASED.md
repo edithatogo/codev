@@ -80,6 +80,8 @@ A residual narrower edge is documented as a follow-up (#1066): focusing a delete
        - **<Headline>** (#<issue>, PR #<pr>). <One short paragraph of context.>
      Move out to its own ## section if the entry grows past ~3 sentences. -->
 
+- **Backlog issue preview no longer steals focus and cannot chain into new editor groups** (#1074, PR #1076). Clicking a backlog row used to first call `workbench.action.focusFirstEditorGroup` so that `markdown.showPreviewToSide`'s `Beside` placement would resolve to group 2; that focus side-effect pulled the user away from wherever they were sitting (e.g. a builder terminal in group 2), and if any future caller skipped the focus step the preview would chain into groups 3 / 4 / 5 instead of reusing group 2. The preview now opens via `vscode.openWith` with the built-in markdown preview's custom-editor viewType `vscode.markdown.preview.editor`, which accepts an explicit `viewColumn` plus `preserveFocus`. The count-then-pick column choice mirrors the builder-terminal model from `Bugfix #804`: group 2 when one exists, group 1 otherwise. No change to which renderer draws the preview (still VSCode's built-in markdown preview); the move is purely about how the preview is invoked, and is orthogonal to the eventual decision in #1068 about migrating issue preview onto the artifact-canvas surface.
+
 ## Other fixes (dashboard, porch, infrastructure)
 
 <!-- Non-vscode work that ships in the npm release. Same bullet shape as Polish. -->
