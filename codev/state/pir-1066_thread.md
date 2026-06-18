@@ -98,3 +98,17 @@ consistency. Changed `computeNavTarget` to modulo wrap (forward past last → fi
 backward past first → last; single file wraps to itself); dropped `atEdge` + the
 edge flash in navigateDiff. Updated computeNavTarget tests. green (457).
 Also filed #1072 (vscode dedup: builderById + file-view config reader).
+
+## Phase: review (dev-approval approved)
+
+Wrote `codev/reviews/1066-*.md`. Routed governance updates COLD only (VSCode-scoped,
+not HOT-worthy): arch.md gets a "Builders diff-review: navigation + active-file
+sync (#1060/#1066)" design decision; lessons-learned.md gets 3 [From #1066] UI/UX
+lessons (dual-trigger registry sync, reveal needs stable ids + full getParent
+chain, match host built-in wrap rather than reimplement). No skeleton mirror
+(product code + user-evolved docs, not framework templates).
+
+PR #1075 opened (review file as body), recorded with porch. porch review checks
+green (pr_exists, arch/lessons section presence). 3-way consultation (gemini/codex/
+claude, type=impl) running in background — single advisory pass. Architect notified.
+→ will report any REQUEST_CHANGES then wait at pr gate.
