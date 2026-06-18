@@ -76,4 +76,24 @@ describe('default-theme.css token vocabulary', () => {
     expect(tokens.has('--codev-canvas-code-foreground')).toBe(true);
     expect(tokens.get('--codev-canvas-code-foreground')).not.toBe('');
   });
+
+  it('covers the standalone MarkdownView root, not just the composed canvas (#1053)', () => {
+    // MarkdownView renders `.codev-artifact-canvas-rendered` with no `.codev-artifact-canvas`
+    // ancestor, so the typography must name that root explicitly or the exported standalone
+    // surface gets no prose styling (consult REQUEST_CHANGES, #1053). Guard both halves:
+    // (1) the token + base-font block names the standalone root, and
+    // (2) the prose element rules name it too (via the `:is(...)` container group).
+    expect(css).toMatch(/\.codev-artifact-canvas,\s*\.codev-artifact-canvas-rendered\s*\{/);
+    // Every prose element rule shares the `:is(body, rendered)` container group. Assert the
+    // standalone root appears in a representative prose selector (headings) and the code chip.
+    expect(css).toMatch(
+      /:is\(\.codev-artifact-canvas-body,\s*\.codev-artifact-canvas-rendered\)\s+h1\b/,
+    );
+    expect(css).toMatch(
+      /:is\(\.codev-artifact-canvas-body,\s*\.codev-artifact-canvas-rendered\)\s+code\b/,
+    );
+    // The overlay gutter stays composed-surface-only (MarkdownView has no overlay): the bare
+    // `.codev-artifact-canvas-body` padding rule must NOT pull in the standalone root.
+    expect(css).toMatch(/^\.codev-artifact-canvas-body\s*\{[^}]*padding-left/m);
+  });
 });
