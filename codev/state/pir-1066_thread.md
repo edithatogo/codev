@@ -79,3 +79,13 @@ runs on BOTH active-editor change AND registry change (same dual-trigger the
 context-key sync already uses). Refactored to a named `revealActiveBuilderFile`
 (one fn, two subscriptions) + a staleness guard (re-check active fsPath after the
 await) for rapid nav. check-types/lint/tests green (454).
+
+### dev-approval iteration 2: navigation order (tree order)
+Reviewer: Ctrl+Alt+] nav visited loose `src/*` files before the `middleware/`
+folder even though the tree shows middleware first. Root cause = nav walked git
+`--name-status` order while the tree renders folders-first/alpha depth-first.
+Fix (touches #1060's nav, folded in since it serves #1066's nav+sidebar
+coherence): added `flattenTreeOrder` (DFS leaf order) to file-path-tree.ts and
+`navigationOrder(files, viewAsTree)` to diff-nav.ts. Tree mode → depth-first tree
+order; flat mode → unchanged git order (matches what flat list shows). +3 tests
+(457 total). green.
