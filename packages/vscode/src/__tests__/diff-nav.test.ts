@@ -24,6 +24,7 @@ vi.mock('vscode', () => ({
 
 const {
   orderedRelPaths,
+  navigationOrder,
   computeNavTarget,
   indexOfRelPath,
   recordDiffNavPosition,
@@ -48,6 +49,43 @@ describe('orderedRelPaths', () => {
 
   it('is empty for an empty list', () => {
     expect(orderedRelPaths([])).toEqual([]);
+  });
+});
+
+describe('navigationOrder (#1066: match the visible tree order)', () => {
+  // A list whose git order interleaves a folder's contents with loose files at
+  // the same level — exactly the screenshot case (middleware/ shown first, but
+  // git lists the loose src files before it).
+  const files = [
+    mk('apps/auth/src/index.ts'),
+    mk('apps/auth/src/google-service-scope-allowlist.ts'),
+    mk('apps/auth/src/middleware/require-user-or-service-auth.ts'),
+    mk('README.md'),
+  ];
+
+  it('flat-list mode: keeps the raw git --name-status order', () => {
+    expect(navigationOrder(files, false).map(f => f.plan.resourcePath)).toEqual([
+      'apps/auth/src/index.ts',
+      'apps/auth/src/google-service-scope-allowlist.ts',
+      'apps/auth/src/middleware/require-user-or-service-auth.ts',
+      'README.md',
+    ]);
+  });
+
+  it('tree mode: depth-first display order — a folder\'s subtree before its sibling loose files; folders before files; root files last', () => {
+    expect(navigationOrder(files, true).map(f => f.plan.resourcePath)).toEqual([
+      // apps/ (folder) before README.md (root file); within src/, middleware/
+      // (folder) is exhausted before the loose files, each group alphabetical.
+      'apps/auth/src/middleware/require-user-or-service-auth.ts',
+      'apps/auth/src/google-service-scope-allowlist.ts',
+      'apps/auth/src/index.ts',
+      'README.md',
+    ]);
+  });
+
+  it('is a stable passthrough for an empty list in either mode', () => {
+    expect(navigationOrder([], true)).toEqual([]);
+    expect(navigationOrder([], false)).toEqual([]);
   });
 });
 
