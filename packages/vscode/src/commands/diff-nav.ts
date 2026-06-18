@@ -56,19 +56,19 @@ function viewAsTree(): boolean {
 }
 
 /**
- * Step `index` by `direction` within `[0, count)`. At the first/last file a step
- * past the edge is a no-op (`atEdge: true`, index unchanged) — no wrap-around.
+ * Step `index` by `direction` within `[0, count)`, wrapping around at the ends:
+ * stepping forward past the last file returns to the first, and stepping back
+ * before the first returns to the last. This matches VSCode's built-in diff
+ * change (hunk) navigation, which also wraps, so file and hunk stepping behave
+ * consistently (#1066 review). A single-file list wraps to itself.
  */
 export function computeNavTarget(
   index: number,
   count: number,
   direction: 1 | -1,
-): { index: number; atEdge: boolean } {
-  const target = index + direction;
-  if (target < 0 || target >= count) {
-    return { index, atEdge: true };
-  }
-  return { index: target, atEdge: false };
+): { index: number } {
+  // `((x % n) + n) % n` keeps the result in `[0, count)` for negative steps too.
+  return { index: ((index + direction) % count + count) % count };
 }
 
 /** Index of `relPath` in the file list, or -1 if absent / undefined. */
@@ -143,12 +143,9 @@ export async function navigateDiff(direction: 1 | -1, deps: NavDeps): Promise<vo
     return;
   }
 
-  // 5. Step, honoring the edges (no wrap).
-  const { index: targetIdx, atEdge } = computeNavTarget(idx, ordered.length, direction);
-  if (atEdge) {
-    flash(direction === 1 ? 'last file in diff' : 'first file in diff');
-    return;
-  }
+  // 5. Step, wrapping around at the ends (consistent with the built-in hunk
+  //    navigation, which also wraps).
+  const { index: targetIdx } = computeNavTarget(idx, ordered.length, direction);
 
   // 6. Open the target file's diff as a reused preview tab.
   const target = ordered[targetIdx]!;
