@@ -77,6 +77,11 @@
   /* Optional readable-measure cap (off by default — token is `none`). When a host/user sets a
      width (e.g. 72ch) the prose column stops growing with the pane. */
   max-width: var(--codev-canvas-prose-max-width);
+  /* Break long unbreakable tokens (a long inline-code span, URL, or file path) instead of
+     letting them overflow the column and force a page-level horizontal scrollbar. `pre` and
+     `table` opt out via their own `overflow: auto` — code lines and wide tables scroll inside
+     their block by design, they don't wrap (#1053). */
+  overflow-wrap: break-word;
 }
 
 /*
