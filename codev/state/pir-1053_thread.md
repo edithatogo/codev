@@ -47,3 +47,25 @@ settings.json only (no in-preview UI).
 - Per reviewer: documented the two settings in `packages/vscode/README.md` Settings table.
 - Per reviewer: filed #1070 (area/vscode) for an in-preview zoom control affordance + write-back
   (the UI piece, deliberately out of scope here; tokens + settings already shipped by #1053).
+
+## dev-approval round 2 — element styling + dark-mode contrast fix
+
+Reviewer flagged poor inline-code contrast in dark mode. Root cause: `code` had a background
+token but NO foreground token, so its text fell through to the body foreground — and the host
+paired `textCodeBlock.background` (a code-BLOCK token) with the general foreground (a different
+theme color group), which pairs poorly in dark themes. Reviewer: "must fix properly now, what
+other rules / styling issues still need to be handled" → did a full element pass.
+
+Fixes (now 22 tokens: +`--codev-canvas-code-foreground`):
+- New `--codev-canvas-code-foreground` color token; host binds inline code to VSCode's
+  `textPreformat-foreground/background` pair (theme-tuned to contrast each other).
+- Inline `code`: chip padding + radius + its own fg/bg.
+- `pre`: padding, border, radius, overflow:auto. `pre code` resets the chip chrome INCLUDING
+  font-size (was compounding 0.85em × 0.85em ≈ 72%).
+- `blockquote` (muted + left rule), tables (collapsed borders, zebra, scrollable), `hr`
+  (hairline), `img` (max-width:100%), list indent (2em).
+- Doc trail updated: README color table + binding example, types.ts contract comment.
+- New test: inline-code-foreground token present.
+
+Tests: canvas 55/55, vscode 442/442; typechecks + bundle clean; verified new rules land in
+bundled webview CSS.
