@@ -47,6 +47,8 @@ import { PanelPlaceholderProvider } from './views/panel-placeholder.js';
 import { DevServerTreeProvider } from './views/dev-server.js';
 import { formatTargetName } from './views/dev-server-format.js';
 import { WorkspaceProvider } from './views/workspace.js';
+import { displayArchitectName, sortArchitectsForPicker } from './views/architect-display.js';
+import { validateArchitectName } from '@cluesmith/codev-core/architect-name';
 import { BuilderTreeItem } from './views/builder-tree-item.js';
 import { BuilderFileTreeItem } from './views/builder-file-tree-item.js';
 import { BuilderDiffCache } from './views/builder-diff-cache.js';
@@ -685,20 +687,44 @@ export async function activate(context: vscode.ExtensionContext) {
 		reg('codev.openArchitectTerminal', async (architectName?: string) => {
 			// Spec 786 Phase 6: the command accepts an optional architect name.
 			// Sidebar children pass their architect name via `command.arguments`.
-			// Existing palette / no-arg invocations default to `main`.
 			const client = connectionManager?.getClient();
 			const workspacePath = connectionManager?.getWorkspacePath();
 			if (!client || !workspacePath || connectionManager?.getState() !== 'connected') {
 				vscode.window.showErrorMessage('Codev: Not connected to Tower');
 				return;
 			}
-			const targetName = architectName ?? 'main';
 			try {
 				const state = await client.getWorkspaceState(workspacePath);
-				// Resolve the terminal id for the requested architect. Prefer
-				// the new `architects` collection (Spec 786 Phase 5); fall back
-				// to the scalar `architect` for older Tower versions.
+				// Resolve the architect list. Prefer the new `architects`
+				// collection (Spec 786 Phase 5); fall back to the scalar
+				// `architect` for older Tower versions.
 				const architects = state?.architects ?? (state?.architect ? [state.architect] : []);
+
+				// Issue 841 Gap 2: when invoked with no name (keybinding Cmd/Ctrl+K A
+				// or the Command Palette) and the workspace has more than one
+				// architect, prompt for which to open. Single-architect workspaces
+				// keep today's behaviour (open `main` directly, no picker).
+				let targetName = architectName;
+				if (targetName === undefined) {
+					if (architects.length > 1) {
+						const items = sortArchitectsForPicker(architects).map(a => {
+							const item: { label: string; name: string; description?: string } = {
+								label: displayArchitectName(a.name),
+								name: a.name,
+							};
+							if (a.name === 'main') { item.description = 'default'; }
+							return item;
+						});
+						const picked = await vscode.window.showQuickPick(items, {
+							placeHolder: 'Select an architect terminal to open',
+						});
+						if (!picked) { return; } // user dismissed the picker
+						targetName = picked.name;
+					} else {
+						targetName = 'main';
+					}
+				}
+
 				const match = architects.find(a => a.name === targetName);
 				const fallback = targetName === 'main' ? architects[0] : undefined;
 				const target = match ?? fallback;
@@ -711,6 +737,44 @@ export async function activate(context: vscode.ExtensionContext) {
 				vscode.window.showErrorMessage('Codev: Failed to get workspace state');
 			}
 		}),
+		// Issue 841 Gap 1: register a new sibling architect from the UI (the
+		// inline `+` on the Architects tree row, or the Command Palette). The
+		// Tower REST endpoint + client method (TowerClient.addArchitect)
+		// already exist; this is the missing UI affordance. Mirrors
+		// codev.removeArchitect's connection guard + refresh-on-success.
+		regCli('codev.addArchitect', async () => {
+			const client = connectionManager?.getClient();
+			const workspacePath = connectionManager?.getWorkspacePath();
+			if (!client || !workspacePath || connectionManager?.getState() !== 'connected') {
+				vscode.window.showErrorMessage('Codev: Not connected to Tower');
+				return;
+			}
+			const name = await vscode.window.showInputBox({
+				title: 'Add Architect',
+				prompt: 'Name for the new sibling architect',
+				placeHolder: 'e.g. web, mobile, security',
+				// Validate with the exact rule Tower enforces server-side
+				// (Issue 841 — shared validator in codev-core). Gives inline
+				// red-text feedback before the round-trip; Tower still has the
+				// final say on duplicates (which this pure check can't see).
+				validateInput: value => validateArchitectName(value.trim()),
+			});
+			if (name === undefined) { return; } // user cancelled
+			const trimmed = name.trim();
+			try {
+				const result = await client.addArchitect(workspacePath, trimmed);
+				if (result.ok) {
+					vscode.window.showInformationMessage(`Codev: Added architect '${result.name ?? trimmed}'.`);
+					// Refresh immediately so the new row appears without waiting
+					// for the `architects-updated` SSE (mirrors removeArchitect).
+					workspaceProvider.refresh();
+				} else {
+					vscode.window.showErrorMessage(`Codev: ${result.error ?? `Failed to add architect '${trimmed}'.`}`);
+				}
+			} catch (err) {
+				vscode.window.showErrorMessage(`Codev: Failed to add architect '${trimmed}': ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}),
 		// Spec 786 Phase 6: remove a sibling architect via the REST endpoint
 		// from Phase 4. Wired to the right-click context menu on sibling
 		// entries (`viewItem == workspace-architect-sibling`) — see
@@ -719,8 +783,18 @@ export async function activate(context: vscode.ExtensionContext) {
 				let name: string | undefined;
 			if (typeof arg === 'string') {
 				name = arg;
-			} else if (arg instanceof vscode.TreeItem && typeof arg.label === 'string') {
-				name = arg.label;
+			} else if (arg instanceof vscode.TreeItem) {
+				// Issue 841 Gap 3: the row label is now UPPERCASE (display-only),
+				// so it no longer equals the canonical name. Resolve the raw
+				// lowercase name from `item.id` (`workspace-architect-<name>`),
+				// which the Architects tree sets for exactly this reason. Fall
+				// back to the label only if the id is somehow absent.
+				const id = arg.id;
+				if (typeof id === 'string' && id.startsWith('workspace-architect-')) {
+					name = id.slice('workspace-architect-'.length);
+				} else if (typeof arg.label === 'string') {
+					name = arg.label;
+				}
 			}
 			if (!name) {
 				vscode.window.showErrorMessage('Codev: Could not determine which architect to remove.');
