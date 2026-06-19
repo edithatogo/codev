@@ -1,7 +1,7 @@
 id: bugfix-1079
 title: consult-agy-consumes-sandbox-a
 protocol: bugfix
-phase: fix
+phase: pr
 plan_phases: []
 current_plan_phase: null
 gates:
@@ -11,4 +11,4 @@ iteration: 1
 build_complete: false
 history: []
 started_at: '2026-06-19T23:24:59.389Z'
-updated_at: '2026-06-19T23:26:32.991Z'
+updated_at: '2026-06-19T23:31:52.969Z'
