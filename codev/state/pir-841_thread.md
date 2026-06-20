@@ -27,3 +27,7 @@ Plan approved. Implemented all three gaps:
 Tests: 34 architect tests pass (new architect-display.test.ts behavior tests + extended sentinels). check-types ✓, lint ✓, esbuild bundles ✓ (after building workspace deps).
 
 **Pre-existing unrelated failures** (confirmed on base via stash): `terminal-adapter.test.ts` + `reconnect-link-provider.test.ts` fail to collect under plain vitest (dynamic `import('ws')` / `terminal-link-provider.js`). NOT touched by this diff — out of scope, will note in review.
+
+## Review phase (PR open, at pr gate)
+dev-approval approved. Wrote review file + 1 COLD UI/UX lesson ([From #841] — display label diverging from identifier; carry raw id in item.id). PR #1082 opened (Fixes #841), recorded with porch.
+3-way consult (single pass): **codex=APPROVE (HIGH), claude=APPROVE (HIGH, full 15-file read, no key issues)**. Gemini = non-review (agy got empty workspace, no diff → porch defaulted to REQUEST_CHANGES). Wrote rebuttal (841-review-iter1-rebuttals.md): not a real finding, no code change. Architect notified leading with the Gemini disposition. **Waiting at `pr` gate** — merge is gated by porch state, not pane prose.
