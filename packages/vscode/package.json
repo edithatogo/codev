@@ -84,6 +84,11 @@
         "category": "Codev"
       },
       {
+        "command": "codev.addArchitect",
+        "title": "Codev: Add Architect",
+        "icon": "$(add)"
+      },
+      {
         "command": "codev.openBuilderTerminal",
         "title": "Codev: Open Builder Terminal..."
       },
@@ -461,6 +466,11 @@
           "command": "codev.removeArchitect",
           "when": "view == codev.workspace && viewItem == workspace-architect-sibling",
           "group": "1_primary@1"
+        },
+        {
+          "command": "codev.addArchitect",
+          "when": "view == codev.workspace && viewItem == workspace-architects-root",
+          "group": "inline@1"
         },
         {
           "command": "codev.approveGate",
