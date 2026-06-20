@@ -102,6 +102,8 @@ A residual narrower edge is documented as a follow-up (#1066): focusing a delete
 
 <!-- Non-vscode work that ships in the npm release. Same bullet shape as Polish. -->
 
+- **Gemini (`agy`) consult lane now delivers the actual prompt instead of the literal string `--sandbox`** (#1079, PR #1081 by @mohidmakhdoomi). The consult CLI built the `agy --print` argv as `agy --print --sandbox --print-timeout 5m --add-dir <ws> --add-dir <tmp> <prompt>`. Per `agy` 1.0.10's CLI grammar, `--print` is a string-valued flag and consumes the **next** token as its prompt value: in this case, `--sandbox`. The actual consultation prompt was passed as a positional argument and silently ignored. `agy` still exited 0 and emitted plausible-looking meta-output, so the consult code recorded the lane as successful. This is the concrete root cause behind the "Gemini misfired with sandbox/empty-workspace output" pattern that every CMAP-3 rebuttal in the v3.2.0 cycle had to dispose of (`pir-1060`, `pir-1052`, `pir-1053`, `pir-1066`, `air-1074`, `pir-841` all flagged it). The fix passes the prompt as the value of `--print` (`agy --print "<prompt>" --sandbox --print-timeout 5m ...`) and tests both the unit-level argv shape and an e2e adjacency check so the bug can't silently return. Substantially resolves the umbrella issue #1032, though that issue stays open to track any remaining agy off-task surfaces.
+
 ## Breaking changes
 
 None.
