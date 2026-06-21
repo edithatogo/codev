@@ -4,33 +4,16 @@
  * These let a CONTROLLER (an external control device or companion app) drive and
  * observe the active editor PROVIDER (the VSCode extension today, the web
  * dashboard later) over Tower's existing SSE + REST transport:
- *  - controller -> Tower: REST POST `/api/editor/*` (scroll, position demand,
- *    presence) and `/api/command` (run a canonical verb on the active provider).
- *  - provider  -> Tower: REST POST `/api/editor/position` / `/api/editor/context`.
- *  - Tower -> clients: SSE `editor-scroll` / `editor-wants-position` / `command`
- *    to the provider; `editor-position` / `editor-context` to controllers.
+ *  - controller -> Tower: REST POST `/api/editor/*` (context demand, presence)
+ *    and `/api/command` (run a canonical verb on the active provider).
+ *  - provider  -> Tower: REST POST `/api/editor/context`.
+ *  - Tower -> clients: SSE `editor-wants-context` / `command` to the provider;
+ *    `editor-context` to controllers.
  *
  * The command channel carries CANONICAL VERBS (`view-diff`, `forward-hunk`, ...),
  * not provider-specific command ids, so one controller drives any provider; each
  * provider maps the verb to its own implementation. Pure wire shapes only.
  */
-
-/** Scroll direction for an editor-scroll request. */
-export type ScrollDirection = 'up' | 'down';
-
-/** Scroll magnitude unit (mirrors VSCode's `editorScroll` `by`). */
-export type ScrollBy = 'line' | 'page' | 'halfPage' | 'wrappedLine';
-
-/** Which editor viewport operation a scroll request asks for. */
-export type ScrollAction = 'scrollEditor' | 'recenterEditorOnCaret';
-
-/** Visible range of the active editor. The push value is `null` when no editor is focused. */
-export interface EditorPosition {
-  visibleStart: number;
-  visibleEnd: number;
-  totalLines: number;
-  file: string;
-}
 
 /**
  * Focused-editor context that gates a controller's context verbs (forward,
@@ -46,8 +29,8 @@ export interface EditorContext {
 
 // ----- SSE payloads (Tower -> client, carried as the event `body`) -----
 
-/** Tower signals whether any controller currently wants editor-position reports. */
-export interface WantsEditorPosition {
+/** Tower signals whether any controller currently wants editor-context reports. */
+export interface WantsEditorContext {
   wanted: boolean;
 }
 
@@ -62,19 +45,6 @@ export interface WantsEditorPosition {
 export interface CommandRequest {
   verb: string;
   args?: unknown[];
-}
-
-/** Controller -> Tower (`/api/editor/scroll`): scroll (or recenter) the active editor. */
-export interface ScrollEditorRequest {
-  action: ScrollAction;
-  to?: ScrollDirection;
-  by?: ScrollBy;
-  value?: number;
-}
-
-/** Provider -> Tower (`/api/editor/position`): the active editor's visible range, or null. */
-export interface EditorPositionReport {
-  value: EditorPosition | null;
 }
 
 /** Provider -> Tower (`/api/editor/context`): the focused editor's context, or null. */
@@ -97,10 +67,8 @@ export interface CommandResult {
 /** REST routes for the editor + command channels (client <-> Tower). */
 export const EDITOR_ROUTES = {
   command: '/api/command',
-  scroll: '/api/editor/scroll',
-  position: '/api/editor/position',
   context: '/api/editor/context',
-  wantsPosition: '/api/editor/wants-position',
+  wantsContext: '/api/editor/wants-context',
   heartbeat: '/api/editor/heartbeat',
 } as const;
 
@@ -111,12 +79,8 @@ export const EDITOR_ROUTE_PREFIX = '/api/editor/';
 export const EDITOR_EVENTS = {
   /** Tower -> provider: run a canonical command verb. */
   command: 'command',
-  /** Tower -> provider: scroll/recenter the active editor. */
-  scroll: 'editor-scroll',
-  /** Tower -> provider: start/stop emitting editor position + context. */
-  wantsPosition: 'editor-wants-position',
-  /** Tower -> controllers: the active editor's visible range (or null). */
-  position: 'editor-position',
+  /** Tower -> provider: start/stop emitting editor context. */
+  wantsContext: 'editor-wants-context',
   /** Tower -> controllers: the focused editor's context (or null). */
   context: 'editor-context',
 } as const;

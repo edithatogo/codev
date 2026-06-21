@@ -12,14 +12,8 @@ export {
 } from './sse.js';
 
 export {
-  type ScrollDirection,
-  type ScrollBy,
-  type ScrollAction,
-  type EditorPosition,
-  type WantsEditorPosition,
+  type WantsEditorContext,
   type CommandRequest,
-  type ScrollEditorRequest,
-  type EditorPositionReport,
   type EditorContext,
   type EditorContextReport,
   type CommandResult,

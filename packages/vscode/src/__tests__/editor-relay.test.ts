@@ -10,17 +10,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('vscode', () => {
-  const visibleListeners: Array<() => void> = [];
   const activeListeners: Array<() => void> = [];
   const windowListeners: Array<() => void> = [];
   const selectionListeners: Array<() => void> = [];
   const window = {
     state: { focused: true },
     activeTextEditor: undefined as unknown,
-    onDidChangeTextEditorVisibleRanges: (l: () => void) => {
-      visibleListeners.push(l);
-      return { dispose: () => {} };
-    },
     onDidChangeActiveTextEditor: (l: () => void) => {
       activeListeners.push(l);
       return { dispose: () => {} };
@@ -42,12 +37,7 @@ vi.mock('vscode', () => {
         dispose: () => ds.forEach((d) => d.dispose?.()),
       }),
     },
-    Range: class {
-      constructor(public start: unknown, public end: unknown) {}
-    },
-    TextEditorRevealType: { InCenter: 2 },
     __control: {
-      fireVisible: () => visibleListeners.forEach((l) => l()),
       fireActive: () => activeListeners.forEach((l) => l()),
       fireSelection: () => selectionListeners.forEach((l) => l()),
     },
@@ -61,16 +51,14 @@ vi.mock('../diff-inject-codelens.js', () => ({ getDiffInjectEntry: () => undefin
 const vscode = (await import('vscode')) as unknown as {
   window: { state: { focused: boolean }; activeTextEditor: unknown };
   commands: { executeCommand: ReturnType<typeof vi.fn> };
-  __control: { fireVisible: () => void; fireActive: () => void };
+  __control: { fireActive: () => void; fireSelection: () => void };
 };
 const { wireEditorProvider } = await import('../editor-relay.js');
 
 function makeEditor() {
   return {
-    visibleRanges: [{ start: { line: 10 }, end: { line: 50 } }],
     document: { lineCount: 800, uri: { toString: () => 'file:///x.ts', fsPath: '/x.ts' } },
     selection: { active: { line: 5, character: 0 }, isEmpty: true },
-    revealRange: vi.fn(),
   };
 }
 
@@ -113,79 +101,40 @@ describe('wireEditorProvider', () => {
     vi.restoreAllMocks();
   });
 
-  it('reports an initial position when Tower signals wanted:true', () => {
+  it('reports an initial context when Tower signals wanted:true', () => {
     const { mgr, fire } = makeConnMgr(client);
     const disposable = wireEditorProvider(mgr as never);
 
-    fire('editor-wants-position', { wanted: true });
+    fire('editor-wants-context', { wanted: true });
 
-    expect(lastRequestTo('/api/editor/position')).toEqual({
-      value: { visibleStart: 10, visibleEnd: 50, totalLines: 800, file: 'file:///x.ts' },
+    expect(lastRequestTo('/api/editor/context')).toEqual({
+      value: { diffFocused: false, hasSelection: false, artifactFocused: false },
     });
     disposable.dispose();
   });
 
-  it('throttles visible-range changes to one report per window', () => {
+  it('throttles context changes to one report per window', () => {
     const nowSpy = vi.spyOn(Date, 'now');
     nowSpy.mockReturnValue(1000);
     const { mgr, fire } = makeConnMgr(client);
     wireEditorProvider(mgr as never);
 
-    fire('editor-wants-position', { wanted: true }); // initial emit at t=1000
+    fire('editor-wants-context', { wanted: true }); // initial emit at t=1000
     nowSpy.mockReturnValue(1050);
-    vscode.__control.fireVisible(); // within throttle -> dropped
+    vscode.__control.fireSelection(); // within throttle -> dropped
     nowSpy.mockReturnValue(1200);
-    vscode.__control.fireVisible(); // past throttle -> emitted
+    vscode.__control.fireSelection(); // past throttle -> emitted
 
-    expect(requestsTo('/api/editor/position')).toHaveLength(2);
+    expect(requestsTo('/api/editor/context')).toHaveLength(2);
   });
 
-  it('does not emit position when the window is not focused', () => {
+  it('does not emit context when the window is not focused', () => {
     vscode.window.state.focused = false;
     const { mgr, fire } = makeConnMgr(client);
     wireEditorProvider(mgr as never);
 
-    fire('editor-wants-position', { wanted: true });
-    expect(requestsTo('/api/editor/position')).toHaveLength(0);
-  });
-
-  it('executes editorScroll for a scroll command (fire-and-forget, no result posted)', async () => {
-    const { mgr, fire } = makeConnMgr(client);
-    wireEditorProvider(mgr as never);
-
-    fire('editor-scroll', { action: 'scrollEditor', to: 'down', by: 'line', value: 3 });
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith('editorScroll', {
-      to: 'down',
-      by: 'line',
-      value: 3,
-      revealCursor: false,
-    });
-  });
-
-  it('recenters on caret without invoking editorScroll', async () => {
-    const editor = makeEditor();
-    vscode.window.activeTextEditor = editor;
-    const { mgr, fire } = makeConnMgr(client);
-    wireEditorProvider(mgr as never);
-
-    fire('editor-scroll', { action: 'recenterEditorOnCaret' });
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(editor.revealRange).toHaveBeenCalledTimes(1);
-    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
-  });
-
-  it('no-ops cleanly when VSCode is not focused (never pulls focus, posts nothing)', async () => {
-    vscode.window.state.focused = false;
-    const { mgr, fire } = makeConnMgr(client);
-    wireEditorProvider(mgr as never);
-
-    fire('editor-scroll', { action: 'scrollEditor', to: 'up', by: 'line', value: 1 });
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+    fire('editor-wants-context', { wanted: true });
+    expect(requestsTo('/api/editor/context')).toHaveLength(0);
   });
 
   it('maps a canonical verb to its VSCode command and runs it with args', async () => {
@@ -227,15 +176,5 @@ describe('wireEditorProvider', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith('codev.refreshOverview');
-  });
-
-  it('ignores a scroll command with an unknown action (no editorScroll)', async () => {
-    const { mgr, fire } = makeConnMgr(client);
-    wireEditorProvider(mgr as never);
-
-    fire('editor-scroll', { action: 'launchMissiles', to: 'down', by: 'line', value: 3 });
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
   });
 });

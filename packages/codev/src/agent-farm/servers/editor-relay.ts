@@ -5,8 +5,8 @@
  * active editor PROVIDER (the VSCode extension today, the web dashboard later)
  * over Tower's EXISTING channels rather than a dedicated socket:
  *   - Tower -> client push: SSE at /api/events. Controllers receive
- *     `editor-position` / `editor-context`; providers receive `command` /
- *     `editor-scroll` / `editor-wants-position`. Clients filter by type.
+ *     `editor-context`; providers receive `command` / `editor-wants-context`.
+ *     Clients filter by type.
  *   - client -> Tower: REST POST at `/api/editor/*` and `/api/command`.
  *
  * The `command` channel carries CANONICAL VERBS (`view-diff`, `forward-hunk`),
@@ -22,8 +22,6 @@
 import type * as http from 'node:http';
 import type {
   CommandRequest,
-  ScrollEditorRequest,
-  EditorPositionReport,
   EditorContextReport,
 } from '@cluesmith/codev-types';
 import { EDITOR_ROUTES, EDITOR_EVENTS } from '@cluesmith/codev-types';
@@ -42,32 +40,32 @@ interface EditorRouteCtx {
 let deps: EditorRelayDeps | null = null;
 let inited = false;
 
-// Controller presence. A controller heartbeats and every request refreshes
-// presence; a lightweight timer (NO filesystem work) releases the editor-position
-// demand when presence goes stale (controller closed), so an absent controller
-// leaves no provider emitting and Tower does no ongoing work.
+// Controller presence. A controller heartbeats and every controller request
+// refreshes presence; a lightweight timer (NO filesystem work) releases the
+// editor-context demand when presence goes stale (controller closed), so an
+// absent controller leaves no provider emitting and Tower does no ongoing work.
 let expiryTimer: ReturnType<typeof setInterval> | null = null;
 let lastPresenceAt = 0;
 const PRESENCE_CHECK_INTERVAL_MS = 5_000;
 const PRESENCE_TTL_MS = 45_000;
 
-// The provider emits editor positions only while at least one controller wants
-// them (subscriber gating), so an idle editor pays nothing. The provider
-// throttles a single focused window, so Tower fans position/context out as-is.
-// Scroll and commands are passed straight through; the controller awaits no result.
-let positionWantedCount = 0;
+// The provider emits editor context only while at least one controller wants it
+// (subscriber gating), so an idle editor pays nothing. The provider throttles a
+// single focused window, so Tower fans context out as-is. Commands are passed
+// straight through; the controller awaits no result.
+let contextWantedCount = 0;
 
 /** Wire the module's dependencies. */
 export function initEditorRelay(d: EditorRelayDeps): void {
   deps = d;
   lastPresenceAt = 0;
-  positionWantedCount = 0;
+  contextWantedCount = 0;
 }
 
 /** Tear down timers/state (used by tests and shutdown). */
 export function shutdownEditorRelay(): void {
   stopExpiryTimer();
-  positionWantedCount = 0;
+  contextWantedCount = 0;
   deps = null;
   lastPresenceAt = 0;
   inited = false;
@@ -91,7 +89,7 @@ function stopExpiryTimer(): void {
 
 /**
  * When no controller has been seen within the TTL, stop the timer and release any
- * editor-position demand (telling the provider to stop emitting) so an absent
+ * editor-context demand (telling the provider to stop emitting) so an absent
  * controller leaves zero ongoing work. Does NO filesystem work.
  */
 function presenceExpiryTick(): void {
@@ -99,9 +97,9 @@ function presenceExpiryTick(): void {
     return;
   }
   stopExpiryTimer();
-  if (positionWantedCount > 0) {
-    positionWantedCount = 0;
-    deps?.broadcast(EDITOR_EVENTS.wantsPosition, { wanted: false });
+  if (contextWantedCount > 0) {
+    contextWantedCount = 0;
+    deps?.broadcast(EDITOR_EVENTS.wantsContext, { wanted: false });
   }
 }
 
@@ -124,21 +122,17 @@ export async function handleEditorRoute(
     });
   }
   // Presence is a CONTROLLER signal, so only controller-originated routes refresh
-  // it. The provider's own position/context reports must NOT: a provider emits
-  // those only because a controller asked it to, so counting them as presence
-  // would keep an already-departed controller "alive" and the TTL would never
-  // release the demand.
+  // it. The provider's own context reports must NOT: a provider emits those only
+  // because a controller asked it to, so counting them as presence would keep an
+  // already-departed controller "alive" and the TTL would never release the demand.
   const path = url.pathname;
   const isControllerRoute =
     path === EDITOR_ROUTES.command ||
-    path === EDITOR_ROUTES.scroll ||
-    path === EDITOR_ROUTES.wantsPosition ||
+    path === EDITOR_ROUTES.wantsContext ||
     path === EDITOR_ROUTES.heartbeat;
   if (isControllerRoute) markPresence();
   if (req.method === 'POST' && path === EDITOR_ROUTES.command) return handleCommand(req, res);
-  if (req.method === 'POST' && path === EDITOR_ROUTES.scroll) return handleScroll(req, res);
-  if (req.method === 'POST' && path === EDITOR_ROUTES.wantsPosition) return handleWantsPosition(req, res);
-  if (req.method === 'POST' && path === EDITOR_ROUTES.position) return handleEditorPosition(req, res);
+  if (req.method === 'POST' && path === EDITOR_ROUTES.wantsContext) return handleWantsContext(req, res);
   if (req.method === 'POST' && path === EDITOR_ROUTES.context) return handleEditorContext(req, res);
   if (req.method === 'POST' && path === EDITOR_ROUTES.heartbeat) return sendJson(res, 200, { ok: true });
   res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -186,11 +180,11 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
 }
 
 /**
- * POST /api/editor/wants-position — a controller signals demand for editor
- * position/context updates. A reference count tracks demand across controllers;
- * the provider is told to start emitting on the 0->1 transition, stop on 1->0.
+ * POST /api/editor/wants-context — a controller signals demand for editor-context
+ * updates. A reference count tracks demand across controllers; the provider is
+ * told to start emitting on the 0->1 transition, stop on 1->0.
  */
-export async function handleWantsPosition(
+export async function handleWantsContext(
   req: http.IncomingMessage,
   res: http.ServerResponse,
 ): Promise<void> {
@@ -202,36 +196,16 @@ export async function handleWantsPosition(
     return sendJson(res, 400, { ok: false, error: 'Invalid JSON' });
   }
   if (body.wanted === true) {
-    positionWantedCount += 1;
-    if (positionWantedCount === 1) d.broadcast(EDITOR_EVENTS.wantsPosition, { wanted: true });
+    contextWantedCount += 1;
+    if (contextWantedCount === 1) d.broadcast(EDITOR_EVENTS.wantsContext, { wanted: true });
   } else {
     // Decrement and signal only on a real 1->0 transition; a `wanted:false` while
     // the count is already 0 is a no-op, not another stop broadcast.
-    if (positionWantedCount > 0) {
-      positionWantedCount -= 1;
-      if (positionWantedCount === 0) d.broadcast(EDITOR_EVENTS.wantsPosition, { wanted: false });
+    if (contextWantedCount > 0) {
+      contextWantedCount -= 1;
+      if (contextWantedCount === 0) d.broadcast(EDITOR_EVENTS.wantsContext, { wanted: false });
     }
   }
-  return sendJson(res, 200, { ok: true });
-}
-
-/**
- * POST /api/editor/position — the provider reports the active editor's visible
- * range (or null). The provider throttles a single focused window, so Tower fans
- * the report out to controllers as-is.
- */
-export async function handleEditorPosition(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-): Promise<void> {
-  const d = requireDeps();
-  let body: EditorPositionReport;
-  try {
-    body = (await parseJsonBody(req)) as unknown as EditorPositionReport;
-  } catch {
-    return sendJson(res, 400, { ok: false, error: 'Invalid JSON' });
-  }
-  d.broadcast(EDITOR_EVENTS.position, body.value ?? null);
   return sendJson(res, 200, { ok: true });
 }
 
@@ -252,26 +226,5 @@ export async function handleEditorContext(
     return sendJson(res, 400, { ok: false, error: 'Invalid JSON' });
   }
   d.broadcast(EDITOR_EVENTS.context, body.value ?? null);
-  return sendJson(res, 200, { ok: true });
-}
-
-/**
- * POST /api/editor/scroll — a controller asks to scroll (or recenter) the active
- * editor. Tower passes the request straight through to providers as an
- * `editor-scroll` SSE event and acks immediately. Fire-and-forget: no focused
- * editor simply means nothing scrolls.
- */
-export async function handleScroll(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-): Promise<void> {
-  const d = requireDeps();
-  let body: ScrollEditorRequest;
-  try {
-    body = (await parseJsonBody(req)) as unknown as ScrollEditorRequest;
-  } catch {
-    return sendJson(res, 400, { ok: false, error: 'Invalid JSON' });
-  }
-  d.broadcast(EDITOR_EVENTS.scroll, body);
   return sendJson(res, 200, { ok: true });
 }

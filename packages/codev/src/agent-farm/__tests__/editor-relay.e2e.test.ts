@@ -2,9 +2,9 @@
  * No-hardware integration test for the editor + command relay.
  *
  * Boots a real Tower and drives the SSE + REST lifecycle with simulated
- * controller/provider clients: the heartbeat, the editor relay (wants-position,
- * position fan-out, a fire-and-forget scroll), and the command relay (a canonical
- * verb relayed to the provider over SSE).
+ * controller/provider clients: the heartbeat, the editor relay (wants-context,
+ * context fan-out), and the command relay (a canonical verb relayed to the
+ * provider over SSE).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -110,46 +110,26 @@ describe('editor + command relay (integration)', () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
-  it('broadcasts wants-position to subscribers on first demand', async () => {
+  it('broadcasts wants-context to subscribers on first demand', async () => {
     const sse = new SseCollector();
     await sse.waitReady();
 
-    await postJson('/api/editor/wants-position', { wanted: true });
-    const ev = await sse.waitFor('editor-wants-position');
+    await postJson('/api/editor/wants-context', { wanted: true });
+    const ev = await sse.waitFor('editor-wants-context');
     expect(ev.payload).toEqual({ wanted: true });
 
     sse.close();
   });
 
-  it('fans editor-position reports out to controller subscribers', async () => {
+  it('fans editor-context reports out to controller subscribers', async () => {
     const sse = new SseCollector();
     await sse.waitReady();
 
-    await postJson('/api/editor/position', {
-      value: { visibleStart: 100, visibleEnd: 140, totalLines: 2000, file: 'file:///a.ts' },
+    await postJson('/api/editor/context', {
+      value: { diffFocused: true, hasSelection: true, artifactFocused: false },
     });
-    const ev = await sse.waitFor('editor-position');
-    expect(ev.payload).toMatchObject({ visibleStart: 100, totalLines: 2000 });
-
-    sse.close();
-  });
-
-  it('relays a scroll request to the provider and acks immediately', async () => {
-    const sse = new SseCollector();
-    await sse.waitReady();
-
-    const ack = await postJson('/api/editor/scroll', {
-      action: 'scrollEditor',
-      to: 'down',
-      by: 'line',
-      value: 3,
-    }).then((r) => r.json());
-
-    // Tower acks without waiting on the provider (fire-and-forget scroll)...
-    expect(ack).toEqual({ ok: true });
-    // ...and the request reaches the provider verbatim over SSE.
-    const ev = await sse.waitFor('editor-scroll');
-    expect(ev.payload).toEqual({ action: 'scrollEditor', to: 'down', by: 'line', value: 3 });
+    const ev = await sse.waitFor('editor-context');
+    expect(ev.payload).toMatchObject({ diffFocused: true, hasSelection: true });
 
     sse.close();
   });
