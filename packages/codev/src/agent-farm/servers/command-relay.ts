@@ -19,8 +19,16 @@
 
 import type * as http from 'node:http';
 import type { CommandRequest } from '@cluesmith/codev-types';
-import { COMMAND_ROUTE, COMMAND_EVENT } from '@cluesmith/codev-types';
 import { parseJsonBody } from '../utils/server-utils.js';
+
+// Wire names — the canonical contract lives in @cluesmith/codev-types
+// (COMMAND_ROUTE / COMMAND_EVENT) and must match these. They are re-declared
+// locally because codev runs UNBUNDLED from dist/ and codev-types is a
+// compile-time-only (type) dependency with no runtime dist on the codev side, so
+// a runtime value import from it would not resolve. This mirrors how
+// terminal/ws-protocol.ts re-declares FRAME_CONTROL / FRAME_DATA.
+export const COMMAND_ROUTE = '/api/command';
+const COMMAND_EVENT = 'command';
 
 export interface CommandRelayDeps {
   /** Fan an event out to all SSE clients (wraps broadcastNotification). */
