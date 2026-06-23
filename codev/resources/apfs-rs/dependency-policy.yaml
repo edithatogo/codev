@@ -1,0 +1,148 @@
+schema_version: 0.2.0
+status: draft
+updated: 2026-06-23
+purpose: >
+  Machine-readable dependency governance for APFS-RS. Use with cargo-deny,
+  cargo-audit, cargo-vet, dependency review, SBOM, and release provenance.
+
+default_policy:
+  production_dependency_requires_review: true
+  dev_dependency_requires_review: lightweight
+  crypto_dependency_requires_security_review: true
+  ffi_dependency_requires_unsafe_review: true
+  platform_dependency_isolated_to_adapter_crate: true
+  core_crates_should_minimise_transitive_dependencies: true
+
+licence_policy:
+  preferred:
+    - MIT
+    - Apache-2.0
+    - BSD-2-Clause
+    - BSD-3-Clause
+    - ISC
+    - Unicode-DFS-2016
+  requires_legal_review:
+    - MPL-2.0
+    - LGPL-2.1
+    - LGPL-3.0
+    - GPL-2.0
+    - GPL-3.0
+    - AGPL-3.0
+    - CDDL-1.0
+  forbidden_in_permissive_core_without_project_decision:
+    - GPL-2.0
+    - GPL-3.0
+    - AGPL-3.0
+    - LGPL-2.1
+    - LGPL-3.0
+
+required_checks:
+  pr:
+    - cargo deny check
+    - cargo audit
+    - dependency review
+  scheduled:
+    - cargo vet
+    - cargo tree --duplicates
+    - cargo machete
+    - OpenSSF Scorecard
+  release:
+    - SBOM generation
+    - artifact attestation
+    - SLSA provenance where available
+    - cargo semver-checks for public crates
+
+candidate_dependencies:
+  parsing:
+    - name: zerocopy
+      status: evaluate
+      allowed_crates: [apfs-types, apfs-core]
+      review_focus: [unsafe_usage, alignment, endianness, MSRV]
+    - name: winnow
+      status: evaluate
+      allowed_crates: [apfs-core]
+      review_focus: [parser_complexity, performance, transitive_dependencies]
+    - name: byteorder
+      status: acceptable_if_needed
+      allowed_crates: [apfs-types, apfs-core]
+  cli:
+    - name: clap
+      status: preferred
+      allowed_crates: [apfs-cli]
+    - name: serde_json
+      status: preferred
+      allowed_crates: [apfs-cli, apfs-test]
+  diagnostics:
+    - name: tracing
+      status: preferred
+      allowed_crates: [all]
+      requirements: [redaction_policy]
+  testing:
+    - name: cargo-nextest
+      status: preferred_tool
+    - name: proptest
+      status: preferred
+      allowed_crates: [apfs-test, dev-dependencies]
+    - name: cargo-fuzz
+      status: required_tool
+    - name: cargo-mutants
+      status: scheduled_tool
+    - name: cargo-llvm-cov
+      status: required_tool
+    - name: miri
+      status: unsafe_adjacent_tool
+    - name: kani
+      status: targeted_formal_tool
+  windows:
+    - name: windows
+      status: preferred
+      allowed_crates: [apfs-win, apfs-blockdev]
+    - name: WinFsp
+      status: preferred_external_runtime
+      allowed_crates: [apfs-win]
+      review_focus: [ffi_boundary, installer, licence, version_detection]
+    - name: Dokany
+      status: optional_later
+      allowed_crates: [apfs-win]
+      requires_adr: true
+  fuse:
+    - name: fuser
+      status: evaluate_after_windows_mvp
+      allowed_crates: [apfs-fuse]
+    - name: fuse3
+      status: evaluate_after_windows_mvp
+      allowed_crates: [apfs-fuse]
+  compression:
+    - name: flate2
+      status: evaluate
+      allowed_crates: [apfs-compress]
+    - name: lzfse_rust
+      status: evaluate
+      allowed_crates: [apfs-compress]
+  crypto:
+    - name: zeroize
+      status: likely_required
+      allowed_crates: [apfs-crypto]
+      requires_security_review: true
+    - name: secrecy
+      status: evaluate
+      allowed_crates: [apfs-crypto]
+      requires_security_review: true
+    - name: subtle
+      status: evaluate
+      allowed_crates: [apfs-crypto]
+      requires_security_review: true
+
+review_record_required_fields:
+  - dependency_name
+  - version_or_range
+  - purpose
+  - alternatives_considered
+  - licence
+  - maintenance_status
+  - advisory_status
+  - transitive_dependencies
+  - unsafe_code_surface
+  - MSRV_impact
+  - platform_impact
+  - removal_plan
