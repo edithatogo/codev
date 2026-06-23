@@ -1,0 +1,109 @@
+schema_version: 0.2.0
+status: draft
+updated: 2026-06-23
+purpose: >
+  Machine-readable safety gates for APFS-RS. Agents and CI should use this file to
+  decide which reviews, tests, and refusal behaviours apply to a change.
+
+gates:
+  read_only_default:
+    description: All MVP and advanced-read operations are read-only by default.
+    required_for: [windows_readonly_mvp, advanced_read, software_encryption_read]
+    enforcement:
+      - no write handles in block-device backends
+      - write-like mount callbacks return read-only errors
+      - CLI write commands absent unless lab feature enabled
+  raw_device_read_only:
+    description: Raw block devices may only be opened read-only before accepted write beta.
+    required_reviews: [windows-maintainer, security-maintainer]
+    required_tests: [no_write_handle, permission_failure, read_only_open]
+    forbidden_until: [accepted_windows_write_beta_spec]
+  image_only_write:
+    description: Write support is limited to disposable image files in the write lab.
+    required_reviews: [write-safety-maintainer, core-maintainer]
+    required_tests: [crash_injection_each_step, macos_image_verify, transaction_plan_invariants]
+    forbidden_targets: [physical_disk, encrypted_volume, sealed_system_volume, fusion_container, damaged_metadata]
+  no_physical_write_path:
+    description: CI and agents must fail changes that introduce physical-write paths before beta.
+    path_patterns: [crates/apfs-write/**, crates/apfs-win/**, crates/apfs-blockdev/**]
+    detection_hints: [GENERIC_WRITE, FILE_WRITE_DATA, write_at_device, raw_write, exclusive_write]
+  accepted_write_beta_spec:
+    description: Physical write beta requires accepted spec, accepted plan, evidence bundle, and maintainer approval.
+    required_artifacts:
+      - codev/specs/apfs-rs/write-beta-accepted.md
+      - codev/plans/apfs-rs/write-beta-accepted.md
+      - write-lab-evidence-bundle
+      - safety-refusal-matrix-update
+    required_reviews: [write-safety-maintainer, security-maintainer, release-manager]
+  bounds_checked_reads:
+    description: All block reads and parsed slices must be length/range checked before use.
+    required_tests: [truncated_input, out_of_range_extent, fuzz_smoke]
+  typed_error_no_panic:
+    description: Corrupt images and unsupported features return typed errors, not panics.
+    required_tests: [corrupt_fixture_refusal, fuzz_no_panic]
+  checksum_refusal:
+    description: Metadata checksum mismatch blocks normal extraction/mount.
+    allowed_modes: [inspect, diagnostic_only]
+    forbidden_modes: [extract, mount_readonly, write]
+  path_traversal_protection:
+    description: Extraction must never write outside destination.
+    required_tests: [absolute_path_refusal, parent_escape_refusal, unicode_path_edge_cases]
+  bounded_memory:
+    description: Parser/decompression code must not allocate unbounded memory from on-disk sizes.
+    required_tests: [oversized_length_refusal, decompression_bomb_guard]
+  cycle_guard:
+    description: Tree traversal must detect cycles or impossible references.
+    required_tests: [btree_cycle_refusal]
+  depth_guard:
+    description: Recursive traversal must have explicit depth limits.
+    required_tests: [deep_tree_limit]
+  encrypted_metadata_only:
+    description: Unsupported encrypted volumes may expose safe metadata only.
+    allowed_modes: [inspect, volumes]
+    forbidden_modes: [cat, extract, mount_readonly, write]
+  secret_redaction:
+    description: Secrets must never appear in logs, traces, panic messages, artifacts, or diagnostics.
+    required_tests: [redacted_logs, redacted_diagnostics, invalid_secret_no_echo]
+  zeroize_key_material:
+    description: Software-encryption support must use zeroising containers for key material.
+    required_reviews: [security-maintainer]
+  no_access_bypass:
+    description: Do not implement password recovery, cracking, bypass, or key extraction.
+    forbidden_terms_as_features: [password_cracking, recovery_attack, bypass, key_extraction]
+  unsafe_without_review:
+    description: New unsafe code requires documented invariants and maintainer review.
+    required_artifacts: [unsafe_review_block]
+    required_tests: [miri_where_practical]
+  dependency_review:
+    description: New dependencies require licence, maintenance, unsafe, advisory, and transitive review.
+    required_artifacts: [dependency_review_entry]
+    required_checks: [cargo_deny, cargo_audit, cargo_vet]
+  windows_user_mode_adapter:
+    description: Windows mounting should use user-mode adapter first, not a custom kernel driver.
+    preferred: WinFsp
+    optional_later: Dokany
+    forbidden_until_adr: custom_kernel_driver
+  exclusive_device_lock:
+    description: Physical write beta requires exclusive device/volume lock.
+    required_tests: [lock_success, lock_failure_when_busy, concurrent_mount_refusal]
+  physical_write_opt_in:
+    description: Physical writes require explicit CLI/mount opt-in and visible beta warning.
+    required_tests: [no_default_write, warning_displayed, dry_run_first]
+
+path_policy:
+  crates/apfs-types/**:
+    default_gates: [bounds_checked_reads, typed_error_no_panic, unsafe_without_review]
+  crates/apfs-core/**:
+    default_gates: [bounds_checked_reads, typed_error_no_panic, checksum_refusal, cycle_guard, depth_guard]
+  crates/apfs-read/**:
+    default_gates: [read_only_default, path_traversal_protection, bounded_memory]
+  crates/apfs-compress/**:
+    default_gates: [bounded_memory, dependency_review]
+  crates/apfs-crypto/**:
+    default_gates: [secret_redaction, zeroize_key_material, no_access_bypass, dependency_review]
+  crates/apfs-write/**:
+    default_gates: [image_only_write, no_physical_write_path, accepted_write_beta_spec]
+  crates/apfs-win/**:
+    default_gates: [windows_user_mode_adapter, raw_device_read_only, read_only_default]
+  fixtures/**:
+    default_gates: [path_traversal_protection]
