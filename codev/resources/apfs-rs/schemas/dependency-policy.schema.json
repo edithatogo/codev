@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/apfs-rs/dependency-policy.schema.json",
+  "title": "APFS-RS Dependency Policy",
+  "type": "object",
+  "required": ["schema_version", "status", "updated", "default_policy", "licence_policy", "required_checks"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "status": {"type": "string"},
+    "updated": {"type": "string"},
+    "purpose": {"type": "string"},
+    "default_policy": {"type": "object"},
+    "licence_policy": {
+      "type": "object",
+      "properties": {
+        "preferred": {"type": "array", "items": {"type": "string"}},
+        "requires_legal_review": {"type": "array", "items": {"type": "string"}},
+        "forbidden_in_permissive_core_without_project_decision": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "required_checks": {"type": "object"},
+    "candidate_dependencies": {"type": "object"},
+    "review_record_required_fields": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": true
+}
