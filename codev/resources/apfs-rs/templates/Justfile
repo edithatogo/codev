@@ -1,0 +1,42 @@
+# APFS-RS developer command facade
+# Template version: 0.3.0
+
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+agent-check:
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo nextest run --workspace --all-features
+    just dependency-check
+    just safety-check
+
+agent-docs-check:
+    cargo xtask docs-check
+
+agent-core-read-check:
+    cargo nextest run -p apfs-types -p apfs-blockdev -p apfs-core -p apfs-read
+    just fuzz-smoke object-header
+    just fuzz-smoke btree-node
+
+dependency-check:
+    cargo deny check
+    cargo audit
+    cargo vet --locked || true
+    cargo tree --duplicates
+
+fixture-check fixture_id:
+    cargo xtask fixture-check {{fixture_id}}
+
+fuzz-smoke target:
+    cargo fuzz run {{target}} -- -max_total_time=60
+
+safety-check:
+    cargo xtask registry-check
+    cargo xtask safety-check
+
+coverage:
+    cargo llvm-cov nextest --workspace --all-features --html
+
+release-dry-run:
+    cargo xtask release-evidence
+    cargo build --workspace --release
