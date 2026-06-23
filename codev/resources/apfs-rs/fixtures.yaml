@@ -1,0 +1,147 @@
+schema_version: 0.2.0
+status: draft
+updated: 2026-06-23
+purpose: >
+  Machine-readable fixture and differential-testing registry for APFS-RS.
+  Fixture images should be synthetic, minimal, reproducible, and mapped to capabilities.
+
+fixture_policy:
+  synthetic_data_only: true
+  no_personal_data: true
+  large_images_committed_to_git: false
+  generation_script_required: true
+  manifest_required: true
+  macos_oracle_required_for_supported_claims: true
+  redacted_diagnostic_export_required: true
+
+manifest_schema:
+  required_fields:
+    - fixture_id
+    - schema_version
+    - created_with
+    - generation_script
+    - apfs_features
+    - expected_tree_manifest
+    - hash_algorithm
+    - capability_ids
+    - safe_to_commit
+  hash_algorithm_default: sha256
+  expected_artifacts:
+    - tree_manifest.json
+    - file_hashes.json
+    - metadata_manifest.json
+    - macos_oracle.log.redacted
+
+fixtures:
+  simple-unencrypted-case-sensitive-001:
+    status: planned
+    milestone: windows_readonly_mvp
+    capability_ids: [M-001, M-003, M-004, M-005, M-006, M-007, M-008, M-009]
+    source_type: apfs_disk_image
+    apfs_features:
+      encrypted: false
+      compressed: false
+      snapshots: false
+      case_sensitive: true
+      volume_group: false
+      fusion: false
+    generation_script: tools/macos-fixtures/simple-unencrypted-case-sensitive.sh
+    expected_artifacts:
+      - fixtures/simple-unencrypted-case-sensitive-001/manifest.json
+      - fixtures/simple-unencrypted-case-sensitive-001/hashes.sha256
+    safe_to_commit: manifest_only_initially
+  simple-unencrypted-case-insensitive-001:
+    status: planned
+    milestone: windows_readonly_mvp
+    capability_ids: [M-001, M-007, M-008, M-009]
+    source_type: apfs_disk_image
+    apfs_features:
+      encrypted: false
+      compressed: false
+      snapshots: false
+      case_sensitive: false
+      unicode_edge_cases: true
+    generation_script: tools/macos-fixtures/simple-unencrypted-case-insensitive.sh
+    safe_to_commit: manifest_only_initially
+  corrupt-checksum-001:
+    status: planned
+    milestone: windows_readonly_mvp
+    capability_ids: [M-003, M-004, M-006]
+    source_type: mutated_apfs_disk_image
+    purpose: verify safe refusal on corrupt metadata
+    mutation_script: tools/mutate-fixtures/corrupt-checksum.py
+    expected_result: checksum_refusal
+    safe_to_commit: manifest_only_initially
+  xattr-resource-fork-001:
+    status: planned
+    milestone: advanced_read
+    capability_ids: [R1-001]
+    source_type: apfs_disk_image
+    apfs_features:
+      xattrs: true
+      resource_forks: true
+      finder_info: true
+    generation_script: tools/macos-fixtures/xattr-resource-fork.sh
+    safe_to_commit: manifest_only_initially
+  compression-zlib-lzvn-lzfse-001:
+    status: planned
+    milestone: advanced_read
+    capability_ids: [R1-002]
+    source_type: apfs_disk_image
+    apfs_features:
+      compressed: true
+      compression_methods: [zlib, lzvn, lzfse]
+    generation_script: tools/macos-fixtures/compression-methods.sh
+    expected_result: decompressed_hash_match
+    safe_to_commit: manifest_only_initially
+  snapshots-001:
+    status: planned
+    milestone: advanced_read
+    capability_ids: [R1-003]
+    source_type: apfs_disk_image
+    apfs_features:
+      snapshots: true
+    generation_script: tools/macos-fixtures/snapshots.sh
+    expected_result: snapshot_listing_and_read_hash_match
+    safe_to_commit: manifest_only_initially
+  software-encrypted-001:
+    status: planned_private
+    milestone: software_encryption_read
+    capability_ids: [R2-001]
+    source_type: apfs_disk_image
+    apfs_features:
+      encrypted: true
+      hardware_bound: false
+    generation_script: tools/macos-fixtures/software-encrypted.sh
+    secret_handling: test_secret_only_never_log
+    safe_to_commit: manifest_only_no_secrets
+  write-lab-basic-ops-001:
+    status: planned_generated_in_ci
+    milestone: image_write_lab
+    capability_ids: [WLAB-001]
+    source_type: disposable_sparse_image
+    apfs_features:
+      encrypted: false
+      snapshots: false
+      fusion: false
+    generation_script: tools/write-lab/create-basic-image.sh
+    expected_result: macos_mount_verify_after_random_ops
+    safe_to_commit: false
+
+coverage_matrix:
+  windows_readonly_mvp:
+    required_before_release:
+      - simple-unencrypted-case-sensitive-001
+      - simple-unencrypted-case-insensitive-001
+      - corrupt-checksum-001
+  advanced_read:
+    required_before_release:
+      - xattr-resource-fork-001
+      - compression-zlib-lzvn-lzfse-001
+      - snapshots-001
+  software_encryption_read:
+    required_before_release:
+      - software-encrypted-001
+  image_write_lab:
+    required_before_release:
+      - write-lab-basic-ops-001
