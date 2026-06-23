@@ -17,6 +17,7 @@ Date: 2026-06-23
 - Added roadmap tracks and initial issue backlog.
 - Added library and dependency strategy, including candidate Rust crates, Windows bridge libraries, FUSE options, supply-chain controls, and dependency evaluation rules.
 - Added CI/CD, code quality, GitHub automation, testing, fuzzing, fixture, and release plan.
+- Added GitHub automation template resource covering issue templates, pull request templates, CODEOWNERS, Dependabot, required checks, and automation backlog.
 - Added versioning and governance policy.
 - Added initial architecture review.
 
