@@ -1,0 +1,175 @@
+schema_version: 0.2.0
+status: draft
+updated: 2026-06-23
+purpose: >
+  Machine-readable capability registry for APFS-RS. Human docs remain authoritative
+  for narrative context, but agents and CI should use this file to map issues to
+  crates, safety gates, fixtures, and required checks.
+
+milestones:
+  windows_readonly_mvp:
+    description: Windows read-only inspection, extraction, and mount for simple APFS images and external volumes.
+    default_write_policy: forbidden
+  advanced_read:
+    description: xattrs, resource forks, compression, snapshots, sparse files, clones, Unicode/case behaviour.
+    default_write_policy: forbidden
+  software_encryption_read:
+    description: read software-encrypted volumes with user-supplied valid credentials.
+    default_write_policy: forbidden
+  image_write_lab:
+    description: write operations on disposable APFS images only with crash-injection evidence.
+    default_write_policy: image_only
+  windows_write_beta:
+    description: restricted opt-in Windows write beta after image-write evidence gates.
+    default_write_policy: gated_physical_beta
+
+capabilities:
+  M-001:
+    name: APFS image container detection
+    milestone: windows_readonly_mvp
+    moscow: Must
+    track: core-read
+    crates: [apfs-types, apfs-blockdev, apfs-core, apfs-cli]
+    required_tests: [unit_valid_image, unit_corrupt_header, fixture_inspect, fuzz_object_header_smoke]
+    required_docs: [capability_matrix, fixture_registry]
+    safety_gates: [read_only_default, bounds_checked_reads]
+    forbidden_changes: [physical_device_write, new_crypto_dependency]
+  M-002:
+    name: Windows raw block-device read-only detection
+    milestone: windows_readonly_mvp
+    moscow: Must
+    track: windows-mvp
+    crates: [apfs-blockdev, apfs-win, apfs-cli]
+    required_tests: [windows_readonly_open, permission_failure, no_write_handle]
+    safety_gates: [raw_device_read_only, windows_privilege_boundary]
+    forbidden_changes: [physical_device_write]
+  M-003:
+    name: Object header and checksum validation
+    milestone: windows_readonly_mvp
+    moscow: Must
+    track: core-read
+    crates: [apfs-types, apfs-core]
+    required_tests: [unit_checksum_valid, unit_checksum_corrupt, fuzz_object_header_smoke, miri_if_unsafe]
+    safety_gates: [typed_error_no_panic, checksum_refusal]
+    forbidden_changes: [unsafe_without_review]
+  M-004:
+    name: Checkpoint selection
+    milestone: windows_readonly_mvp
+    moscow: Must
+    track: core-read
+    crates: [apfs-core]
+    required_tests: [fixture_checkpoint_latest, fixture_checkpoint_fallback, fuzz_checkpoint_smoke]
+    safety_gates: [typed_error_no_panic, no_best_effort_corruption]
+  M-005:
+    name: Object-map lookup
+    milestone: windows_readonly_mvp
+    moscow: Must
+    track: core-read
+    crates: [apfs-core]
+    required_tests: [unit_omap_lookup, unit_invalid_omap, fuzz_omap_smoke]
+    safety_gates: [bounds_checked_reads, typed_error_no_panic]
+  M-006:
+    name: APFS B-tree traversal
+    milestone: windows_readonly_mvp
+    moscow: Must
+    track: core-read
+    crates: [apfs-core, apfs-read]
+    required_tests: [fixture_btree_walk, corrupt_btree_refusal, fuzz_btree_node_smoke]
+    safety_gates: [cycle_guard, depth_guard, bounds_checked_reads]
+  M-007:
+    name: Volume enumeration
+    milestone: windows_readonly_mvp
+    moscow: Must
+    track: core-read
+    crates: [apfs-core, apfs-read, apfs-cli]
+    required_tests: [fixture_volumes, json_schema_volumes]
+    safety_gates: [encrypted_metadata_only]
+  M-008:
+    name: Directory listing
+    milestone: windows_readonly_mvp
+    moscow: Must
+    track: core-read
+    crates: [apfs-core, apfs-read, apfs-cli]
+    required_tests: [fixture_manifest_tree_match, corrupt_directory_refusal, fuzz_btree_node_smoke]
+    safety_gates: [path_traversal_protection, typed_error_no_panic]
+  M-009:
+    name: Regular file read and extraction
+    milestone: windows_readonly_mvp
+    moscow: Must
+    track: core-read
+    crates: [apfs-read, apfs-vfs, apfs-cli]
+    required_tests: [fixture_hash_match, streaming_large_file, extraction_path_safety]
+    safety_gates: [read_only_default, path_traversal_protection, bounded_memory]
+  M-011:
+    name: Windows read-only mount
+    milestone: windows_readonly_mvp
+    moscow: Must
+    track: windows-mvp
+    crates: [apfs-vfs, apfs-win]
+    required_tests: [windows_build, winfsp_mount_smoke, explorer_copy_hash_match, write_callback_refusal]
+    safety_gates: [windows_user_mode_adapter, read_only_mount, raw_device_read_only]
+    dependencies_requiring_review: [WinFsp]
+  R1-001:
+    name: Extended attributes and resource forks
+    milestone: advanced_read
+    moscow: Must
+    track: advanced-read
+    crates: [apfs-read, apfs-cli, apfs-vfs]
+    required_tests: [fixture_xattr_roundtrip_read, resource_fork_hash_match]
+    safety_gates: [path_traversal_protection]
+  R1-002:
+    name: Compression read support
+    milestone: advanced_read
+    moscow: Must
+    track: advanced-read
+    crates: [apfs-compress, apfs-read]
+    required_tests: [fixture_zlib_hash, fixture_lzvn_hash, fixture_lzfse_hash, decompression_bomb_guard]
+    safety_gates: [bounded_memory, dependency_review]
+    dependencies_requiring_review: [flate2, lzfse_candidate, lzvn_candidate]
+  R1-003:
+    name: Snapshot discovery and read-only mount
+    milestone: advanced_read
+    moscow: Must
+    track: advanced-read
+    crates: [apfs-core, apfs-read, apfs-vfs, apfs-cli]
+    required_tests: [fixture_snapshot_list, fixture_snapshot_mount_hash]
+    safety_gates: [read_only_default, checkpoint_integrity]
+  R2-001:
+    name: Software-encryption read support
+    milestone: software_encryption_read
+    moscow: Must
+    track: encryption-read
+    crates: [apfs-crypto, apfs-read, apfs-cli]
+    required_tests: [encrypted_fixture_unlock, invalid_secret_refusal, secret_redaction, keybag_fuzz]
+    safety_gates: [secret_redaction, zeroize_key_material, no_access_bypass]
+    dependencies_requiring_review: [zeroize, secrecy, crypto_primitives]
+  WLAB-001:
+    name: Image-only transaction planner
+    milestone: image_write_lab
+    moscow: Must
+    track: write-lab
+    crates: [apfs-write, apfs-test]
+    required_tests: [transaction_plan_invariants, crash_injection_each_step, macos_image_verify]
+    safety_gates: [image_only_write, crash_consistency, no_physical_write_path]
+  WBETA-001:
+    name: Restricted Windows write beta preflight
+    milestone: windows_write_beta
+    moscow: Must
+    track: windows-write-beta
+    crates: [apfs-write, apfs-win, apfs-cli]
+    required_tests: [exclusive_lock, dry_run_journal, safety_refusal_matrix, beta_warning]
+    safety_gates: [accepted_write_beta_spec, exclusive_device_lock, physical_write_opt_in]
+    forbidden_until: [write_lab_evidence_bundle]
+
+ci_contract:
+  capability_changing_prs_must_update:
+    - codev/resources/apfs-rs/capabilities.yaml
+    - codev/specs/apfs-rs/0003-capabilities-matrix.md
+    - affected fixture manifests
+    - affected review notes
+  path_to_capability_hint:
+    crates/apfs-core: [M-003, M-004, M-005, M-006]
+    crates/apfs-read: [M-008, M-009, R1-001, R1-002, R1-003]
+    crates/apfs-win: [M-002, M-011, WBETA-001]
+    crates/apfs-write: [WLAB-001, WBETA-001]
+    crates/apfs-crypto: [R2-001]
