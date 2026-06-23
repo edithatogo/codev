@@ -21,6 +21,7 @@ The intent is to treat project context as versioned engineering source. These fi
 
 - `codev/resources/apfs-rs/design-and-architecture.md` — Rust workspace architecture, platform adapters, core APFS engine design, safety boundaries, and Mermaid diagrams.
 - `codev/resources/apfs-rs/library-and-dependency-strategy.md` — candidate Rust crates, Windows/FUSE bridge libraries, dependency governance, audit gates, and bleeding-edge watchlist.
+- `codev/resources/apfs-rs/github-automation-templates.md` — future implementation-repo issue, PR, CODEOWNERS, Dependabot, required-check, and automation templates.
 - `codev/resources/apfs-rs/versioning-and-governance.md` — SemVer policy, document versioning, ADR/spec lifecycle, release gates, and governance model.
 - `codev/resources/apfs-rs/CHANGELOG.md` — document-set changelog.
 
