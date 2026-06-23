@@ -1,0 +1,52 @@
+name: security
+
+on:
+  pull_request:
+  merge_group:
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit,cargo-machete,cargo-llvm-cov
+      - run: cargo deny check
+      - run: cargo audit
+      - run: cargo machete
+      - run: cargo xtask registry-check
+
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: rust
+      - uses: github/codeql-action/analyze@v4
+
+  attest-dry-run:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p target/release-evidence && echo dry-run > target/release-evidence/evidence.txt
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: target/release-evidence/evidence.txt
