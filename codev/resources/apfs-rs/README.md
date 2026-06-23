@@ -1,13 +1,13 @@
 # APFS-RS Codev Context Pack
 
-Document version: 0.2.0  
-Status: Draft planning and agentability context  
+Document version: 0.3.0  
+Status: Draft planning, agentability, and executable-scaffold context  
 Date: 2026-06-23  
 Codev protocol: SPIR — Specify, Plan, Implement, Review
 
 This directory indexes the Codev planning artifacts for a proposed FOSS Rust implementation of APFS tooling, with a Windows-first priority and a cross-platform end state across Windows, Linux, macOS, Android, and ChromeOS.
 
-The intent is to treat project context as versioned engineering source. These files are not implementation code; they are the top-level context that should drive GitHub Issues, implementation plans, PRs, CI/CD automation, coding-agent behaviour, and reviews.
+The intent is to treat project context as versioned engineering source. These files are not implementation code; they are the top-level context that should drive GitHub Issues, implementation plans, PRs, CI/CD automation, coding-agent behaviour, registry validation, release evidence, and reviews.
 
 ## Document map
 
@@ -29,16 +29,22 @@ The intent is to treat project context as versioned engineering source. These fi
 
 - `codev/resources/apfs-rs/design-and-architecture.md` — Rust workspace architecture, platform adapters, core APFS engine design, safety boundaries, and Mermaid diagrams.
 - `codev/resources/apfs-rs/library-and-dependency-strategy.md` — candidate Rust crates, Windows/FUSE bridge libraries, dependency governance, audit gates, and bleeding-edge watchlist.
+- `codev/resources/apfs-rs/implementation-repo-scaffold.md` — executable implementation-repository tree, bootstrap sequence, first crates, and first vertical slice.
+- `codev/resources/apfs-rs/schema-validation-and-policy-as-code.md` — JSON schema validation, cross-registry checks, changed-path policy, unsafe/write detectors, and release evidence generation.
 - `codev/resources/apfs-rs/developer-command-surface.md` — `just`/`xtask` command facade for humans, agents, and CI parity.
 - `codev/resources/apfs-rs/high-assurance-rust-quality.md` — nextest, fuzzing, coverage, mutation testing, Miri, Kani, CodeQL, and release quality tiers.
 - `codev/resources/apfs-rs/unsafe-code-policy.md` — unsafe-code boundaries, review block, Miri expectations, and forbidden unsafe patterns.
 
-### Machine-readable registries
+### Machine-readable registries and schemas
 
 - `codev/resources/apfs-rs/capabilities.yaml` — capability IDs mapped to milestones, crates, tests, safety gates, and forbidden changes.
 - `codev/resources/apfs-rs/fixtures.yaml` — fixture IDs, APFS feature coverage, manifests, oracle outputs, and commit policy.
 - `codev/resources/apfs-rs/safety-gates.yaml` — safety gates for read-only default, raw-device access, write lab, secrets, dependencies, and unsafe code.
 - `codev/resources/apfs-rs/dependency-policy.yaml` — licence policy, dependency review rules, candidate crates/tools, and required supply-chain checks.
+- `codev/resources/apfs-rs/schemas/capabilities.schema.json` — JSON Schema for capability registry.
+- `codev/resources/apfs-rs/schemas/fixtures.schema.json` — JSON Schema for fixture registry.
+- `codev/resources/apfs-rs/schemas/safety-gates.schema.json` — JSON Schema for safety-gate registry.
+- `codev/resources/apfs-rs/schemas/dependency-policy.schema.json` — JSON Schema for dependency-policy registry.
 
 ### GitHub, release, and agent resources
 
@@ -49,6 +55,7 @@ The intent is to treat project context as versioned engineering source. These fi
 - `codev/resources/apfs-rs/windows-test-lab.md` — GitHub-hosted, self-hosted, and manual Windows test tiers.
 - `codev/resources/apfs-rs/mcp-agent-interface.md` — future read-only MCP interface for agent access to project context.
 - `codev/resources/apfs-rs/agent-skills.md` — future task-specific agent skill pack.
+- `codev/resources/apfs-rs/agent-evaluation-benchmark.md` — repeatable coding-agent benchmark tasks, traps, and rubrics.
 - `codev/resources/apfs-rs/versioning-and-governance.md` — SemVer policy, document versioning, ADR/spec lifecycle, release gates, and governance model.
 - `codev/resources/apfs-rs/CHANGELOG.md` — document-set changelog.
 
@@ -56,11 +63,16 @@ The intent is to treat project context as versioned engineering source. These fi
 
 - `codev/resources/apfs-rs/templates/AGENTS.md` — root agent instructions template for the future APFS-RS implementation repo.
 - `codev/resources/apfs-rs/templates/CLAUDE.md` — companion agent instructions template.
+- `codev/resources/apfs-rs/templates/Justfile` — command facade template.
+- `codev/resources/apfs-rs/templates/xtask/Cargo.toml` — `xtask` automation crate template.
+- `codev/resources/apfs-rs/templates/xtask/src/main.rs` — initial `xtask` command implementation template.
 - `codev/resources/apfs-rs/templates/.github/copilot-instructions.md` — GitHub Copilot instruction template.
 - `codev/resources/apfs-rs/templates/.github/instructions/apfs-core.instructions.md` — path-specific core/parser instructions.
 - `codev/resources/apfs-rs/templates/.github/instructions/apfs-win.instructions.md` — path-specific Windows adapter instructions.
 - `codev/resources/apfs-rs/templates/.github/instructions/apfs-write-safety.instructions.md` — path-specific write-safety instructions.
 - `codev/resources/apfs-rs/templates/.github/instructions/apfs-security.instructions.md` — path-specific security instructions.
+- `codev/resources/apfs-rs/templates/.github/workflows/ci.yml` — CI workflow template.
+- `codev/resources/apfs-rs/templates/.github/workflows/security.yml` — security/provenance workflow template.
 
 ### ADRs
 
@@ -81,18 +93,21 @@ The project should start as a clean-room Rust workspace named `apfs-rs`, with th
 
 Write support should not be exposed for physical disks until a disposable-image write lab, crash-injection harness, macOS differential verifier, and corpus-based regression suite prove the transaction model.
 
-## Agentability strategy
+## Agentability and enforcement strategy
 
-The 0.2.0 context pack adds an agentability layer:
+The 0.3.0 context pack makes the plan more executable:
 
 1. Agent instruction templates for future implementation repos.
 2. Machine-readable capability, fixture, safety, and dependency registries.
-3. Task-packet workflow for GitHub Issues.
-4. Safety-refusal and unsafe-code policies.
-5. Future read-only MCP context interface.
-6. Stable developer command facade plan.
+3. JSON Schemas for registry validation.
+4. Task-packet workflow for GitHub Issues.
+5. Safety-refusal and unsafe-code policies.
+6. Future read-only MCP context interface.
+7. Stable developer command facade plan with `just` and `xtask` templates.
+8. CI/security workflow templates with registry and safety checks.
+9. Agent evaluation benchmark tasks and safety traps.
 
-This makes the project easier for coding agents to navigate without relying on long, unstructured markdown context alone.
+This makes the project easier for coding agents to navigate and easier for CI to enforce without relying on long, unstructured markdown context alone.
 
 ## Codev usage
 
@@ -123,4 +138,4 @@ Initial upstream references to monitor:
 
 ## Document version
 
-The current context pack is version `0.2.0`. Update `CHANGELOG.md` and `versioning-and-governance.md` whenever the planning context changes materially.
+The current context pack is version `0.3.0`. Update `CHANGELOG.md` and `versioning-and-governance.md` whenever the planning context changes materially.
