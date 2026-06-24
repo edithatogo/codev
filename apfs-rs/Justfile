@@ -1,0 +1,15 @@
+agent-check:
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo test --workspace
+    cargo xtask registry-check
+    cargo xtask safety-check
+
+inspect-example:
+    cargo run -p apfs-cli -- inspect --json fixtures/example-non-apfs.bin
+
+registry-check:
+    cargo xtask registry-check
+
+safety-check:
+    cargo xtask safety-check
