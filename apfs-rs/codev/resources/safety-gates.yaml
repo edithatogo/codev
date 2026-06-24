@@ -1,0 +1,12 @@
+schema_version: 0.1.0
+status: implementing
+updated: 2026-06-24
+gates:
+  read_only_default:
+    description: All current operations are read-only.
+  bounds_checked_reads:
+    description: All parsed reads are length checked.
+  typed_error_no_panic:
+    description: Corrupt or unsupported input returns structured errors or diagnostic reports.
+  unsafe_without_review:
+    description: Low-level memory-risk code is forbidden unless explicitly reviewed.
