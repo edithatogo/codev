@@ -2,8 +2,38 @@
 
 All notable planning-context changes for the APFS-RS Codev pack are recorded here.
 
-Document set version: 0.2.0  
+Document set version: 0.3.0  
 Date: 2026-06-23
+
+## [0.3.0] - 2026-06-23
+
+### Added
+
+- Added implementation repository scaffold with initial repository tree, Cargo workspace, first crates, bootstrap sequence, and first `apfs inspect` vertical slice.
+- Added schema validation and policy-as-code plan for registry validation, cross-registry checks, changed-path checks, unsafe-code detection, write-path detection, and release evidence generation.
+- Added agent evaluation benchmark with safe task classes, adversarial traps, rubrics, and metrics.
+- Added JSON Schemas for the capability registry, fixture registry, safety-gate registry, and dependency-policy registry.
+- Added `Justfile` template for stable developer and agent commands.
+- Added `xtask` Cargo template and initial `xtask` command implementation template.
+- Added CI workflow template with Rust matrix and registry/safety checks.
+- Added security workflow template with supply-chain checks, CodeQL, and artifact-attestation dry run.
+
+### Changed
+
+- Updated APFS-RS context index to version `0.3.0`.
+- Expanded the context pack from planning and agentability docs into an executable-scaffold pack.
+- Made policy-as-code and registry validation explicit first-class implementation-repo tasks.
+
+### Automation
+
+- Added initial command names for `registry-check`, `fixture-check`, `safety-check`, `task-context`, `docs-check`, and `release-evidence`.
+- Added workflow templates that include `pull_request`, `merge_group`, and `push` support for CI.
+- Added a security workflow template with least-privilege permissions and provenance-oriented dry-run attestation.
+
+### Safety
+
+- Added CI-oriented detectors for unsafe-code additions and suspicious raw-write path additions before accepted write-beta governance.
+- Reinforced that write support remains image-only until accepted write-beta evidence exists.
 
 ## [0.2.0] - 2026-06-23
 
