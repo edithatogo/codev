@@ -1,0 +1,21 @@
+schema_version: 0.1.0
+status: implementing
+updated: 2026-06-24
+capabilities:
+  M-001:
+    name: APFS image container detection
+    milestone: windows_readonly_mvp
+    moscow: Must
+    track: core-read
+    crates: [apfs-types, apfs-blockdev, apfs-core, apfs-cli]
+    required_tests: [unit_valid_image, unit_corrupt_header, fixture_inspect]
+    safety_gates: [read_only_default, bounds_checked_reads, typed_error_no_panic]
+  M-003:
+    name: Object header and checksum validation
+    milestone: windows_readonly_mvp
+    moscow: Must
+    track: core-read
+    crates: [apfs-types, apfs-core]
+    required_tests: [unit_checksum_valid, unit_checksum_corrupt]
+    safety_gates: [typed_error_no_panic]
+    status_note: checksum bytes are parsed but Fletcher validation is not implemented yet
