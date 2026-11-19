@@ -1,0 +1,15 @@
+{
+  "track_id": "serde_yaml_apfs_xtask_20261118",
+  "type": "dependency_qualification",
+  "status": "new",
+  "created_at": "2026-11-18",
+  "description": "Serde is used in nested apfs-rs Rust tooling, while Codev's main framework is not a Rust migration target. Any YAML replacement must preserve framework-template parity.",
+  "owners": [
+    "existing upstream/maintainer owner"
+  ],
+  "verification": {
+    "status": "not_run",
+    "commands": []
+  },
+  "capability_status": "planning_only"
+}
